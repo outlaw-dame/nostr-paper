@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, useTransition, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ReportSheet } from '@/components/nostr/ReportSheet'
 import { UserStatusBody } from '@/components/nostr/UserStatusBody'
@@ -350,6 +350,9 @@ export default function ProfilePage() {
   const { pubkey: routePubkey } = useParams<{ pubkey: string }>()
   const pubkey = decodeProfileReference(routePubkey)?.pubkey ?? null
   const { currentUser } = useApp()
+  const [, startTransition] = useTransition()
+  
+  // Critical data: load immediately
   const { profile, loading: profileLoading, error: profileError } = useProfile(pubkey)
   const {
     blocked: profileTextBlocked,
@@ -521,15 +524,21 @@ export default function ProfilePage() {
     getFreshHandlerInformationEvents(pubkey, controller.signal)
       .then((events) => {
         if (controller.signal.aborted) return
-        setHandlerInfoEvents(events)
+        startTransition(() => {
+          setHandlerInfoEvents(events)
+        })
       })
       .catch(() => {
         if (controller.signal.aborted) return
-        setHandlerInfoEvents([])
+        startTransition(() => {
+          setHandlerInfoEvents([])
+        })
       })
       .finally(() => {
         if (!controller.signal.aborted) {
-          setHandlerInfoLoading(false)
+          startTransition(() => {
+            setHandlerInfoLoading(false)
+          })
         }
       })
 
@@ -548,15 +557,21 @@ export default function ProfilePage() {
     getFreshHandlerRecommendationEvents(pubkey, controller.signal)
       .then((events) => {
         if (controller.signal.aborted) return
-        setHandlerRecommendations(events)
+        startTransition(() => {
+          setHandlerRecommendations(events)
+        })
       })
       .catch(() => {
         if (controller.signal.aborted) return
-        setHandlerRecommendations([])
+        startTransition(() => {
+          setHandlerRecommendations([])
+        })
       })
       .finally(() => {
         if (!controller.signal.aborted) {
-          setHandlerRecommendationsLoading(false)
+          startTransition(() => {
+            setHandlerRecommendationsLoading(false)
+          })
         }
       })
 
@@ -575,15 +590,21 @@ export default function ProfilePage() {
     getFreshProfileBadges(pubkey, controller.signal)
       .then((nextBadges) => {
         if (controller.signal.aborted) return
-        setBadges(nextBadges)
+        startTransition(() => {
+          setBadges(nextBadges)
+        })
       })
       .catch(() => {
         if (controller.signal.aborted) return
-        setBadges([])
+        startTransition(() => {
+          setBadges([])
+        })
       })
       .finally(() => {
         if (!controller.signal.aborted) {
-          setBadgesLoading(false)
+          startTransition(() => {
+            setBadgesLoading(false)
+          })
         }
       })
 
@@ -618,23 +639,29 @@ export default function ProfilePage() {
         nextAppCurations,
       ]) => {
         if (controller.signal.aborted) return
-        setFollowSets(nextFollowSets)
-        setStarterPacks(nextStarterPacks)
-        setMediaStarterPacks(nextMediaStarterPacks)
-        setArticleCurations(nextArticleCurations)
-        setAppCurations(nextAppCurations)
+        startTransition(() => {
+          setFollowSets(nextFollowSets)
+          setStarterPacks(nextStarterPacks)
+          setMediaStarterPacks(nextMediaStarterPacks)
+          setArticleCurations(nextArticleCurations)
+          setAppCurations(nextAppCurations)
+        })
       })
       .catch(() => {
         if (controller.signal.aborted) return
-        setFollowSets([])
-        setStarterPacks([])
-        setMediaStarterPacks([])
-        setArticleCurations([])
-        setAppCurations([])
+        startTransition(() => {
+          setFollowSets([])
+          setStarterPacks([])
+          setMediaStarterPacks([])
+          setArticleCurations([])
+          setAppCurations([])
+        })
       })
       .finally(() => {
         if (!controller.signal.aborted) {
-          setNip51SetsLoading(false)
+          startTransition(() => {
+            setNip51SetsLoading(false)
+          })
         }
       })
 
