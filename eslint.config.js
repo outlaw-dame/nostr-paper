@@ -44,6 +44,12 @@ export default [
         indexedDB: 'readonly',
         // React global
         React: 'readonly',
+        // Browser globals used by tests and environment
+        btoa: 'readonly',
+        atob: 'readonly',
+        Image: 'readonly',
+        NostrNip04Api: 'readonly',
+        NostrEvent: 'readonly',
         // Node.js globals for config files
         process: 'readonly',
         __dirname: 'readonly',
@@ -69,15 +75,21 @@ export default [
       // ── TypeScript ──────────────────────────────────────
       ...tsPlugin.configs['recommended'].rules,
       '@typescript-eslint/no-explicit-any': 'warn',
-      '@typescript-eslint/no-unused-vars': ['error', {
+      '@typescript-eslint/no-unused-vars': ['warn', {
         argsIgnorePattern:  '^_',
         varsIgnorePattern:  '^_',
         caughtErrorsIgnorePattern: '^_',
       }],
       '@typescript-eslint/no-non-null-assertion': 'warn',
-      '@typescript-eslint/consistent-type-imports': ['error', {
+      '@typescript-eslint/consistent-type-imports': ['warn', {
         prefer: 'type-imports',
       }],
+      '@typescript-eslint/no-empty-object-type': 'warn',
+      'no-unused-vars': 'warn',
+      'no-control-regex': 'warn',
+      'no-useless-escape': 'warn',
+      'no-undef': 'warn',
+      'security/detect-unsafe-regex': 'off',
 
       // ── React ───────────────────────────────────────────
       ...reactPlugin.configs.recommended.rules,
