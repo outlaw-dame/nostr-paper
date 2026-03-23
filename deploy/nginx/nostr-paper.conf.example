@@ -1,0 +1,71 @@
+server {
+  listen 443 ssl http2;
+  server_name example.com;
+
+  root /var/www/nostr-paper/dist;
+  index index.html;
+
+  # Required for SQLite WASM + SharedArrayBuffer.
+  add_header Cross-Origin-Opener-Policy "same-origin" always;
+  add_header Cross-Origin-Embedder-Policy "credentialless" always;
+
+  # Baseline security headers.
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header X-Frame-Options "DENY" always;
+  add_header Referrer-Policy "no-referrer" always;
+  add_header Permissions-Policy "camera=(), microphone=(), geolocation=(self), payment=()" always;
+
+  # Dynamic gzip fallback.
+  # Open-source nginx ships first-party gzip and optional gzip_static support.
+  gzip on;
+  gzip_vary on;
+  gzip_http_version 1.1;
+  gzip_min_length 1024;
+  gzip_comp_level 5;
+  gzip_types
+    text/css
+    application/javascript
+    application/json
+    application/manifest+json
+    image/svg+xml
+    application/wasm;
+
+  # Serve precompressed .gz sidecars when present.
+  # Requires nginx to be built with --with-http_gzip_static_module.
+  gzip_static on;
+
+  # Correct wasm MIME type.
+  types {
+    application/wasm wasm;
+  }
+
+  # Immutable hashed assets.
+  location /assets/ {
+    try_files $uri =404;
+    expires 1y;
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
+  }
+
+  # Icons can rotate occasionally.
+  location /icons/ {
+    try_files $uri =404;
+    expires 1d;
+    add_header Cache-Control "public, max-age=86400" always;
+  }
+
+  # Keep the shell and manifest revalidating.
+  location = /manifest.webmanifest {
+    try_files $uri =404;
+    add_header Cache-Control "no-cache" always;
+    default_type application/manifest+json;
+  }
+
+  location = /index.html {
+    add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+  }
+
+  # SPA routing.
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+}

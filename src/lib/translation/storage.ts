@@ -1,0 +1,481 @@
+import { createStore, del, get, set } from 'idb-keyval'
+
+export type TranslationProvider = 'deepl' | 'libretranslate' | 'small100' | 'opusmt' | 'translang' | 'lingva'
+export type DeepLApiPlan = 'free' | 'pro'
+export type TranslationStorageMode = 'encrypted-indexeddb' | 'session-only'
+
+export interface TranslationPreferences {
+  provider: TranslationProvider
+  deeplPlan: DeepLApiPlan
+  deeplTargetLanguage: string
+  deeplSourceLanguage: string
+  libreBaseUrl: string
+  libreTargetLanguage: string
+  libreSourceLanguage: string
+  translangBaseUrl: string
+  translangTargetLanguage: string
+  translangSourceLanguage: string
+  lingvaBaseUrl: string
+  lingvaTargetLanguage: string
+  lingvaSourceLanguage: string
+  small100BaseUrl: string
+  small100TargetLanguage: string
+  small100SourceLanguage: string
+  opusMtTargetLanguage: string
+  opusMtSourceLanguage: string
+}
+
+export interface TranslationSecrets {
+  deeplAuthKey: string
+  libreApiKey: string
+}
+
+export interface TranslationConfiguration extends TranslationPreferences, TranslationSecrets {}
+
+interface EncryptedSecretRecord {
+  iv: string
+  ciphertext: string
+}
+
+interface EncryptedSecretBundle {
+  deeplAuthKey?: EncryptedSecretRecord
+  libreApiKey?: EncryptedSecretRecord
+}
+
+const TRANSLATION_DB_NAME = 'nostr-paper-translation'
+const PREFERENCES_STORE = createStore(TRANSLATION_DB_NAME, 'preferences')
+const SECRETS_STORE = createStore(TRANSLATION_DB_NAME, 'secrets')
+const PREFERENCES_KEY = 'translation-preferences'
+const SECRET_KEY_KEY = 'translation-crypto-key'
+const ENCRYPTED_SECRETS_KEY = 'translation-encrypted-secrets'
+const MAX_SECRET_CHARS = 256
+
+export const TRANSLATION_SETTINGS_UPDATED_EVENT = 'nostr-paper:translation-settings-updated'
+
+const DEFAULT_PREFERENCES: TranslationPreferences = {
+  provider: 'opusmt',
+  deeplPlan: 'free',
+  deeplTargetLanguage: 'EN-US',
+  deeplSourceLanguage: 'auto',
+  libreBaseUrl: '',
+  libreTargetLanguage: 'en',
+  libreSourceLanguage: 'auto',
+  translangBaseUrl: '',
+  translangTargetLanguage: 'en',
+  translangSourceLanguage: 'auto',
+  lingvaBaseUrl: '',
+  lingvaTargetLanguage: 'en',
+  lingvaSourceLanguage: 'auto',
+  small100BaseUrl: 'http://localhost:7080',
+  small100TargetLanguage: 'en',
+  small100SourceLanguage: 'auto',
+  opusMtTargetLanguage: 'en',
+  opusMtSourceLanguage: 'auto',
+}
+
+const DEFAULT_SECRETS: TranslationSecrets = {
+  deeplAuthKey: '',
+  libreApiKey: '',
+}
+
+let memoryPreferences = { ...DEFAULT_PREFERENCES }
+let memorySecrets = { ...DEFAULT_SECRETS }
+let memoryCryptoKey: CryptoKey | null = null
+let cachedConfiguration: TranslationConfiguration | null = null
+
+function canUsePersistentStorage(): boolean {
+  return (
+    typeof globalThis.indexedDB !== 'undefined' &&
+    typeof globalThis.crypto !== 'undefined' &&
+    typeof globalThis.crypto.subtle !== 'undefined'
+  )
+}
+
+function emitTranslationSettingsUpdated(): void {
+  if (typeof globalThis.window === 'undefined') return
+  globalThis.window.dispatchEvent(new CustomEvent(TRANSLATION_SETTINGS_UPDATED_EVENT))
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte)
+  }
+
+  return globalThis.btoa(binary)
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = globalThis.atob(base64)
+  return Uint8Array.from(binary, character => character.charCodeAt(0))
+}
+
+function sanitizeSecret(secret: string | undefined): string {
+  return typeof secret === 'string' ? secret.trim().slice(0, MAX_SECRET_CHARS) : ''
+}
+
+function isAsciiAlphaNumeric(value: string): boolean {
+  for (const char of value) {
+    const code = char.charCodeAt(0)
+    const isDigit = code >= 48 && code <= 57
+    const isUpper = code >= 65 && code <= 90
+    const isLower = code >= 97 && code <= 122
+    if (!isDigit && !isUpper && !isLower) return false
+  }
+  return true
+}
+
+function isStructuredLanguageCode(
+  value: string,
+  options: { primaryMin: number; primaryMax: number; primaryCase: 'upper' | 'lower'; allowAuto: boolean },
+): boolean {
+  if (options.allowAuto && value === 'auto') return true
+
+  const parts = value.split('-')
+  if (parts.length === 0 || parts.length > 2) return false
+
+  const [primary = '', secondary] = parts
+  if (primary.length < options.primaryMin || primary.length > options.primaryMax) return false
+  if (!isAsciiAlphaNumeric(primary)) return false
+
+  const normalizedPrimary =
+    options.primaryCase === 'upper' ? primary.toUpperCase() : primary.toLowerCase()
+  if (primary !== normalizedPrimary) return false
+
+  if (secondary === undefined) return true
+  if (secondary.length < 2 || secondary.length > 8) return false
+  return isAsciiAlphaNumeric(secondary)
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]'
+}
+
+function normalizeRemoteUrl(rawUrl: string | undefined): string {
+  if (typeof rawUrl !== 'string') return ''
+
+  const trimmed = rawUrl.trim()
+  if (!trimmed) return ''
+
+  try {
+    const parsed = new URL(trimmed)
+    const protocol = parsed.protocol.toLowerCase()
+    if (protocol === 'https:') {
+      return parsed.href.replace(/\/+$/, '')
+    }
+
+    if (import.meta.env.DEV && protocol === 'http:' && isLoopbackHost(parsed.hostname)) {
+      return parsed.href.replace(/\/+$/, '')
+    }
+
+    return ''
+  } catch {
+    return ''
+  }
+}
+
+function normalizeLocalServiceUrl(rawUrl: string | undefined): string {
+  if (typeof rawUrl !== 'string') return ''
+  const trimmed = rawUrl.trim()
+  if (!trimmed) return ''
+
+  try {
+    const parsed = new URL(trimmed)
+    const protocol = parsed.protocol.toLowerCase()
+    if (protocol === 'https:') return parsed.href.replace(/\/+$/, '')
+    // HTTP loopback is always allowed (browser treats localhost as secure context)
+    if (protocol === 'http:' && isLoopbackHost(parsed.hostname)) {
+      return parsed.href.replace(/\/+$/, '')
+    }
+    // In dev, allow HTTP LAN addresses for testing (e.g. NAS at 192.168.x.x)
+    if (import.meta.env.DEV && protocol === 'http:') {
+      return parsed.href.replace(/\/+$/, '')
+    }
+    return ''
+  } catch {
+    return ''
+  }
+}
+
+function normalizeDeepLLanguage(value: string | undefined, allowAuto = false): string {
+  const normalized = typeof value === 'string' ? value.trim().toUpperCase() : ''
+  if (allowAuto && normalized === 'AUTO') return 'auto'
+  if (!normalized) return allowAuto ? 'auto' : DEFAULT_PREFERENCES.deeplTargetLanguage
+  if (isStructuredLanguageCode(normalized, { primaryMin: 2, primaryMax: 3, primaryCase: 'upper', allowAuto: false })) {
+    return normalized
+  }
+  return allowAuto ? 'auto' : DEFAULT_PREFERENCES.deeplTargetLanguage
+}
+
+function normalizeLibreLanguage(value: string | undefined, allowAuto = false): string {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (allowAuto && normalized === 'auto') return 'auto'
+  if (!normalized) return allowAuto ? 'auto' : DEFAULT_PREFERENCES.libreTargetLanguage
+  if (isStructuredLanguageCode(normalized, { primaryMin: 2, primaryMax: 3, primaryCase: 'lower', allowAuto: false })) {
+    return normalized
+  }
+  return allowAuto ? 'auto' : DEFAULT_PREFERENCES.libreTargetLanguage
+}
+
+function normalizeTranslangLanguage(value: string | undefined, allowAuto = false): string {
+  const normalized = typeof value === 'string' ? value.trim() : ''
+  if (!normalized) return allowAuto ? 'auto' : DEFAULT_PREFERENCES.translangTargetLanguage
+  if (allowAuto && normalized.toLowerCase() === 'auto') return 'auto'
+  if (!isStructuredLanguageCode(normalized.toLowerCase(), { primaryMin: 2, primaryMax: 3, primaryCase: 'lower', allowAuto: false })) {
+    return allowAuto ? 'auto' : DEFAULT_PREFERENCES.translangTargetLanguage
+  }
+
+  const [primary, ...rest] = normalized.split('-')
+  return [
+    primary?.toLowerCase() ?? '',
+    ...rest.map((part) => {
+      if (part.length === 2) return part.toUpperCase()
+      if (part.length === 4) return `${part.slice(0, 1).toUpperCase()}${part.slice(1).toLowerCase()}`
+      return part.toLowerCase()
+    }),
+  ].join('-')
+}
+
+export function normalizeTranslationPreferences(
+  input: Partial<TranslationPreferences> | null | undefined,
+): TranslationPreferences {
+  const raw = input ?? {}
+
+  return {
+    provider: raw.provider === 'deepl' ? 'deepl'
+      : raw.provider === 'libretranslate' ? 'libretranslate'
+      : raw.provider === 'translang' ? 'translang'
+      : raw.provider === 'lingva' ? 'lingva'
+      : raw.provider === 'small100' ? 'small100'
+      : raw.provider === 'opusmt' ? 'opusmt'
+      : DEFAULT_PREFERENCES.provider,
+    deeplPlan: raw.deeplPlan === 'pro' ? 'pro' : 'free',
+    deeplTargetLanguage: normalizeDeepLLanguage(raw.deeplTargetLanguage, false),
+    deeplSourceLanguage: normalizeDeepLLanguage(raw.deeplSourceLanguage, true),
+    libreBaseUrl: normalizeRemoteUrl(raw.libreBaseUrl),
+    libreTargetLanguage: normalizeLibreLanguage(raw.libreTargetLanguage, false),
+    libreSourceLanguage: normalizeLibreLanguage(raw.libreSourceLanguage, true),
+    translangBaseUrl: typeof raw.translangBaseUrl === 'string'
+      ? normalizeRemoteUrl(raw.translangBaseUrl)
+      : DEFAULT_PREFERENCES.translangBaseUrl,
+    translangTargetLanguage: normalizeTranslangLanguage(raw.translangTargetLanguage, false),
+    translangSourceLanguage: normalizeTranslangLanguage(raw.translangSourceLanguage, true),
+    lingvaBaseUrl: typeof raw.lingvaBaseUrl === 'string'
+      ? normalizeRemoteUrl(raw.lingvaBaseUrl)
+      : DEFAULT_PREFERENCES.lingvaBaseUrl,
+    lingvaTargetLanguage: normalizeLibreLanguage(raw.lingvaTargetLanguage, false),
+    lingvaSourceLanguage: normalizeLibreLanguage(raw.lingvaSourceLanguage, true),
+    small100BaseUrl: normalizeLocalServiceUrl(raw.small100BaseUrl),
+    small100TargetLanguage: normalizeLibreLanguage(raw.small100TargetLanguage, false),
+    small100SourceLanguage: normalizeLibreLanguage(raw.small100SourceLanguage, true),
+    opusMtTargetLanguage: normalizeLibreLanguage(raw.opusMtTargetLanguage, false),
+    opusMtSourceLanguage: normalizeLibreLanguage(raw.opusMtSourceLanguage, true),
+  }
+}
+
+function mergeConfiguration(
+  preferences: TranslationPreferences,
+  secrets: TranslationSecrets,
+): TranslationConfiguration {
+  return {
+    ...preferences,
+    deeplAuthKey: sanitizeSecret(secrets.deeplAuthKey),
+    libreApiKey: sanitizeSecret(secrets.libreApiKey),
+  }
+}
+
+async function getOrCreateCryptoKey(): Promise<CryptoKey> {
+  if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.subtle === 'undefined') {
+    throw new Error('Secure secret storage is unavailable in this browser.')
+  }
+
+  if (memoryCryptoKey) return memoryCryptoKey
+
+  try {
+    const storedKey = await get<CryptoKey>(SECRET_KEY_KEY, SECRETS_STORE)
+    if (storedKey) {
+      memoryCryptoKey = storedKey
+      return storedKey
+    }
+
+    const key = await globalThis.crypto.subtle.generateKey(
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt'],
+    )
+    await set(SECRET_KEY_KEY, key, SECRETS_STORE)
+    memoryCryptoKey = key
+    return key
+  } catch {
+    memoryCryptoKey = await globalThis.crypto.subtle.generateKey(
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt'],
+    )
+    return memoryCryptoKey
+  }
+}
+
+async function encryptSecret(secret: string): Promise<EncryptedSecretRecord> {
+  const key = await getOrCreateCryptoKey()
+  const iv = Uint8Array.from(globalThis.crypto.getRandomValues(new Uint8Array(12)))
+  const encoded = Uint8Array.from(new TextEncoder().encode(secret))
+  const ciphertext = await globalThis.crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    encoded,
+  )
+
+  return {
+    iv: bytesToBase64(iv),
+    ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
+  }
+}
+
+async function decryptSecret(record: EncryptedSecretRecord): Promise<string> {
+  const key = await getOrCreateCryptoKey()
+  const iv = Uint8Array.from(base64ToBytes(record.iv))
+  const ciphertext = Uint8Array.from(base64ToBytes(record.ciphertext))
+  const decrypted = await globalThis.crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    ciphertext,
+  )
+
+  return new TextDecoder().decode(decrypted)
+}
+
+export function getTranslationStorageMode(): TranslationStorageMode {
+  return canUsePersistentStorage() ? 'encrypted-indexeddb' : 'session-only'
+}
+
+export async function loadTranslationPreferences(): Promise<TranslationPreferences> {
+  if (!canUsePersistentStorage()) {
+    return { ...memoryPreferences }
+  }
+
+  try {
+    const stored = await get<Partial<TranslationPreferences>>(PREFERENCES_KEY, PREFERENCES_STORE)
+    const normalized = normalizeTranslationPreferences(stored)
+    memoryPreferences = normalized
+    return { ...normalized }
+  } catch {
+    return { ...memoryPreferences }
+  }
+}
+
+export async function saveTranslationPreferences(
+  preferences: Partial<TranslationPreferences>,
+): Promise<TranslationPreferences> {
+  const normalized = normalizeTranslationPreferences(preferences)
+  memoryPreferences = normalized
+  cachedConfiguration = null
+
+  if (canUsePersistentStorage()) {
+    try {
+      await set(PREFERENCES_KEY, normalized, PREFERENCES_STORE)
+    } catch {
+      // Fall back to memory-only preferences.
+    }
+  }
+
+  emitTranslationSettingsUpdated()
+  return { ...normalized }
+}
+
+export async function loadTranslationSecrets(): Promise<TranslationSecrets> {
+  if (!canUsePersistentStorage()) {
+    return { ...memorySecrets }
+  }
+
+  try {
+    const encrypted = await get<EncryptedSecretBundle>(ENCRYPTED_SECRETS_KEY, SECRETS_STORE)
+    if (!encrypted) {
+      return { ...memorySecrets }
+    }
+
+    const nextSecrets: TranslationSecrets = {
+      deeplAuthKey: encrypted.deeplAuthKey ? await decryptSecret(encrypted.deeplAuthKey) : '',
+      libreApiKey: encrypted.libreApiKey ? await decryptSecret(encrypted.libreApiKey) : '',
+    }
+    memorySecrets = {
+      deeplAuthKey: sanitizeSecret(nextSecrets.deeplAuthKey),
+      libreApiKey: sanitizeSecret(nextSecrets.libreApiKey),
+    }
+    return { ...memorySecrets }
+  } catch {
+    return { ...memorySecrets }
+  }
+}
+
+export async function saveTranslationSecrets(
+  secrets: Partial<TranslationSecrets>,
+): Promise<TranslationSecrets> {
+  const normalized: TranslationSecrets = {
+    deeplAuthKey: sanitizeSecret(secrets.deeplAuthKey),
+    libreApiKey: sanitizeSecret(secrets.libreApiKey),
+  }
+
+  memorySecrets = normalized
+  cachedConfiguration = null
+
+  if (canUsePersistentStorage()) {
+    try {
+      const encrypted: EncryptedSecretBundle = {}
+      if (normalized.deeplAuthKey) {
+        encrypted.deeplAuthKey = await encryptSecret(normalized.deeplAuthKey)
+      }
+      if (normalized.libreApiKey) {
+        encrypted.libreApiKey = await encryptSecret(normalized.libreApiKey)
+      }
+      await set(ENCRYPTED_SECRETS_KEY, encrypted, SECRETS_STORE)
+    } catch {
+      // Fall back to memory-only secrets.
+    }
+  }
+
+  emitTranslationSettingsUpdated()
+  return { ...normalized }
+}
+
+export async function clearTranslationSecrets(): Promise<void> {
+  memorySecrets = { ...DEFAULT_SECRETS }
+  cachedConfiguration = null
+
+  if (canUsePersistentStorage()) {
+    try {
+      await del(ENCRYPTED_SECRETS_KEY, SECRETS_STORE)
+    } catch {
+      // Keep in-memory state cleared even if persistent deletion fails.
+    }
+  }
+
+  emitTranslationSettingsUpdated()
+}
+
+export async function loadTranslationConfiguration(): Promise<TranslationConfiguration> {
+  if (cachedConfiguration) {
+    return { ...cachedConfiguration }
+  }
+
+  const [preferences, secrets] = await Promise.all([
+    loadTranslationPreferences(),
+    loadTranslationSecrets(),
+  ])
+
+  // Migrate users who have deepl as their stored provider but no API key
+  // configured — silently upgrade them to opusmt (zero-config, in-browser).
+  let effectivePreferences = preferences
+  if (preferences.provider === 'deepl' && !secrets.deeplAuthKey) {
+    effectivePreferences = {
+      ...preferences,
+      provider: 'opusmt',
+      opusMtSourceLanguage: preferences.opusMtSourceLanguage === 'en'
+        ? 'auto'
+        : preferences.opusMtSourceLanguage,
+    }
+  }
+
+  cachedConfiguration = mergeConfiguration(effectivePreferences, secrets)
+  return { ...cachedConfiguration }
+}

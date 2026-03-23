@@ -1,0 +1,288 @@
+/* ============================================================
+   Nostr Paper — Global Styles
+   iOS 26 / HIG design token system
+   ============================================================ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Design Tokens ─────────────────────────────────────────── */
+:root {
+  /* Light mode — warm editorial palette instead of pure system white */
+  --color-bg:               244 240 232;
+  --color-bg-secondary:     252 248 241;
+  --color-bg-tertiary:      236 231 223;
+  --color-bg-grouped:       239 234 226;
+
+  --color-surface:          251 247 240;
+  --color-surface-secondary:244 239 231;
+  --color-surface-elevated: 255 252 247;
+  --color-divider:          41 49 61;
+
+  --color-label:            19  24  33;
+  --color-label-secondary:  88  96  107;
+  --color-label-tertiary:   117 125 137;
+  --color-label-quaternary: 153 160 170;
+
+  --color-fill:             114 123 136;
+  --color-fill-secondary:   134 142 154;
+  --color-fill-tertiary:    156 164 175;
+
+  --color-accent:           36  102 255;
+
+  /* Glass material tokens — reserved for chrome, not every card */
+  --glass-bg-light:         rgba(252, 248, 241, 0.76);
+  --glass-bg-dark:          rgba(17, 22, 30, 0.74);
+  --glass-border-light:     rgba(255, 255, 255, 0.42);
+  --glass-border-dark:      rgba(255, 255, 255, 0.08);
+  --glass-blur:             28px;
+  --glass-blur-heavy:       42px;
+  --glass-saturate:         160%;
+
+  /* Elevation shadows */
+  --shadow-xs:   0 1px 2px rgba(0,0,0,0.06);
+  --shadow-sm:   0 2px 8px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md:   0 4px 16px rgba(0,0,0,0.10), 0 2px 4px rgba(0,0,0,0.06);
+  --shadow-lg:   0 8px 32px rgba(0,0,0,0.14), 0 4px 8px rgba(0,0,0,0.08);
+  --shadow-xl:   0 16px 48px rgba(0,0,0,0.18), 0 8px 16px rgba(0,0,0,0.10);
+
+  /* iOS system colors */
+  --color-system-red:    255 59  48;
+  --color-system-orange: 255 149 0;
+  --color-system-yellow: 255 204 0;
+  --color-system-green:  52  199 89;
+  --color-system-blue:   36  102 255;
+  --color-system-purple: 175 82  222;
+  --color-system-pink:   255 45  85;
+
+  /* Spring physics constants (for CSS transitions matching Framer) */
+  --spring-snappy: cubic-bezier(0.32, 0.72, 0, 1);
+  --spring-bouncy: cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  --spring-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Safe areas */
+  --sat: env(safe-area-inset-top);
+  --sab: env(safe-area-inset-bottom);
+  --sal: env(safe-area-inset-left);
+  --sar: env(safe-area-inset-right);
+}
+
+:root[data-theme='dark'] {
+    /* Dark mode — Pure Black (OLED / Apple HIG) */
+    --color-bg:               0   0   0;
+    --color-bg-secondary:     28  28  30;
+    --color-bg-tertiary:      44  44  46;
+    --color-bg-grouped:       0   0   0;
+
+    --color-surface:          28  28  30;
+    --color-surface-secondary:44  44  46;
+    --color-surface-elevated: 58  58  60;
+    --color-divider:          56  56  58;
+
+    --color-label:            247 248 250;
+    --color-label-secondary:  184 190 201;
+    --color-label-tertiary:   146 153 166;
+    --color-label-quaternary: 110 117 131;
+
+    --color-fill:             113 122 135;
+    --color-fill-secondary:   129 137 149;
+    --color-fill-tertiary:    146 154 166;
+
+    --color-accent:           10  132 255;
+
+    --shadow-xs:   0 1px 2px rgba(0,0,0,0.30);
+    --shadow-sm:   0 2px 8px rgba(0,0,0,0.40), 0 1px 2px rgba(0,0,0,0.20);
+    --shadow-md:   0 4px 16px rgba(0,0,0,0.50), 0 2px 4px rgba(0,0,0,0.30);
+    --shadow-lg:   0 8px 32px rgba(0,0,0,0.60), 0 4px 8px rgba(0,0,0,0.40);
+    --shadow-xl:   0 16px 48px rgba(0,0,0,0.70), 0 8px 16px rgba(0,0,0,0.50);
+}
+
+:root[data-theme='dim'] {
+    /* Dim mode — Blue-Grey (Twitter "Dim" style) */
+    --color-bg:               21  32  43;
+    --color-bg-secondary:     25  39  52;
+    --color-bg-tertiary:      34  48  60;
+    --color-bg-grouped:       21  32  43;
+
+    --color-surface:          25  39  52;
+    --color-surface-secondary:34  48  60;
+    --color-surface-elevated: 39  53  66;
+    --color-divider:          56  68  77;
+
+    --color-label:            255 255 255;
+    --color-label-secondary:  136 153 166;
+    --color-label-tertiary:   107 125 140;
+    --color-label-quaternary: 85  100 115;
+
+    --color-fill:             113 122 135;
+    --color-fill-secondary:   129 137 149;
+    --color-fill-tertiary:    146 154 166;
+
+    --color-accent:           29  155 240;
+
+    --shadow-xs:   0 1px 2px rgba(0,0,0,0.30);
+    --shadow-sm:   0 2px 8px rgba(0,0,0,0.40), 0 1px 2px rgba(0,0,0,0.20);
+    --shadow-md:   0 4px 16px rgba(0,0,0,0.50), 0 2px 4px rgba(0,0,0,0.30);
+    --shadow-lg:   0 8px 32px rgba(0,0,0,0.60), 0 4px 8px rgba(0,0,0,0.40);
+    --shadow-xl:   0 16px 48px rgba(0,0,0,0.70), 0 8px 16px rgba(0,0,0,0.50);
+}
+
+/* ── Base Styles ────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* Prevent overscroll bounce revealing background on iOS */
+  overscroll-behavior: none;
+  color-scheme: light;
+  background-color: rgb(var(--color-bg));
+  /* Smooth font rendering on macOS/iOS */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Prevent text size adjustment on orientation change */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+html[data-theme='dim'] {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display',
+               'SF Pro Text', 'Helvetica Neue', sans-serif;
+  background:
+    radial-gradient(circle at top, rgb(var(--color-surface-elevated)) 0%, rgb(var(--color-bg-secondary)) 22%, rgb(var(--color-bg)) 64%),
+    linear-gradient(180deg, rgb(var(--color-bg-secondary)) 0%, rgb(var(--color-bg)) 100%);
+  color: rgb(var(--color-label));
+  /* Full viewport height accounting for mobile browser chrome */
+  min-height: 100dvh;
+  overflow-x: hidden;
+  /* Prevent pull-to-refresh in PWA mode */
+  overscroll-behavior-y: contain;
+}
+
+#root {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at top, rgb(var(--color-surface-elevated) / 0.86) 0%, transparent 34%),
+    transparent;
+}
+
+/* ── Glass Material System ──────────────────────────────────── */
+.glass {
+  background: var(--glass-bg-light);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-border-light);
+  box-shadow: 0 12px 32px rgba(15, 20, 30, 0.08);
+}
+
+.glass-heavy {
+  background: var(--glass-bg-light);
+  backdrop-filter: blur(var(--glass-blur-heavy)) saturate(200%);
+  -webkit-backdrop-filter: blur(var(--glass-blur-heavy)) saturate(200%);
+  border: 1px solid var(--glass-border-light);
+  box-shadow: 0 18px 44px rgba(15, 20, 30, 0.12);
+}
+
+:root[data-theme='dark'] .glass,
+:root[data-theme='dim'] .glass,
+:root[data-theme='dark'] .glass-liquid,
+:root[data-theme='dim'] .glass-liquid {
+  background: var(--glass-bg-dark);
+  border-color: var(--glass-border-dark);
+}
+
+:root[data-theme='dark'] .glass-heavy,
+:root[data-theme='dim'] .glass-heavy {
+  background: var(--glass-bg-dark);
+  border-color: var(--glass-border-dark);
+}
+
+/* Liquid Glass — adds inner glow edge catch (iOS 26 signature) */
+.glass-liquid {
+  background: var(--glass-bg-light);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-border-light);
+  box-shadow:
+    var(--shadow-md),
+    inset 0 1px 0 rgba(255, 255, 255, 0.26),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.05);
+}
+
+.app-panel {
+  background: rgb(var(--color-surface-elevated) / 0.96);
+  border: 1px solid rgb(var(--color-divider) / 0.06);
+  box-shadow: 0 10px 28px rgba(15, 20, 30, 0.06), 0 2px 6px rgba(15, 20, 30, 0.04);
+}
+
+.app-panel-muted {
+  background: rgb(var(--color-surface-secondary) / 0.88);
+  border: 1px solid rgb(var(--color-divider) / 0.06);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.22);
+}
+
+.app-chrome {
+  background: rgb(var(--color-surface) / 0.88);
+  backdrop-filter: blur(24px) saturate(145%);
+  -webkit-backdrop-filter: blur(24px) saturate(145%);
+  border-bottom: 1px solid rgb(var(--color-divider) / 0.08);
+}
+
+.section-kicker {
+  color: rgb(var(--color-label-tertiary));
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+/* ── Utility Classes ────────────────────────────────────────── */
+
+/* Hide scrollbar but keep functionality */
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* Tap highlight removal for app-like feel */
+.tap-none {
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+/* iOS momentum scrolling */
+.scroll-momentum {
+  -webkit-overflow-scrolling: touch;
+  overflow-y: scroll;
+}
+
+/* Safe area padding helpers */
+.pt-safe { padding-top: max(16px, env(safe-area-inset-top)); }
+.pb-safe { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+.pl-safe { padding-left: max(16px, env(safe-area-inset-left)); }
+.pr-safe { padding-right: max(16px, env(safe-area-inset-right)); }
+
+/* Edge-to-edge full bleed */
+.bleed {
+  margin-left: calc(-1 * env(safe-area-inset-left));
+  margin-right: calc(-1 * env(safe-area-inset-right));
+}

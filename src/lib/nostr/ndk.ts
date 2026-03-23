@@ -1,0 +1,234 @@
+/**
+ * NDK (Nostr Development Kit) Configuration
+ *
+ * Initializes NDK with:
+ * - SQLite-backed local cache (OPFS persistent)
+ * - Outbox model for NIP-65 relay selection
+ * - NIP-07 browser extension signer (nos2x, Alby, etc.)
+ *
+ * Private keys NEVER enter this module.
+ * All signing is delegated to the extension or remote signer.
+ * NIP-46 remote signer support is planned for Phase 2.
+ */
+
+import NDK, {
+  NDKNip07Signer,
+  type NDKCacheAdapter,
+  type NDKCacheEntry,
+  type NDKEvent,
+  type NDKFilter as NDKNativeFilter,
+  type NDKRelay,
+  type NDKSubscription,
+  type NDKUser,
+  type NDKUserProfile,
+} from '@nostr-dev-kit/ndk'
+import { insertEvent, queryEvents, getProfile, getProfiles } from '@/lib/db/nostr'
+import { isValidRelayURL } from '@/lib/security/sanitize'
+import type { Profile, NostrEvent, NostrFilter } from '@/types'
+
+// ── Default Relay Set ────────────────────────────────────────
+// Well-known, reliable relays with broad coverage
+const DEFAULT_RELAYS = [
+  'wss://relay.damus.io',
+  'wss://nos.lol',
+  'wss://nostr.wine',
+  'wss://relay.snort.social',
+  'wss://relay.primal.net',
+  'wss://nostr.bitcoiner.social',
+  'wss://relay.nostr.band',
+  'wss://nostr.fmt.wiz.biz',
+  'wss://ditto.pub/relay',
+  'wss://relay.mostr.pub',
+  'wss://relay.nos.social',
+  'wss://news.nos.social',
+  'wss://relay.nostr.net',
+] as const
+
+// ── NIP-50 Search Relay Set ───────────────────────────────────
+// Relays explicitly supporting the NIP-50 full-text search filter.
+// Used by searchRelays() so search queries are routed to the best sources
+// without requiring all of them to be in the general subscription pool.
+export const SEARCH_RELAY_URLS = [
+  'wss://relay.nostr.band',    // Built specifically for search/indexing
+  'wss://search.nos.today',    // Dedicated NIP-50 search relay
+  'wss://relay.damus.io',
+  'wss://nostr.wine',
+  'wss://nos.lol',
+  'wss://relay.snort.social',
+  'wss://relay.primal.net',
+  'wss://nostr.bitcoiner.social',
+  'wss://relay.nos.social',
+  'wss://relay.nostr.net',
+] as const
+
+const OUTBOX_RELAYS = [
+  'wss://purplepag.es',  // NIP-65 relay list lookups
+] as const
+
+export function getDefaultRelayUrls(): string[] {
+  return [...DEFAULT_RELAYS]
+}
+
+// ── SQLite Cache Adapter ─────────────────────────────────────
+
+class SQLiteCacheAdapter implements NDKCacheAdapter {
+  // SQLite-backed local state is fast enough to be treated as a primary cache.
+  // This lets NDK reuse cached relay-list events for outbox routing.
+  readonly locking = true
+
+  private readonly inflightEventWrites = new Map<string, Promise<void>>()
+
+  async query(subscription: NDKSubscription): Promise<NDKEvent[]> {
+    const filter = subscription.filter as NostrFilter
+    try {
+      const events = await queryEvents(filter)
+      for (const rawEvent of events) {
+        subscription.eventReceived(
+          rawEvent as unknown as NDKEvent,
+          undefined,
+          true,  // fromCache = true
+        )
+      }
+    } catch (error) {
+      console.warn('[NDK cache] Query degraded:', error)
+    }
+    return []
+  }
+
+  async setEvent(event: NDKEvent, _filters: NDKNativeFilter[], _relay?: NDKRelay): Promise<void> {
+    const rawEvent = event.rawEvent() as unknown as NostrEvent
+    const existing = this.inflightEventWrites.get(rawEvent.id)
+    if (existing) {
+      await existing.catch(() => {})
+      return
+    }
+
+    const writePromise = insertEvent(rawEvent)
+      .then(() => undefined)
+      .catch((error) => {
+        console.warn('[NDK cache] Event write degraded:', error)
+      })
+      .finally(() => {
+        this.inflightEventWrites.delete(rawEvent.id)
+      })
+
+    this.inflightEventWrites.set(rawEvent.id, writePromise)
+    await writePromise
+  }
+
+  async fetchProfile(pubkey: string): Promise<NDKCacheEntry<NDKUserProfile> | null> {
+    const profile = await getProfile(pubkey)
+    if (!profile) return null
+    const entry: NDKCacheEntry<NDKUserProfile> = { cachedAt: profile.updatedAt }
+    if (profile.name         !== undefined) entry.name        = profile.name
+    if (profile.display_name !== undefined) entry.displayName = profile.display_name
+    if (profile.picture      !== undefined) entry.picture     = profile.picture
+    if (profile.banner       !== undefined) entry.banner      = profile.banner
+    if (profile.about        !== undefined) entry.about       = profile.about
+    if (profile.website      !== undefined) entry.website     = profile.website
+    if (profile.nip05Verified && profile.nip05 !== undefined) {
+      entry.nip05 = profile.nip05
+    }
+    if (profile.lud06        !== undefined) entry.lud06       = profile.lud06
+    if (profile.lud16        !== undefined) entry.lud16       = profile.lud16
+    return entry
+  }
+
+  saveProfile(_pubkey: string, _profile: NDKUserProfile): void {
+    // Profile saving is handled canonically via insertEvent(kind-0).
+    // NDK may call this with partial/synthetic data — ignore it.
+  }
+
+  // NDK v2 extended cache methods
+  async fetchProfiles(pubkeys: Set<string>): Promise<Map<string, Profile>> {
+    return getProfiles([...pubkeys])
+  }
+}
+
+// ── NDK Singleton ────────────────────────────────────────────
+
+let _ndk: NDK | null = null
+
+export function getNDK(): NDK {
+  if (!_ndk) throw new Error('NDK not initialized — call initNDK() first')
+  return _ndk
+}
+
+export interface InitNDKOptions {
+  relays?: string[]
+  signal?: AbortSignal
+}
+
+/**
+ * Initialize NDK. Must be called after initDB().
+ * Returns the NDK instance.
+ */
+export async function initNDK(options: InitNDKOptions = {}): Promise<NDK> {
+  if (_ndk) return _ndk
+
+  // Validate and filter relay URLs
+  const relays = (options.relays ?? DEFAULT_RELAYS)
+    .filter(isValidRelayURL)
+    .slice(0, 20) // hard cap
+
+  // Create signer — NIP-07 only (no private key handling in this app)
+  let signer: NDKNip07Signer | undefined
+  if (typeof window !== 'undefined' && 'nostr' in window) {
+    try {
+      signer = new NDKNip07Signer()
+    } catch {
+      // Extension not available or rejected — proceed unsigned
+    }
+  }
+
+  _ndk = new NDK({
+    explicitRelayUrls:  relays,
+    outboxRelayUrls:    [...OUTBOX_RELAYS],
+    enableOutboxModel:  true,
+    cacheAdapter:       new SQLiteCacheAdapter(),
+    ...(signer !== undefined ? { signer } : {}),
+    // Autoconnect is disabled — we control connection timing
+    autoConnectUserRelays:  false,
+  })
+
+  // Connect with timeout
+  const connectPromise = _ndk.connect(3_000)
+  if (options.signal) {
+    await Promise.race([
+      connectPromise,
+      new Promise<never>((_, reject) => {
+        options.signal!.addEventListener('abort', () =>
+          reject(new DOMException('Aborted', 'AbortError'))
+        , { once: true })
+      }),
+    ])
+  } else {
+    await connectPromise
+  }
+
+  return _ndk
+}
+
+/**
+ * Get the currently authenticated user's NDK user object.
+ * Returns null if no signer is configured.
+ */
+export async function getCurrentUser(): Promise<NDKUser | null> {
+  const ndk = getNDK()
+  if (!ndk.signer) return null
+  try {
+    return await ndk.signer.user()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Disconnect all relays and clean up.
+ */
+export function disconnectNDK(): void {
+  if (!_ndk) return
+  // NDK doesn't have a global disconnect — close pool
+  _ndk.pool.relays.forEach(relay => relay.disconnect())
+  _ndk = null
+}
