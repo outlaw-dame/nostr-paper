@@ -1,4 +1,5 @@
-import NDK, { NDKEvent } from '@nostr-dev-kit/ndk'
+import type NDK from '@nostr-dev-kit/ndk';
+import { NDKEvent } from '@nostr-dev-kit/ndk'
 import { insertEvent } from '@/lib/db/nostr'
 import { withOptionalClientTag } from '@/lib/nostr/appHandlers'
 import { buildQuoteTagsFromContent } from '@/lib/nostr/repost'

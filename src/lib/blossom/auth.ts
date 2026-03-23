@@ -16,7 +16,8 @@
  * signer (NIP-07 browser extension or NIP-46 remote signer).
  */
 
-import NDK, { NDKEvent } from '@nostr-dev-kit/ndk'
+import type NDK from '@nostr-dev-kit/ndk';
+import { NDKEvent } from '@nostr-dev-kit/ndk'
 
 export interface NIP98AuthOptions {
   /** Full URL of the request (including path, no trailing slash needed) */

@@ -128,7 +128,7 @@ export function useEventFilterCheck() {
   useEffect(() => _subscribe(() => tick(t => t + 1)), [])
 
   // Capture a stable snapshot of the current filter array for the closure
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   return useCallback(
     (event: NostrEvent, profile?: Profile): FilterCheckResult => {
       if (_loading || _filters.length === 0) return { action: null, matches: [] }

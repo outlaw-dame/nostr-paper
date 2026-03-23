@@ -15,7 +15,8 @@
  */
 
 import { useEffect, useReducer, useRef, useCallback, useMemo } from 'react'
-import NDK, {
+import type NDK from '@nostr-dev-kit/ndk';
+import {
   NDKSubscriptionCacheUsage,
   type NDKEvent,
   type NDKSubscription,
