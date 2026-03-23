@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Sheet } from 'konsta/react'
 import { EventPreviewCard } from '@/components/nostr/EventPreviewCard'
 import { AuthorRow } from '@/components/profile/AuthorRow'
@@ -125,7 +126,7 @@ export function ReportSheet({
 
   const publishDisabled = publishing || !currentUser || !reportType
 
-  return (
+  const sheet = (
     <Sheet
       opened={open}
       onBackdropClick={closeSheet}
@@ -303,4 +304,10 @@ export function ReportSheet({
       </div>
     </Sheet>
   )
+
+  if (typeof document !== 'undefined') {
+    return createPortal(sheet, document.body)
+  }
+
+  return sheet
 }

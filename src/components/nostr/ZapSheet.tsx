@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Sheet } from 'konsta/react'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { useApp } from '@/contexts/app-context'
@@ -174,7 +175,7 @@ export function ZapSheet({
 
   const canZap = !!currentUser && !!lnAddress && step.type === 'compose'
 
-  return (
+  const sheet = (
     <Sheet
       opened={open}
       onBackdropClick={closeSheet}
@@ -449,4 +450,10 @@ export function ZapSheet({
       </div>
     </Sheet>
   )
+
+  if (typeof document !== 'undefined') {
+    return createPortal(sheet, document.body)
+  }
+
+  return sheet
 }

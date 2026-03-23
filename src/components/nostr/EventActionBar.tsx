@@ -252,7 +252,10 @@ export function EventActionBar({ event, className = '' }: EventActionBarProps) {
         <button
           type="button"
           disabled={!currentUser || publishing !== null}
-          onClick={() => setZapSheetOpen(true)}
+          onClick={() => {
+            setReportSheetOpen(false)
+            setZapSheetOpen(true)
+          }}
           className="
             flex-1 rounded-[14px] border border-[rgb(var(--color-fill)/0.16)]
             bg-[rgb(var(--color-bg-secondary))] px-4 py-2.5
@@ -316,6 +319,7 @@ export function EventActionBar({ event, className = '' }: EventActionBarProps) {
           disabled={!currentUser || reported || publishing !== null}
           onClick={() => {
             setError(null)
+            setZapSheetOpen(false)
             setReportSheetOpen(true)
           }}
           className="
