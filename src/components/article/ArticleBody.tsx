@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { SyndicationExportBar } from '@/components/syndication/SyndicationExportBar'
@@ -98,13 +99,16 @@ function CrossReferenceList({ references }: { references: ArticleCrossReference[
 }
 
 export function ArticleBody({ event, profile, className = '' }: ArticleBodyProps) {
-  const article = parseLongFormEvent(event)
-  const articleImageModerationDocument = buildMediaModerationDocument({
-    id: `${event.id}:hero-image`,
-    kind: 'article_image',
-    url: article?.image ?? null,
-    updatedAt: event.created_at,
-  })
+  const article = useMemo(() => parseLongFormEvent(event), [event])
+  const articleImageModerationDocument = useMemo(
+    () => buildMediaModerationDocument({
+      id: `${event.id}:hero-image`,
+      kind: 'article_image',
+      url: article?.image ?? null,
+      updatedAt: event.created_at,
+    }),
+    [article?.image, event.created_at, event.id],
+  )
   const { blocked: articleImageBlocked, loading: articleImageLoading } = useMediaModerationDocument(articleImageModerationDocument)
   if (!article) return null
 

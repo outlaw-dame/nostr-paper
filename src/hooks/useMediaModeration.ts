@@ -36,9 +36,10 @@ function getAllowedIds(
 
 export function useMediaModerationDocuments(
   documents: MediaModerationDocument[],
-  options: { enabled?: boolean } = {},
+  options: { enabled?: boolean; failClosed?: boolean } = {},
 ): UseMediaModerationDocumentsResult {
   const enabled = options.enabled ?? true
+  const failClosed = options.failClosed ?? false
   const [decisions, setDecisions] = useState<Map<string, MediaModerationDecision>>(new Map())
   // Initialize to true so the first render is fail-open (no false blocks before the effect runs)
   const [loading, setLoading] = useState(true)
@@ -107,17 +108,17 @@ export function useMediaModerationDocuments(
       })
 
     return () => controller.abort()
-  }, [enabled, documents, signature])
+  }, [enabled, signature])
 
   const allowedIds = useMemo(
-    () => getAllowedIds(documents, decisions, error !== null),
-    [documents, decisions, error],
+    () => getAllowedIds(documents, decisions, !failClosed && error !== null),
+    [documents, decisions, error, failClosed],
   )
 
   const blockedIds = useMemo(() => {
     const blocked = new Set<string>()
     // Fail-open while loading or on error — only block after a definitive decision
-    const failOpen = loading || error !== null
+    const failOpen = !failClosed && (loading || error !== null)
 
     for (const document of documents) {
       const decision = decisions.get(document.id)
@@ -130,7 +131,7 @@ export function useMediaModerationDocuments(
     }
 
     return blocked
-  }, [documents, decisions, error, loading])
+  }, [documents, decisions, error, loading, failClosed])
 
   return {
     decisions,
@@ -143,7 +144,7 @@ export function useMediaModerationDocuments(
 
 export function useMediaModerationDocument(
   document: MediaModerationDocument | null | undefined,
-  options: { enabled?: boolean } = {},
+  options: { enabled?: boolean; failClosed?: boolean } = {},
 ): {
   blocked: boolean
   loading: boolean

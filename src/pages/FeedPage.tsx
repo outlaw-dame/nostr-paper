@@ -39,6 +39,7 @@ import { useEventFilterCheck, useSemanticFiltering, mergeResults } from '@/hooks
 import { buildComposeSearch } from '@/lib/compose'
 import { buildEventModerationDocument } from '@/lib/moderation/content'
 import { parseCommentEvent } from '@/lib/nostr/thread'
+import { getPeerTubeEmbedUrl, getVimeoVideoId, getYouTubeVideoId } from '@/lib/nostr/imeta'
 import { normalizeHashtag } from '@/lib/security/sanitize'
 import type { ParsedVideoEvent } from '@/lib/nostr/video'
 import type { FilterCheckResult } from '@/lib/filters/types'
@@ -388,7 +389,7 @@ export default function FeedPage() {
 
               <button
                 type="button"
-                onClick={() => navigate('/search')}
+                onClick={() => navigate('/explore')}
                 className="
                   app-panel-muted mt-3 flex h-10 w-full items-center gap-3 rounded-[14px] px-3.5
                   text-left text-[14px] text-[rgb(var(--color-label-tertiary))]
@@ -543,6 +544,9 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult }: Seco
         "
         role="button"
         tabIndex={0}
+        onPointerDownCapture={(eventPointer) => {
+          eventPointer.stopPropagation()
+        }}
         onClick={() => navigate(href)}
         onKeyDown={(eventKey) => {
           if (eventKey.key === 'Enter' || eventKey.key === ' ') {
@@ -650,14 +654,70 @@ function RichStoryMedia({
   sensitiveReason,
   isUnfollowed,
 }: RichStoryMediaProps) {
-  const canAutoplayVideo = Boolean(video && (playbackSources?.length ?? 0) > 0 && !isSensitive && !isUnfollowed)
+  const sourceCandidates = useMemo(
+    () => [
+      ...(video?.references ?? []),
+      ...((playbackSources ?? []).map((source) => source.url)),
+    ],
+    [playbackSources, video?.references],
+  )
+
+  const youTubeId = useMemo(() => {
+    for (const candidate of sourceCandidates) {
+      const id = getYouTubeVideoId(candidate)
+      if (id) return id
+    }
+    return null
+  }, [sourceCandidates])
+
+  const vimeoId = useMemo(() => {
+    for (const candidate of sourceCandidates) {
+      const id = getVimeoVideoId(candidate)
+      if (id) return id
+    }
+    return null
+  }, [sourceCandidates])
+
+  const peertubeEmbed = useMemo(() => {
+    for (const candidate of sourceCandidates) {
+      const embed = getPeerTubeEmbedUrl(candidate)
+      if (embed) return embed
+    }
+    return null
+  }, [sourceCandidates])
+
+  const canAutoplayVideo = Boolean(video && (playbackSources?.length ?? 0) > 0 && !isSensitive && !isUnfollowed && !youTubeId && !vimeoId && !peertubeEmbed)
   const imageSrc = articleImage ?? videoPoster
   const aspectClassName = video?.isShort ? 'aspect-[4/5]' : 'aspect-[16/9]'
   const label = isArticle ? 'Article' : video?.isShort ? 'Short video' : 'Video'
 
   return (
     <div className={`relative mb-4 overflow-hidden rounded-[18px] bg-[rgb(var(--color-surface-secondary))] ${aspectClassName}`}>
-      {canAutoplayVideo ? (
+      {youTubeId ? (
+        <iframe
+          src={`https://www.youtube-nocookie.com/embed/${youTubeId}?modestbranding=1&playsinline=1&rel=0`}
+          className="h-full w-full"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+          title="YouTube video"
+        />
+      ) : vimeoId ? (
+        <iframe
+          src={`https://player.vimeo.com/video/${vimeoId}?title=0&byline=0&portrait=0`}
+          className="h-full w-full"
+          allow="autoplay; fullscreen; picture-in-picture"
+          allowFullScreen
+          title="Vimeo video"
+        />
+      ) : peertubeEmbed ? (
+        <iframe
+          src={peertubeEmbed}
+          className="h-full w-full"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+          title="PeerTube video"
+        />
+      ) : canAutoplayVideo ? (
         <video
           poster={videoPoster}
           muted

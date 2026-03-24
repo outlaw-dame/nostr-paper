@@ -132,6 +132,9 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
         dragElastic={{ top: 0.28, bottom: 0.18 }}
         dragMomentum={false}
         onDragEnd={handleDragEnd}
+        onPointerDownCapture={(eventPointer) => {
+          eventPointer.stopPropagation()
+        }}
         onClick={() => setExpanded(true)}
         role="button"
         tabIndex={0}
