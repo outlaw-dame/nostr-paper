@@ -9,9 +9,12 @@ import { useAddressableEvent } from '@/hooks/useAddressableEvent'
 import { useEvent } from '@/hooks/useEvent'
 import { useLinkPreview } from '@/hooks/useLinkPreview'
 import { useProfile } from '@/hooks/useProfile'
+import { useModerationDocuments } from '@/hooks/useModeration'
+import { getPeerTubeEmbedUrl, getVimeoVideoId, getYouTubeVideoId } from '@/lib/nostr/imeta'
 import { getNip21Route } from '@/lib/nostr/nip21'
 import { looksLikeFeedUrl } from '@/lib/syndication/parse'
 import { useSyndicationPreview } from '@/hooks/useSyndicationPreview'
+import type { ModerationDocument } from '@/types'
 import {
   rankPrimaryCandidates,
   shouldShowSourceRail,
@@ -149,12 +152,93 @@ function PrimaryUrlSlot({
   candidate: Extract<EntityCandidate, { type: 'url' }>
   remainingCandidates: EntityCandidate[]
 }) {
+  const youtubeId = React.useMemo(() => getYouTubeVideoId(candidate.url), [candidate.url])
+  const vimeoId = React.useMemo(() => getVimeoVideoId(candidate.url), [candidate.url])
+  const peertubeEmbed = React.useMemo(() => getPeerTubeEmbedUrl(candidate.url), [candidate.url])
+
+  if (youtubeId) {
+    return (
+      <div className="mt-3 overflow-hidden rounded-ios-xl border border-[rgb(var(--color-fill)/0.10)] bg-black aspect-video">
+        <iframe
+          src={`https://www.youtube-nocookie.com/embed/${youtubeId}?modestbranding=1&playsinline=1&rel=0`}
+          className="h-full w-full"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+          title="YouTube video"
+        />
+      </div>
+    )
+  }
+
+  if (vimeoId) {
+    return (
+      <div className="mt-3 overflow-hidden rounded-ios-xl border border-[rgb(var(--color-fill)/0.10)] bg-black aspect-video">
+        <iframe
+          src={`https://player.vimeo.com/video/${vimeoId}?title=0&byline=0&portrait=0`}
+          className="h-full w-full"
+          allow="autoplay; fullscreen; picture-in-picture"
+          allowFullScreen
+          title="Vimeo video"
+        />
+      </div>
+    )
+  }
+
+  if (peertubeEmbed) {
+    return (
+      <div className="mt-3 overflow-hidden rounded-ios-xl border border-[rgb(var(--color-fill)/0.10)] bg-black aspect-video">
+        <iframe
+          src={peertubeEmbed}
+          className="h-full w-full"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+          title="PeerTube video"
+        />
+      </div>
+    )
+  }
+
   const feedLike = React.useMemo(() => looksLikeFeedUrl(candidate.url), [candidate.url])
   const { data, loading } = useLinkPreview(candidate.url, { enabled: !feedLike })
   const shouldTryFeed = feedLike || (!loading && !data)
   const { feed, loading: syndicationLoading } = useSyndicationPreview(candidate.url, { enabled: shouldTryFeed })
 
-  if (loading || syndicationLoading) return <EntityCardSkeleton />
+  const moderationDocuments = React.useMemo(() => {
+    if (!data) return []
+    const text = [data.title, data.description].filter(Boolean).join('\n\n')
+    if (!text.trim()) return []
+    return [{
+      id: `link:${candidate.url}`,
+      kind: 'event',
+      text,
+      updatedAt: 0,
+    }] satisfies ModerationDocument[]
+  }, [data, candidate.url])
+  const { allowedIds, loading: moderationLoading } = useModerationDocuments(moderationDocuments)
+  const blocked = moderationDocuments.length > 0 && !allowedIds.has(moderationDocuments[0]?.id ?? '')
+  const [override, setOverride] = React.useState(false)
+
+  if (loading || syndicationLoading || moderationLoading) return <EntityCardSkeleton />
+
+  if (blocked && !override) {
+    return (
+      <div className="mt-3 rounded-ios-xl border border-[rgb(var(--color-fill)/0.10)] bg-[rgb(var(--color-bg-secondary))] p-4 text-center">
+        <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">Content hidden</p>
+        <p className="mt-1 text-[14px] text-[rgb(var(--color-label-secondary))]">This link preview was hidden by your content filters.</p>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            setOverride(true)
+          }}
+          className="mt-3 rounded-full bg-[rgb(var(--color-fill)/0.12)] px-4 py-1.5 text-[13px] font-medium text-[rgb(var(--color-label))]"
+        >
+          Show
+        </button>
+      </div>
+    )
+  }
+
   if (feed) {
     return (
       <SyndicationPreviewCard

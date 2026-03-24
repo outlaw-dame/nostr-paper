@@ -13,6 +13,32 @@ const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/gi
 
 export type MediaAttachmentKind = 'image' | 'video' | 'audio' | 'file'
 
+export function getYouTubeVideoId(url: string): string | null {
+  if (!url) return null
+  const match = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=|shorts\/)|youtu\.be\/)([^"&?\/\s]{11})/i)
+  return match?.[1] ?? null
+}
+
+export function getVimeoVideoId(url: string): string | null {
+  if (!url) return null
+  const match = url.match(/(?:vimeo\.com\/|player\.vimeo\.com\/video\/)(?:(?:channels\/[a-zA-Z0-9]+\/)|(?:groups\/[a-zA-Z0-9]+\/videos\/))?([0-9]+)/)
+  return match?.[1] ?? null
+}
+
+export function getPeerTubeEmbedUrl(url: string): string | null {
+  if (!url) return null
+  try {
+    const u = new URL(url)
+    const match = u.pathname.match(/^\/(?:w|videos\/watch)\/([a-zA-Z0-9-]+)$/)
+    if (match) {
+      return `${u.origin}/videos/embed/${match[1]}`
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
 function sanitizeOptionalText(value: string | undefined, maxChars = MAX_TEXT_CHARS): string | undefined {
   if (typeof value !== 'string') return undefined
   const sanitized = sanitizeText(value).trim().slice(0, maxChars)
@@ -495,28 +521,33 @@ export function getMediaAttachmentKind(attachment: Nip92MediaAttachment): MediaA
 }
 
 export function getMediaAttachmentPreviewUrl(attachment: Nip92MediaAttachment): string | null {
-  const directSourceCandidates = getMediaAttachmentKind(attachment) === 'image'
-    ? [
-        (
-          attachment.mimeType?.startsWith('image/') &&
-          isSafeMediaURL(attachment.url)
-        )
-          ? attachment.url
-          : undefined,
-        ...((attachment.fallbacks ?? []).filter(candidate => isLikelyRenderableImageUrl(candidate, true))),
-        isLikelyRenderableImageUrl(attachment.url, true) ? attachment.url : undefined,
-      ]
-    : []
-  const candidates = [
+  const kind = getMediaAttachmentKind(attachment)
+
+  // Prioritize explicit preview fields first (thumb, image, etc.)
+  const previewCandidates = [
     attachment.image,
     ...(attachment.imageFallbacks ?? []),
     attachment.thumb,
-    ...directSourceCandidates,
+    // Generate YouTube thumbnail if applicable
+    (() => {
+      const ytId = getYouTubeVideoId(attachment.url)
+      return ytId ? `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg` : undefined
+    })(),
   ]
 
-  for (const candidate of candidates) {
+  for (const candidate of previewCandidates) {
     if (typeof candidate === 'string' && isSafeMediaURL(candidate)) {
       return candidate
+    }
+  }
+
+  // If the attachment is an image and we have no explicit preview,
+  // treat the source URL itself as the preview. This is more aggressive
+  // and prevents images from degrading to generic file cards.
+  if (kind === 'image') {
+    const sourceUrl = getMediaAttachmentSourceUrl(attachment)
+    if (sourceUrl && isSafeMediaURL(sourceUrl)) {
+      return sourceUrl
     }
   }
 

@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { VideoBody } from '@/components/video/VideoBody'
-import { useEventModeration } from '@/hooks/useModeration'
+import { useEventModeration, useModerationDocuments } from '@/hooks/useModeration'
+import { useMuteList } from '@/hooks/useMuteList'
 import { usePageHead } from '@/hooks/usePageHead'
 import { useProfile } from '@/hooks/useProfile'
 import { getEvent, getLatestAddressableEvent } from '@/lib/db/nostr'
 import { buildVideoMetaTags, buildVideoTitle } from '@/lib/nostr/meta'
 import { decodeEventReference } from '@/lib/nostr/nip21'
+import { getEventMediaAttachments, getPeerTubeEmbedUrl, getVimeoVideoId, getYouTubeVideoId } from '@/lib/nostr/imeta'
 import { getNDK } from '@/lib/nostr/ndk'
 import { withRetry } from '@/lib/retry'
 import { isValidHex32 } from '@/lib/security/sanitize'
 import { decodeVideoAddress, parseVideoEvent } from '@/lib/nostr/video'
-import type { NostrEvent } from '@/types'
+import type { ModerationDocument, NostrEvent } from '@/types'
 import { Kind } from '@/types'
 
 type VideoRouteAddress =
@@ -74,12 +76,31 @@ export default function VideoPage() {
   const [event, setEvent] = useState<NostrEvent | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [override, setOverride] = useState(false)
   const { profile } = useProfile(event?.pubkey)
   const video = useMemo(() => (event ? parseVideoEvent(event) : null), [event])
   const { blocked: eventBlocked, loading: moderationLoading } = useEventModeration(event)
 
+  const videoMetaDocuments = useMemo(() => {
+    if (!video) return []
+    const text = [video.title, video.summary].filter(Boolean).join('\n\n')
+    if (!text.trim()) return []
+    return [{
+      id: `video-meta:${video.id}`,
+      kind: 'event',
+      text,
+      updatedAt: event?.created_at ?? Date.now(),
+    }] satisfies ModerationDocument[]
+  }, [video, event])
+  const { allowedIds: allowedMetaIds, loading: metaModerationLoading } = useModerationDocuments(videoMetaDocuments)
+  const metaBlocked = videoMetaDocuments.length > 0 && !allowedMetaIds.has(videoMetaDocuments[0]?.id ?? '')
+
+  const { isMuted, loading: muteListLoading } = useMuteList()
+  const isMutedAuthor = event ? isMuted(event.pubkey) : false
+  const isBlocked = eventBlocked || metaBlocked || isMutedAuthor
+
   usePageHead(
-    video && !moderationLoading && !eventBlocked
+    video && !moderationLoading && !metaModerationLoading && (!isBlocked || override)
       ? {
           title: buildVideoTitle(video),
           tags: buildVideoMetaTags({ video, profile }),
@@ -178,7 +199,47 @@ export default function VideoPage() {
     return () => controller.abort()
   }, [address])
 
-  if (loading || (event !== null && moderationLoading)) {
+  const youTubeId = useMemo(() => {
+    if (!event) return null
+    // Check referenced source URLs first
+    for (const reference of video?.references ?? []) {
+      const id = getYouTubeVideoId(reference)
+      if (id) return id
+    }
+    // Check all attachments
+    const attachments = getEventMediaAttachments(event)
+    return attachments.map(a => getYouTubeVideoId(a.url)).find(id => id !== null) ?? null
+  }, [event, video])
+
+  const vimeoId = useMemo(() => {
+    if (!event) return null
+    // Check referenced source URLs first
+    for (const reference of video?.references ?? []) {
+      const id = getVimeoVideoId(reference)
+      if (id) return id
+    }
+    // Check all attachments
+    const attachments = getEventMediaAttachments(event)
+    return attachments.map(a => getVimeoVideoId(a.url)).find(id => id !== null) ?? null
+  }, [event, video])
+
+  const peertubeEmbed = useMemo(() => {
+    if (!event) return null
+    // Check referenced source URLs first
+    for (const reference of video?.references ?? []) {
+      const embed = getPeerTubeEmbedUrl(reference)
+      if (embed) return embed
+    }
+    // Check all attachments
+    const attachments = getEventMediaAttachments(event)
+    for (const a of attachments) {
+      const embed = getPeerTubeEmbedUrl(a.url)
+      if (embed) return embed
+    }
+    return null
+  }, [event, video])
+
+  if (loading || (event !== null && (moderationLoading || metaModerationLoading)) || muteListLoading) {
     return (
       <div className="min-h-dvh bg-[rgb(var(--color-bg))] px-4 pt-safe pb-safe">
         <div className="sticky top-0 z-10 bg-[rgb(var(--color-bg)/0.88)] py-4 backdrop-blur-xl">
@@ -197,7 +258,7 @@ export default function VideoPage() {
     )
   }
 
-  if (!event || !video || eventBlocked) {
+  if (!event || !video || (isBlocked && !override)) {
     return (
       <div className="min-h-dvh bg-[rgb(var(--color-bg))] px-4 pt-safe pb-safe">
         <div className="sticky top-0 z-10 bg-[rgb(var(--color-bg)/0.88)] py-4 backdrop-blur-xl">
@@ -211,13 +272,26 @@ export default function VideoPage() {
         </div>
         <div className="pt-6">
           <h1 className="text-[28px] font-semibold tracking-[-0.03em] text-[rgb(var(--color-label))]">
-            Video unavailable
+            {isBlocked ? 'Content hidden' : 'Video unavailable'}
           </h1>
-          {error && !eventBlocked && (
+          {isBlocked ? (
+            <>
+              <p className="mt-3 text-[16px] leading-7 text-[rgb(var(--color-label-secondary))]">
+                This video was hidden by your content filters or mute list.
+              </p>
+              <button
+                type="button"
+                onClick={() => setOverride(true)}
+                className="mt-4 rounded-full bg-[rgb(var(--color-fill)/0.12)] px-4 py-2 text-[15px] font-medium text-[rgb(var(--color-label))]"
+              >
+                Show Anyway
+              </button>
+            </>
+          ) : error ? (
             <p className="mt-3 text-[16px] leading-7 text-[rgb(var(--color-label-secondary))]">
               {error}
             </p>
-          )}
+          ) : null}
         </div>
       </div>
     )
@@ -236,7 +310,39 @@ export default function VideoPage() {
       </div>
 
       <div className="pb-10 pt-4">
-        <VideoBody event={event} profile={profile} />
+        {youTubeId ? (
+          <div className="overflow-hidden rounded-xl bg-black aspect-video">
+            <iframe
+              src={`https://www.youtube-nocookie.com/embed/${youTubeId}?modestbranding=1&playsinline=1&rel=0`}
+              className="h-full w-full"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+              title="YouTube video"
+            />
+          </div>
+        ) : vimeoId ? (
+          <div className="overflow-hidden rounded-xl bg-black aspect-video">
+            <iframe
+              src={`https://player.vimeo.com/video/${vimeoId}?title=0&byline=0&portrait=0`}
+              className="h-full w-full"
+              allow="autoplay; fullscreen; picture-in-picture"
+              allowFullScreen
+              title="Vimeo video"
+            />
+          </div>
+        ) : peertubeEmbed ? (
+          <div className="overflow-hidden rounded-xl bg-black aspect-video">
+            <iframe
+              src={peertubeEmbed}
+              className="h-full w-full"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+              title="PeerTube video"
+            />
+          </div>
+        ) : (
+          <VideoBody event={event} profile={profile} />
+        )}
       </div>
     </div>
   )
