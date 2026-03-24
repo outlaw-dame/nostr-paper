@@ -434,55 +434,51 @@ export async function insertEvent(event: NostrEvent): Promise<boolean> {
     ? getEventAddressCoordinate(event)
     : null
 
+  // ── Batch deletion checks in parallel (avoid N+1 queries) ───
+  let isDeletionBlocked = false
   if (event.kind !== Kind.EventDeletion) {
-    const deletedById = await dbQuery<{ event_id: string }>(
-      `
-        SELECT event_id
-        FROM event_deletions
-        WHERE event_id = ? AND deleted_by = ?
-        LIMIT 1
-      `,
-      [event.id, event.pubkey],
-    )
-    if (deletedById.length > 0) return false
-
-    if (addressCoordinate) {
-      const deletedByAddress = await dbQuery<{ coordinate: string }>(
-        `
-          SELECT coordinate
-          FROM address_deletions
-          WHERE coordinate = ?
-            AND deleted_by = ?
-            AND until_created_at >= ?
-          LIMIT 1
-        `,
-        [addressCoordinate, event.pubkey, event.created_at],
-      )
-      if (deletedByAddress.length > 0) return false
-    }
+    const [deletedById, deletedByAddress] = await Promise.all([
+      dbQuery<{ event_id: string }>(
+        'SELECT event_id FROM event_deletions WHERE event_id = ? AND deleted_by = ? LIMIT 1',
+        [event.id, event.pubkey],
+      ),
+      addressCoordinate
+        ? dbQuery<{ coordinate: string }>(
+            'SELECT coordinate FROM address_deletions WHERE coordinate = ? AND deleted_by = ? AND until_created_at >= ? LIMIT 1',
+            [addressCoordinate, event.pubkey, event.created_at],
+          )
+        : Promise.resolve([]),
+    ])
+    
+    isDeletionBlocked = deletedById.length > 0 || deletedByAddress.length > 0
   }
+  
+  if (isDeletionBlocked) return false
 
+  // ── Batch replaceable event checks in parallel ───
   const parsedContacts = event.kind === Kind.Contacts
     ? parseContactListEvent(event)
     : null
-  const shouldApplyContacts = parsedContacts
-    ? await shouldReplaceContactList(parsedContacts.pubkey, {
-      eventId: parsedContacts.eventId,
-      createdAt: parsedContacts.createdAt,
-    })
-    : false
+
+  const [shouldApplyContacts, shouldApplyRelayList] = await Promise.all([
+    parsedContacts
+      ? shouldReplaceContactList(parsedContacts.pubkey, {
+          eventId: parsedContacts.eventId,
+          createdAt: parsedContacts.createdAt,
+        })
+      : Promise.resolve(false),
+    event.kind === Kind.RelayList
+      ? shouldReplaceRelayList(event.pubkey, {
+          eventId: event.id,
+          createdAt: event.created_at,
+        })
+      : Promise.resolve(false),
+  ])
 
   // Kind-3 is replaceable and obsolete historical lists should not be kept.
   if (parsedContacts && !shouldApplyContacts) {
     return false
   }
-
-  const shouldApplyRelayList = event.kind === Kind.RelayList
-    ? await shouldReplaceRelayList(event.pubkey, {
-      eventId: event.id,
-      createdAt: event.created_at,
-    })
-    : false
 
   if (event.kind === Kind.RelayList && !shouldApplyRelayList) {
     return false

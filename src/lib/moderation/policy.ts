@@ -12,6 +12,39 @@ const KNOWN_LABELS: readonly ModerationLabel[] = [
   'identity_hate',
 ] as const
 
+const LABEL_ALIASES: Record<string, ModerationLabel> = {
+  // Case variations
+  'Toxic': 'toxic',
+  'TOXIC': 'toxic',
+  'Severe_Toxic': 'severe_toxic',
+  'SEVERE_TOXIC': 'severe_toxic',
+  'Severe Toxic': 'severe_toxic',
+  'SEVERE TOXIC': 'severe_toxic',
+  'Obscene': 'obscene',
+  'OBSCENE': 'obscene',
+  'Threat': 'threat',
+  'THREAT': 'threat',
+  'Insult': 'insult',
+  'INSULT': 'insult',
+  'Identity_Hate': 'identity_hate',
+  'IDENTITY_HATE': 'identity_hate',
+  'Identity Hate': 'identity_hate',
+  'IDENTITY HATE': 'identity_hate',
+  // Common model variations
+  'severe-toxic': 'severe_toxic',
+  'severe-toxicity': 'severe_toxic',
+  'SEVERE-TOXIC': 'severe_toxic',
+  'SEVERE-TOXICITY': 'severe_toxic',
+  'identity-hate': 'identity_hate',
+  'identity-attack': 'identity_hate',
+  'IDENTITY-HATE': 'identity_hate',
+  'IDENTITY-ATTACK': 'identity_hate',
+  'identity_attack': 'identity_hate',
+  'IDENTITY_ATTACK': 'identity_hate',
+  'hate_speech': 'identity_hate',
+  'HATE_SPEECH': 'identity_hate',
+} as const
+
 export function emptyModerationScores(): ModerationScores {
   return {
     toxic: 0,
@@ -36,8 +69,10 @@ export function normalizeModerationScores(
   const normalized = emptyModerationScores()
 
   for (const entry of scores) {
-    if (!KNOWN_LABELS.includes(entry.label as ModerationLabel)) continue
-    normalized[entry.label as ModerationLabel] = clampScore(entry.score)
+    const normalizedLabel = LABEL_ALIASES[entry.label] || (KNOWN_LABELS.includes(entry.label as ModerationLabel) ? entry.label as ModerationLabel : null)
+    if (normalizedLabel) {
+      normalized[normalizedLabel] = clampScore(entry.score)
+    }
   }
 
   return normalized

@@ -1146,6 +1146,8 @@ export default defineConfig(({ mode }) => {
     assetsInclude: ['**/*.wasm'],
 
     server: {
+      port: 5173,
+      strictPort: false,
       headers: LOCAL_CROSS_ORIGIN_ISOLATION_HEADERS,
       fs: {
         allow: ['..'],

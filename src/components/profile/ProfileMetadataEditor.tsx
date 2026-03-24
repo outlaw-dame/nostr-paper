@@ -1,505 +1,234 @@
-import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react'
-import { getProfile } from '@/lib/db/nostr'
-import { publishProfileMetadata } from '@/lib/nostr/metadata'
-import type { Nip39ExternalIdentity, Profile, ProfileMetadata } from '@/types'
+import { useCallback, useEffect, useState } from 'react'
+import { NDKEvent } from '@nostr-dev-kit/ndk'
+import { BlossomUpload } from '@/components/blossom/BlossomUpload'
+import { useApp } from '@/contexts/app-context'
+import { getNDK } from '@/lib/nostr/ndk'
+import { withRetry } from '@/lib/retry'
+import {
+  isSafeMediaURL,
+  isSafeURL,
+  isValidNip05Format,
+  sanitizeAbout,
+  sanitizeName,
+} from '@/lib/security/sanitize'
+import type { Profile } from '@/types'
 
 interface ProfileMetadataEditorProps {
   pubkey: string
   profile: Profile | null
-  onSaved?: (profile: Profile | null) => void
 }
 
-interface ExternalIdentityEntry {
-  platform: string
-  identity: string
-  proof: string
-}
+export function ProfileMetadataEditor({ pubkey, profile }: ProfileMetadataEditorProps) {
+  const { currentUser } = useApp()
+  const [name, setName] = useState(profile?.name ?? '')
+  const [displayName, setDisplayName] = useState(profile?.display_name ?? '')
+  const [about, setAbout] = useState(profile?.about ?? '')
+  const [website, setWebsite] = useState(profile?.website ?? '')
+  const [picture, setPicture] = useState(profile?.picture ?? '')
+  const [banner, setBanner] = useState(profile?.banner ?? '')
+  const [nip05, setNip05] = useState(profile?.nip05 ?? '')
+  const [lud16, setLud16] = useState(profile?.lud16 ?? '')
 
-interface ProfileFormState {
-  name: string
-  display_name: string
-  about: string
-  picture: string
-  banner: string
-  website: string
-  nip05: string
-  lud06: string
-  lud16: string
-  bot: boolean
-  birthdayYear: string
-  birthdayMonth: string
-  birthdayDay: string
-  externalIdentities: ExternalIdentityEntry[]
-}
-
-function formStateFromProfile(profile: Profile | null): ProfileFormState {
-  return {
-    name: profile?.name ?? '',
-    display_name: profile?.display_name ?? '',
-    about: profile?.about ?? '',
-    picture: profile?.picture ?? '',
-    banner: profile?.banner ?? '',
-    website: profile?.website ?? '',
-    nip05: profile?.nip05 ?? '',
-    lud06: profile?.lud06 ?? '',
-    lud16: profile?.lud16 ?? '',
-    bot: profile?.bot === true,
-    birthdayYear: profile?.birthday?.year !== undefined ? String(profile.birthday.year) : '',
-    birthdayMonth: profile?.birthday?.month !== undefined ? String(profile.birthday.month) : '',
-    birthdayDay: profile?.birthday?.day !== undefined ? String(profile.birthday.day) : '',
-    externalIdentities: profile?.externalIdentities?.map(id => ({
-      platform: id.platform,
-      identity: id.identity,
-      proof: id.proof ?? '',
-    })) ?? [],
-  }
-}
-
-function formStateToMetadata(form: ProfileFormState): ProfileMetadata {
-  const birthdayYear = Number(form.birthdayYear)
-  const birthdayMonth = Number(form.birthdayMonth)
-  const birthdayDay = Number(form.birthdayDay)
-
-  return {
-    ...(form.name.trim() ? { name: form.name } : {}),
-    ...(form.display_name.trim() ? { display_name: form.display_name } : {}),
-    ...(form.about.trim() ? { about: form.about } : {}),
-    ...(form.picture.trim() ? { picture: form.picture.trim() } : {}),
-    ...(form.banner.trim() ? { banner: form.banner.trim() } : {}),
-    ...(form.website.trim() ? { website: form.website.trim() } : {}),
-    ...(form.nip05.trim() ? { nip05: form.nip05.trim() } : {}),
-    ...(form.lud06.trim() ? { lud06: form.lud06.trim() } : {}),
-    ...(form.lud16.trim() ? { lud16: form.lud16.trim() } : {}),
-    ...(form.bot ? { bot: true } : {}),
-    ...(
-      form.birthdayYear.trim() || form.birthdayMonth.trim() || form.birthdayDay.trim()
-        ? {
-          birthday: {
-            ...(Number.isSafeInteger(birthdayYear) && birthdayYear > 0 ? { year: birthdayYear } : {}),
-            ...(Number.isSafeInteger(birthdayMonth) && birthdayMonth > 0 ? { month: birthdayMonth } : {}),
-            ...(Number.isSafeInteger(birthdayDay) && birthdayDay > 0 ? { day: birthdayDay } : {}),
-          },
-        }
-        : {}
-    ),
-  }
-}
-
-export function ProfileMetadataEditor({
-  pubkey,
-  profile,
-  onSaved,
-}: ProfileMetadataEditorProps) {
-  const [form, setForm] = useState<ProfileFormState>(() => formStateFromProfile(profile))
   const [saving, setSaving] = useState(false)
-  const [dirty, setDirty] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const abortRef = useRef<AbortController | null>(null)
+  const [success, setSuccess] = useState(false)
 
+  // Sync state with profile when it loads, if the user hasn't started editing
   useEffect(() => {
-    if (dirty || saving) return
-    setForm(formStateFromProfile(profile))
-  }, [profile, dirty, saving])
-
-  useEffect(() => {
-    return () => {
-      abortRef.current?.abort()
-      abortRef.current = null
+    if (profile) {
+      setName((prev) => (prev === '' ? profile.name ?? '' : prev))
+      setDisplayName((prev) => (prev === '' ? profile.display_name ?? '' : prev))
+      setAbout((prev) => (prev === '' ? profile.about ?? '' : prev))
+      setWebsite((prev) => (prev === '' ? profile.website ?? '' : prev))
+      setPicture((prev) => (prev === '' ? profile.picture ?? '' : prev))
+      setBanner((prev) => (prev === '' ? profile.banner ?? '' : prev))
+      setNip05((prev) => (prev === '' ? profile.nip05 ?? '' : prev))
+      setLud16((prev) => (prev === '' ? profile.lud16 ?? '' : prev))
     }
-  }, [])
+  }, [profile])
 
-  const updateField = <K extends keyof ProfileFormState>(field: K, value: ProfileFormState[K]) => {
-    setDirty(true)
-    setMessage(null)
-    setError(null)
-    setForm((current) => ({ ...current, [field]: value }))
-  }
+  const handleSave = useCallback(async () => {
+    if (!currentUser || currentUser.pubkey !== pubkey) {
+      setError('You can only edit your own profile.')
+      return
+    }
 
-  const handleReset = () => {
-    if (saving) return
-    setForm(formStateFromProfile(profile))
-    setDirty(false)
-    setMessage(null)
-    setError(null)
-  }
-
-  const handlePublish = async () => {
-    if (saving) return
-
-    const controller = new AbortController()
-    abortRef.current = controller
     setSaving(true)
-    setMessage(null)
     setError(null)
+    setSuccess(false)
 
     try {
-      const externalIdentities: Nip39ExternalIdentity[] = form.externalIdentities
-        .filter(id => id.platform.trim() && id.identity.trim())
-        .map(id => ({
-          platform: id.platform.trim(),
-          identity: id.identity.trim(),
-          ...(id.proof.trim() ? { proof: id.proof.trim() } : {}),
-        }))
-      await publishProfileMetadata(formStateToMetadata(form), { signal: controller.signal, externalIdentities })
-      const fresh = await getProfile(pubkey)
-      setForm(formStateFromProfile(fresh))
-      setDirty(false)
-      setMessage('Kind-0 profile metadata published to your write relays.')
-      onSaved?.(fresh)
-    } catch (publishError) {
-      if (publishError instanceof DOMException && publishError.name === 'AbortError') return
-      setError(publishError instanceof Error ? publishError.message : 'Failed to publish kind-0 profile metadata.')
+      const sanitizedName = sanitizeName(name)
+      const sanitizedDisplayName = sanitizeName(displayName)
+      const sanitizedAbout = sanitizeAbout(about)
+      
+      // Validation
+      if (picture && !isSafeMediaURL(picture)) throw new Error('Invalid picture URL (must be HTTPS and an image type).')
+      if (banner && !isSafeMediaURL(banner)) throw new Error('Invalid banner URL (must be HTTPS and an image type).')
+      if (website && !isSafeURL(website)) throw new Error('Invalid website URL (must start with https://).')
+      if (nip05 && !isValidNip05Format(nip05)) throw new Error('Invalid NIP-05 identifier format.')
+
+      const content = {
+        name: sanitizedName,
+        display_name: sanitizedDisplayName,
+        about: sanitizedAbout,
+        website: website.trim(),
+        picture: picture.trim(),
+        banner: banner.trim(),
+        nip05: nip05.trim(),
+        lud16: lud16.trim(),
+      }
+
+      const ndk = getNDK()
+      const event = new NDKEvent(ndk)
+      event.kind = 0
+      event.content = JSON.stringify(content)
+      
+      await withRetry(() => event.publish(), {
+        maxAttempts: 3,
+        baseDelayMs: 1000,
+      })
+
+      setSuccess(true)
+    } catch (err) {
+      console.error('Failed to publish profile metadata', err)
+      setError(err instanceof Error ? err.message : 'Failed to publish profile updates.')
     } finally {
       setSaving(false)
-      abortRef.current = null
     }
-  }
+  }, [currentUser, pubkey, name, displayName, about, website, picture, banner, nip05, lud16])
+
+  const inputClass = "mt-2 w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[15px] text-[rgb(var(--color-label))] placeholder:text-[rgb(var(--color-label-tertiary))] outline-none transition-colors focus:border-[rgb(var(--color-accent))]"
+  const labelClass = "block text-[13px] font-medium text-[rgb(var(--color-label-secondary))]"
 
   return (
-    <div className="rounded-[20px] border border-[rgb(var(--color-fill)/0.16)] bg-[rgb(var(--color-bg-secondary))] p-4">
-      <p className="text-[14px] leading-relaxed text-[rgb(var(--color-label-secondary))]">
-        Publishing here replaces your latest kind-0 metadata event. `display_name` is optional, but `name`
-        should still be set, so the publisher will fall back to `display_name` when needed.
-      </p>
-
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <Field
-          label="Name"
-          value={form.name}
-          onChange={(value) => updateField('name', value)}
-          placeholder="alice"
-        />
-        <Field
-          label="Display Name"
-          value={form.display_name}
-          onChange={(value) => updateField('display_name', value)}
-          placeholder="Alice Wonderland"
-        />
-      </div>
-
-      <Field
-        label="About"
-        value={form.about}
-        onChange={(value) => updateField('about', value)}
-        placeholder="Short biography"
-        multiline
-        className="mt-4"
-      />
-
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <Field
-          label="Avatar URL"
-          value={form.picture}
-          onChange={(value) => updateField('picture', value)}
-          placeholder="https://example.com/avatar.jpg"
-          type="url"
-        />
-        <Field
-          label="Banner URL"
-          value={form.banner}
-          onChange={(value) => updateField('banner', value)}
-          placeholder="https://example.com/banner.jpg"
-          type="url"
-        />
-        <Field
-          label="Website"
-          value={form.website}
-          onChange={(value) => updateField('website', value)}
-          placeholder="https://example.com"
-          type="url"
-        />
-        <Field
-          label="NIP-05"
-          value={form.nip05}
-          onChange={(value) => updateField('nip05', value)}
-          placeholder="alice@example.com"
-        />
-        <Field
-          label="LUD16"
-          value={form.lud16}
-          onChange={(value) => updateField('lud16', value)}
-          placeholder="alice@getalby.com"
-        />
-        <Field
-          label="LUD06"
-          value={form.lud06}
-          onChange={(value) => updateField('lud06', value)}
-          placeholder="lnurl1..."
-        />
-      </div>
-
-      <div className="mt-4 rounded-[16px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] p-3">
-        <label className="flex items-center gap-3">
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label className={labelClass}>Name</label>
           <input
-            type="checkbox"
-            checked={form.bot}
-            onChange={(event) => updateField('bot', event.target.checked)}
-            className="h-4 w-4"
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className={inputClass}
+            placeholder="username"
           />
-          <span className="text-[14px] text-[rgb(var(--color-label))]">
-            Mark this profile as automated (`bot: true`)
-          </span>
-        </label>
-
-        <div className="mt-4 grid grid-cols-3 gap-2">
-          <Field
-            label="Birth Year"
-            value={form.birthdayYear}
-            onChange={(value) => updateField('birthdayYear', value)}
-            placeholder="1990"
-            inputMode="numeric"
-          />
-          <Field
-            label="Birth Month"
-            value={form.birthdayMonth}
-            onChange={(value) => updateField('birthdayMonth', value)}
-            placeholder="7"
-            inputMode="numeric"
-          />
-          <Field
-            label="Birth Day"
-            value={form.birthdayDay}
-            onChange={(value) => updateField('birthdayDay', value)}
-            placeholder="14"
-            inputMode="numeric"
+        </div>
+        <div>
+          <label className={labelClass}>Display Name</label>
+          <input
+            type="text"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            className={inputClass}
+            placeholder="Display Name"
           />
         </div>
       </div>
 
-      <div className="mt-4 rounded-[16px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] p-3">
-        <p className="text-[13px] font-medium text-[rgb(var(--color-label-secondary))]">
-          External Identities (NIP-39)
-        </p>
-
-        {form.externalIdentities.map((entry, i) => (
-          <div key={i} className="mt-3 flex flex-col gap-2 rounded-[12px] border border-[rgb(var(--color-fill)/0.12)] p-2">
-            <div className="flex gap-2">
-              <label className="flex-1 block">
-                <span className="text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">Platform</span>
-                <select
-                  value={entry.platform}
-                  onChange={(event) => {
-                    setDirty(true)
-                    setMessage(null)
-                    setError(null)
-                    setForm((current) => {
-                      const updated = [...current.externalIdentities]
-                      const previous = updated[i]
-                      if (!previous) return current
-                      updated[i] = {
-                        platform: event.target.value,
-                        identity: previous.identity,
-                        proof: previous.proof,
-                      }
-                      return { ...current, externalIdentities: updated }
-                    })
-                  }}
-                  className="mt-1 w-full rounded-[12px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg-secondary))] px-3 py-2 text-[14px] text-[rgb(var(--color-label))] outline-none"
-                >
-                  <option value="github">GitHub</option>
-                  <option value="twitter">Twitter</option>
-                  <option value="mastodon">Mastodon</option>
-                  <option value="telegram">Telegram</option>
-                  {!['github', 'twitter', 'mastodon', 'telegram'].includes(entry.platform) && (
-                    <option value={entry.platform}>{entry.platform}</option>
-                  )}
-                </select>
-              </label>
-              <button
-                type="button"
-                onClick={() => {
-                  setDirty(true)
-                  setForm((current) => ({
-                    ...current,
-                    externalIdentities: current.externalIdentities.filter((_, idx) => idx !== i),
-                  }))
-                }}
-                className="mt-5 self-start rounded-[10px] bg-[rgb(var(--color-system-red)/0.1)] px-3 py-2 text-[13px] text-[rgb(var(--color-system-red))]"
-              >
-                Remove
-              </button>
-            </div>
-            <label className="block">
-              <span className="text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">Handle / Identity</span>
-              <input
-                type="text"
-                value={entry.identity}
-                onChange={(event) => {
-                  setDirty(true)
-                  setMessage(null)
-                  setError(null)
-                  setForm((current) => {
-                    const updated = [...current.externalIdentities]
-                    const previous = updated[i]
-                    if (!previous) return current
-                    updated[i] = {
-                      platform: previous.platform,
-                      identity: event.target.value,
-                      proof: previous.proof,
-                    }
-                    return { ...current, externalIdentities: updated }
-                  })
-                }}
-                placeholder="your_handle"
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-                className="mt-1 w-full rounded-[12px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg-secondary))] px-3 py-2 text-[14px] text-[rgb(var(--color-label))] placeholder:text-[rgb(var(--color-label-tertiary))] outline-none"
-              />
-            </label>
-            <label className="block">
-              <span className="text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">Proof URL (optional)</span>
-              <input
-                type="url"
-                value={entry.proof}
-                onChange={(event) => {
-                  setDirty(true)
-                  setMessage(null)
-                  setError(null)
-                  setForm((current) => {
-                    const updated = [...current.externalIdentities]
-                    const previous = updated[i]
-                    if (!previous) return current
-                    updated[i] = {
-                      platform: previous.platform,
-                      identity: previous.identity,
-                      proof: event.target.value,
-                    }
-                    return { ...current, externalIdentities: updated }
-                  })
-                }}
-                placeholder="https://..."
-                spellCheck={false}
-                className="mt-1 w-full rounded-[12px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg-secondary))] px-3 py-2 text-[14px] text-[rgb(var(--color-label))] placeholder:text-[rgb(var(--color-label-tertiary))] outline-none"
-              />
-            </label>
-          </div>
-        ))}
-
-        {form.externalIdentities.length < 10 && (
-          <button
-            type="button"
-            onClick={() => {
-              setDirty(true)
-              setForm((current) => ({
-                ...current,
-                externalIdentities: [
-                  ...current.externalIdentities,
-                  { platform: 'github', identity: '', proof: '' },
-                ],
-              }))
-            }}
-            className="mt-3 rounded-[12px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg-secondary))] px-4 py-2 text-[13px] font-medium text-[rgb(var(--color-label))]"
-          >
-            Add Identity
-          </button>
-        )}
+      <div>
+        <label className={labelClass}>Bio (About)</label>
+        <textarea
+          value={about}
+          onChange={(e) => setAbout(e.target.value)}
+          className={`${inputClass} min-h-[100px] resize-y`}
+          placeholder="Tell the world about yourself..."
+        />
       </div>
 
-      {message && (
-        <p className="mt-3 text-[13px] text-[rgb(var(--color-system-green))]">
-          {message}
-        </p>
-      )}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label className={labelClass}>Picture URL</label>
+          <input
+            type="url"
+            value={picture}
+            onChange={(e) => setPicture(e.target.value)}
+            className={inputClass}
+            placeholder="https://example.com/avatar.jpg"
+          />
+          <div className="mt-3 overflow-hidden rounded-[14px] border border-[rgb(var(--color-fill)/0.12)]">
+            <BlossomUpload
+              accept="image/*"
+              onUploaded={(blob) => setPicture(blob.url)}
+              disabled={saving}
+              className="border-none bg-[rgb(var(--color-bg-secondary))]"
+            />
+          </div>
+        </div>
+        <div>
+          <label className={labelClass}>Banner URL</label>
+          <input
+            type="url"
+            value={banner}
+            onChange={(e) => setBanner(e.target.value)}
+            className={inputClass}
+            placeholder="https://example.com/banner.jpg"
+          />
+          <div className="mt-3 overflow-hidden rounded-[14px] border border-[rgb(var(--color-fill)/0.12)]">
+            <BlossomUpload
+              accept="image/*"
+              onUploaded={(blob) => setBanner(blob.url)}
+              disabled={saving}
+              className="border-none bg-[rgb(var(--color-bg-secondary))]"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label className={labelClass}>NIP-05 Identifier</label>
+          <input
+            type="text"
+            value={nip05}
+            onChange={(e) => setNip05(e.target.value)}
+            className={inputClass}
+            placeholder="user@domain.com"
+            autoCapitalize="none"
+            autoCorrect="off"
+          />
+        </div>
+        <div>
+          <label className={labelClass}>Lightning Address (LUD16)</label>
+          <input
+            type="text"
+            value={lud16}
+            onChange={(e) => setLud16(e.target.value)}
+            className={inputClass}
+            placeholder="user@wallet.com"
+            autoCapitalize="none"
+            autoCorrect="off"
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className={labelClass}>Website</label>
+        <input
+          type="url"
+          value={website}
+          onChange={(e) => setWebsite(e.target.value)}
+          className={inputClass}
+          placeholder="https://example.com"
+        />
+      </div>
 
       {error && (
-        <p className="mt-3 text-[13px] text-[rgb(var(--color-system-red))]">
-          {error}
-        </p>
+        <p className="text-[13px] text-[rgb(var(--color-system-red))]">{error}</p>
+      )}
+      
+      {success && (
+        <p className="text-[13px] text-[rgb(var(--color-system-green))]">Profile updated successfully. It may take a moment to propagate.</p>
       )}
 
-      <div className="mt-4 flex gap-2">
-        <button
-          type="button"
-          onClick={handleReset}
-          disabled={saving || !dirty}
-          className="
-            flex-1 rounded-[14px] border border-[rgb(var(--color-fill)/0.2)]
-            bg-[rgb(var(--color-bg))] px-4 py-2.5
-            text-[14px] font-medium text-[rgb(var(--color-label))]
-            transition-opacity active:opacity-75 disabled:opacity-40
-          "
-        >
-          Reset
-        </button>
-
-        <button
-          type="button"
-          onClick={() => void handlePublish()}
-          disabled={saving}
-          className="
-            flex-1 rounded-[14px] bg-[rgb(var(--color-label))]
-            px-4 py-2.5 text-[14px] font-medium text-white
-            transition-opacity active:opacity-75 disabled:opacity-40
-          "
-        >
-          {saving ? 'Publishing…' : 'Publish Kind 0'}
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={() => void handleSave()}
+        disabled={saving}
+        className="w-full rounded-[14px] bg-[rgb(var(--color-label))] px-4 py-3 text-[15px] font-medium text-white transition-opacity active:opacity-75 disabled:opacity-40"
+      >
+        {saving ? 'Publishing...' : 'Save Profile'}
+      </button>
     </div>
-  )
-}
-
-interface FieldProps {
-  label: string
-  value: string
-  onChange: (value: string) => void
-  placeholder?: string
-  type?: string
-  className?: string
-  multiline?: boolean
-  inputMode?: InputHTMLAttributes<HTMLInputElement>['inputMode']
-}
-
-function Field({
-  label,
-  value,
-  onChange,
-  placeholder,
-  type = 'text',
-  className = '',
-  multiline = false,
-  inputMode,
-}: FieldProps) {
-  return (
-    <label className={`block ${className}`}>
-      <span className="text-[13px] font-medium text-[rgb(var(--color-label-secondary))]">
-        {label}
-      </span>
-      {multiline ? (
-        <textarea
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder={placeholder}
-          rows={4}
-          className="
-            mt-2 w-full resize-none rounded-[14px] border border-[rgb(var(--color-fill)/0.18)]
-            bg-[rgb(var(--color-bg))] px-3 py-2.5
-            text-[15px] text-[rgb(var(--color-label))]
-            placeholder:text-[rgb(var(--color-label-tertiary))]
-            outline-none
-          "
-        />
-      ) : (
-        <input
-          type={type}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder={placeholder}
-          inputMode={inputMode}
-          className="
-            mt-2 w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.18)]
-            bg-[rgb(var(--color-bg))] px-3 py-2.5
-            text-[15px] text-[rgb(var(--color-label))]
-            placeholder:text-[rgb(var(--color-label-tertiary))]
-            outline-none
-          "
-          spellCheck={false}
-          autoCapitalize="off"
-          autoCorrect="off"
-        />
-      )}
-    </label>
   )
 }

@@ -36,6 +36,7 @@ const NotePage    = lazy(() => import('@/pages/NotePage'))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'))
 const FiltersPage  = lazy(() => import('@/pages/FiltersPage'))
 const OnboardPage  = lazy(() => import('@/pages/OnboardPage'))
+const ExplorePage  = lazy(() => import('@/pages/ExplorePage'))
 
 // ── Inner App (access to context) ────────────────────────────
 
@@ -56,6 +57,45 @@ function InnerApp() {
 
   if (status === 'error') {
     const lastError = errors[errors.length - 1]
+    const isDbError = lastError?.message?.includes('DB_INIT_FAILED') || 
+                      lastError?.message?.includes('Query timeout') ||
+                      lastError?.code === 'DB_INIT_FAILED'
+
+    if (isDbError) {
+      return (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[rgb(var(--color-bg))] p-6 text-center">
+          <div className="mb-4 text-[48px]">💾</div>
+          <h1 className="text-[22px] font-semibold text-[rgb(var(--color-label))]">
+            Database Error
+          </h1>
+          <p className="mt-2 max-w-xs text-[15px] leading-relaxed text-[rgb(var(--color-label-secondary))]">
+            The local database failed to initialize. This can happen during development updates.
+          </p>
+          <p className="mt-4 max-w-md break-all rounded bg-[rgb(var(--color-system-red)/0.08)] p-2 font-mono text-[12px] text-[rgb(var(--color-system-red))]">
+            {lastError?.message ?? 'Unknown database error'}
+          </p>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const root = await navigator.storage.getDirectory()
+                // @ts-expect-error — standard Web API
+                for await (const name of root.keys()) {
+                  await root.removeEntry(name, { recursive: true })
+                }
+                window.location.reload()
+              } catch {
+                alert('Failed to clear data automatically. Please clear site data in DevTools > Application.')
+              }
+            }}
+            className="mt-8 rounded-full bg-[rgb(var(--color-label))] px-6 py-3 text-[15px] font-medium text-[rgb(var(--color-bg))] active:opacity-80"
+          >
+            Reset Database & Reload
+          </button>
+        </div>
+      )
+    }
+
     return (
       <ErrorScreen
         {...(lastError?.code !== undefined ? { code: lastError.code } : {})}
@@ -79,6 +119,7 @@ function InnerApp() {
             <Route path="/"                   element={<FeedPage />} />
             <Route path="/t/:tag"             element={<FeedPage />} />
             <Route path="/search"             element={<SearchPage />} />
+            <Route path="/explore"            element={<ExplorePage />} />
             <Route path="/article/:pubkey/:identifier" element={<ArticlePage />} />
             <Route path="/dvm/new"           element={<DvmComposePage />} />
             <Route path="/list/new"          element={<ListComposePage />} />
@@ -88,6 +129,7 @@ function InnerApp() {
             <Route path="/video/:variant/:pubkey/:identifier" element={<VideoPage />} />
             <Route path="/a/:naddr"            element={<AddressPage />} />
             <Route path="/note/:id"            element={<NotePage />} />
+            <Route path="/profile"             element={<ProfilePage />} />
             <Route path="/profile/:pubkey"     element={<ProfilePage />} />
             <Route path="/settings"            element={<SettingsPage />} />
             <Route path="/filters"             element={<FiltersPage />} />

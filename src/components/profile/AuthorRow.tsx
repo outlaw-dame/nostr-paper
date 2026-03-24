@@ -7,6 +7,8 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
+import { useApp } from '@/contexts/app-context'
+import { useMuteList } from '@/hooks/useMuteList'
 import { useUserStatus } from '@/hooks/useUserStatus'
 import { getUserStatusLabel } from '@/lib/nostr/status'
 import { TwemojiText } from '@/components/ui/TwemojiText'
@@ -32,6 +34,7 @@ interface AuthorRowProps {
   timestamp?: number
   light?:     boolean  // White text, for dark backgrounds
   large?:     boolean  // Expanded view sizing
+  actions?:   boolean  // Show mute/block actions
   onAvatarClick?: () => void
 }
 
@@ -41,8 +44,11 @@ export function AuthorRow({
   timestamp,
   light = false,
   large = false,
+  actions = false,
   onAvatarClick,
 }: AuthorRowProps) {
+  const { currentUser } = useApp()
+  const { isMuted, mute, unmute } = useMuteList()
   const { status } = useUserStatus(pubkey, { background: false })
   const displayName = useMemo(() => {
     if (profile?.display_name) return sanitizeName(profile.display_name)
@@ -66,6 +72,23 @@ export function AuthorRow({
   const secondaryColor = light
     ? 'text-white/60'
     : 'text-[rgb(var(--color-label-secondary))]'
+
+  const isSelf = currentUser?.pubkey === pubkey
+  const muted = isMuted(pubkey)
+
+  const handleMuteToggle = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    if (muted) {
+      await unmute(pubkey)
+    } else if (confirm(`Mute ${displayName}?`)) {
+      await mute(pubkey)
+    }
+  }
+
+  const actionClass = light
+    ? (muted ? 'bg-white/20 text-white' : 'text-white/70 hover:bg-white/10')
+    : (muted ? 'bg-[rgb(var(--color-fill)/0.12)] text-[rgb(var(--color-label))]' : 'text-[rgb(var(--color-label-tertiary))] hover:bg-[rgb(var(--color-fill)/0.06)]')
 
   return (
     <div className="flex items-center gap-3">
@@ -109,6 +132,17 @@ export function AuthorRow({
           </p>
         )}
       </div>
+
+      {/* Actions */}
+      {actions && currentUser && !isSelf && (
+        <button
+          type="button"
+          onClick={handleMuteToggle}
+          className={`shrink-0 px-3 py-1.5 rounded-full text-[12px] font-medium transition-colors z-10 ${actionClass}`}
+        >
+          {muted ? 'Unmute' : 'Mute'}
+        </button>
+      )}
     </div>
   )
 }

@@ -24,6 +24,7 @@ import { ThreadBody } from '@/components/nostr/ThreadBody'
 import { UnknownKindBody } from '@/components/nostr/UnknownKindBody'
 import { UserStatusBody } from '@/components/nostr/UserStatusBody'
 import { useEventModeration } from '@/hooks/useModeration'
+import { useMuteList } from '@/hooks/useMuteList'
 import { usePageHead } from '@/hooks/usePageHead'
 import { useProfile } from '@/hooks/useProfile'
 import { getEvent } from '@/lib/db/nostr'
@@ -67,8 +68,12 @@ export default function NotePage() {
   const [event, setEvent] = useState<NostrEvent | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [override, setOverride] = useState(false)
   const { profile } = useProfile(event?.pubkey)
   const { blocked: eventBlocked, loading: moderationLoading } = useEventModeration(event)
+  const { isMuted, loading: muteListLoading } = useMuteList()
+  const isMutedAuthor = event ? isMuted(event.pubkey) : false
+  const isBlocked = eventBlocked || isMutedAuthor
 
   // First image attachment URL — used as og:image
   const ogImageUrl = useMemo(() => {
@@ -82,7 +87,7 @@ export default function NotePage() {
   }, [event])
 
   usePageHead(
-    event && !moderationLoading && !eventBlocked
+    event && !moderationLoading && (!isBlocked || override)
       ? {
           title: buildNoteTitle(event, profile),
           tags: buildNoteMetaTags({ event, profile, imageUrl: ogImageUrl }),
@@ -184,7 +189,7 @@ export default function NotePage() {
     return () => controller.abort()
   }, [id, navigate])
 
-  if (loading || (event !== null && moderationLoading)) {
+  if (loading || (event !== null && moderationLoading) || muteListLoading) {
     return (
       <div className="min-h-dvh bg-[rgb(var(--color-bg))] px-4 pt-safe pb-safe">
         <div className="sticky top-0 z-10 bg-[rgb(var(--color-bg)/0.88)] py-4 backdrop-blur-xl">
@@ -203,7 +208,7 @@ export default function NotePage() {
     )
   }
 
-  if (!event || eventBlocked) {
+  if (!event || (isBlocked && !override)) {
     return (
       <div className="min-h-dvh bg-[rgb(var(--color-bg))] px-4 pt-safe pb-safe">
         <div className="sticky top-0 z-10 bg-[rgb(var(--color-bg)/0.88)] py-4 backdrop-blur-xl">
@@ -217,13 +222,26 @@ export default function NotePage() {
         </div>
         <div className="pt-6">
           <h1 className="text-[28px] font-semibold tracking-[-0.03em] text-[rgb(var(--color-label))]">
-            Note unavailable
+            {isBlocked ? 'Content hidden' : 'Note unavailable'}
           </h1>
-          {error && !eventBlocked && (
+          {isBlocked ? (
+            <>
+              <p className="mt-3 text-[16px] leading-7 text-[rgb(var(--color-label-secondary))]">
+                This note was hidden by your content filters or mute list.
+              </p>
+              <button
+                type="button"
+                onClick={() => setOverride(true)}
+                className="mt-4 rounded-full bg-[rgb(var(--color-fill)/0.12)] px-4 py-2 text-[15px] font-medium text-[rgb(var(--color-label))]"
+              >
+                Show Anyway
+              </button>
+            </>
+          ) : error ? (
             <p className="mt-3 text-[16px] leading-7 text-[rgb(var(--color-label-secondary))]">
               {error}
             </p>
-          )}
+          ) : null}
         </div>
       </div>
     )
@@ -279,6 +297,7 @@ export default function NotePage() {
               profile={profile}
               timestamp={event.created_at}
               large
+              actions
             />
 
             {repost ? (

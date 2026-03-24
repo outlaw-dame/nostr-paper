@@ -40,9 +40,10 @@ function getAllowedIds(
 
 export function useModerationDocuments(
   documents: ModerationDocument[],
-  options: { enabled?: boolean } = {},
+  options: { enabled?: boolean; failClosed?: boolean } = {},
 ): UseModerationDocumentsResult {
   const enabled = options.enabled ?? true
+  const failClosed = options.failClosed ?? false
   const [decisions, setDecisions] = useState<Map<string, ModerationDecision>>(new Map())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -113,13 +114,13 @@ export function useModerationDocuments(
   }, [enabled, documents, signature])
 
   const allowedIds = useMemo(
-    () => getAllowedIds(documents, decisions, error !== null),
-    [documents, decisions, error],
+    () => getAllowedIds(documents, decisions, !failClosed && error !== null),
+    [documents, decisions, error, failClosed],
   )
 
   const blockedIds = useMemo(() => {
     const blocked = new Set<string>()
-    const failOpen = error !== null
+    const failOpen = !failClosed && error !== null
 
     for (const document of documents) {
       const decision = decisions.get(document.id)
@@ -132,7 +133,7 @@ export function useModerationDocuments(
     }
 
     return blocked
-  }, [documents, decisions, error])
+  }, [documents, decisions, error, failClosed])
 
   return {
     decisions,
@@ -145,7 +146,7 @@ export function useModerationDocuments(
 
 export function useEventModeration(
   event: NostrEvent | null | undefined,
-  options: { enabled?: boolean } = {},
+  options: { enabled?: boolean; failClosed?: boolean } = {},
 ): {
   blocked: boolean
   loading: boolean
@@ -169,7 +170,7 @@ export function useEventModeration(
 
 export function useProfileModeration(
   profile: Profile | null | undefined,
-  options: { enabled?: boolean } = {},
+  options: { enabled?: boolean; failClosed?: boolean } = {},
 ): {
   blocked: boolean
   loading: boolean

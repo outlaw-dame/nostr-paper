@@ -22,6 +22,24 @@ describe('normalizeModerationScores', () => {
       identity_hate: 0,
     })
   })
+
+  it('normalizes label variations', () => {
+    const scores = normalizeModerationScores([
+      { label: 'TOXIC', score: 0.8 },
+      { label: 'severe-toxic', score: 0.7 },
+      { label: 'identity_hate', score: 0.6 },
+      { label: 'Identity Hate', score: 0.5 },
+    ])
+
+    expect(scores).toEqual({
+      toxic: 0.8,
+      severe_toxic: 0.7,
+      obscene: 0,
+      threat: 0,
+      insult: 0,
+      identity_hate: 0.5, // last one wins
+    })
+  })
 })
 
 describe('evaluateModerationScores', () => {
