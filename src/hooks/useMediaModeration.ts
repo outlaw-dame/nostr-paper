@@ -40,7 +40,8 @@ export function useMediaModerationDocuments(
 ): UseMediaModerationDocumentsResult {
   const enabled = options.enabled ?? true
   const [decisions, setDecisions] = useState<Map<string, MediaModerationDecision>>(new Map())
-  const [loading, setLoading] = useState(false)
+  // Initialize to true so the first render is fail-open (no false blocks before the effect runs)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const signature = useMemo(
@@ -115,7 +116,8 @@ export function useMediaModerationDocuments(
 
   const blockedIds = useMemo(() => {
     const blocked = new Set<string>()
-    const failOpen = error !== null
+    // Fail-open while loading or on error — only block after a definitive decision
+    const failOpen = loading || error !== null
 
     for (const document of documents) {
       const decision = decisions.get(document.id)
@@ -128,7 +130,7 @@ export function useMediaModerationDocuments(
     }
 
     return blocked
-  }, [documents, decisions, error])
+  }, [documents, decisions, error, loading])
 
   return {
     decisions,

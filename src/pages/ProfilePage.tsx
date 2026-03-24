@@ -907,6 +907,12 @@ export default function ProfilePage() {
                       Edit Profile
                     </button>
                     <Link
+                      to="/settings"
+                      className="rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-4 py-2.5 text-[14px] font-medium text-[rgb(var(--color-label))]"
+                    >
+                      Settings
+                    </Link>
+                    <Link
                       to="/settings#music-status"
                       className="rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-4 py-2.5 text-[14px] font-medium text-[rgb(var(--color-label))]"
                     >
