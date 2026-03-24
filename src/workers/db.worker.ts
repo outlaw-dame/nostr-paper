@@ -24,6 +24,9 @@ PRAGMA foreign_keys = ON;
 PRAGMA temp_store = MEMORY;
 PRAGMA cache_size = -32000;   -- 32MB page cache
 PRAGMA mmap_size = 268435456; -- 256MB memory-mapped I/O
+PRAGMA query_only = OFF;
+PRAGMA optimize;              -- Run analyzer on startup
+PRAGMA quick_check;           -- Fast integrity check
 
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -355,6 +358,32 @@ CREATE INDEX IF NOT EXISTS idx_tags_name_value_event_id
 
 CREATE INDEX IF NOT EXISTS idx_tags_event_id_name_value
   ON tags(event_id, name, value);
+`
+
+// ── Migration v10: Critical Deletion & Deduplication Indexes ──────────────
+
+const MIGRATION_V10_SQL = `
+CREATE INDEX IF NOT EXISTS idx_event_deletions_deleted_by_created
+  ON event_deletions(deleted_by, event_id);
+
+CREATE INDEX IF NOT EXISTS idx_address_deletions_deleted_by
+  ON address_deletions(deleted_by, coordinate);
+
+CREATE INDEX IF NOT EXISTS idx_seen_events_event_id_seen_at
+  ON seen_events(event_id, seen_at);
+`
+
+// ── Migration v11: Profile & Contact Query Optimization ────────────────
+
+const MIGRATION_V11_SQL = `
+CREATE INDEX IF NOT EXISTS idx_profiles_pubkey_picture
+  ON profiles(pubkey, picture);
+
+CREATE INDEX IF NOT EXISTS idx_follows_followee_follower
+  ON follows(followee, follower);
+
+CREATE INDEX IF NOT EXISTS idx_relay_list_pubkey_url
+  ON relay_list(pubkey, url);
 `
 
 // ── Worker State ─────────────────────────────────────────────
@@ -697,7 +726,34 @@ async function initializeDB(): Promise<void> {
     ensurePerformanceIndexes()
   }
 
+  const v10Applied: number[] = []
+  _db.exec({
+    sql: 'SELECT 1 FROM schema_migrations WHERE version = 10',
+    rowMode: 'object',
+    callback: () => { v10Applied.push(1) },
+  })
+  if (v10Applied.length === 0) {
+    _db.exec(MIGRATION_V10_SQL)
+    _db.exec({ sql: 'INSERT OR IGNORE INTO schema_migrations (version) VALUES (10)' })
+  } else {
+    _db.exec(MIGRATION_V10_SQL)
+  }
+
+  const v11Applied: number[] = []
+  _db.exec({
+    sql: 'SELECT 1 FROM schema_migrations WHERE version = 11',
+    rowMode: 'object',
+    callback: () => { v11Applied.push(1) },
+  })
+  if (v11Applied.length === 0) {
+    _db.exec(MIGRATION_V11_SQL)
+    _db.exec({ sql: 'INSERT OR IGNORE INTO schema_migrations (version) VALUES (11)' })
+  } else {
+    _db.exec(MIGRATION_V11_SQL)
+  }
+
   _db.exec('PRAGMA optimize = 0x10002;')
+  _db.exec('PRAGMA analysis_limit = 0;')
 
   initialized = true
 }

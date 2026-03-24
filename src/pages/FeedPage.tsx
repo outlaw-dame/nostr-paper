@@ -32,6 +32,7 @@ import { FilteredGate } from '@/components/filters/FilteredGate'
 import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { useProfile } from '@/hooks/useProfile'
 import { useModerationDocuments } from '@/hooks/useModeration'
+import { useMuteList } from '@/hooks/useMuteList'
 import { useStoryCardPreview } from '@/hooks/useStoryCardPreview'
 import { useVisibilityOnce } from '@/hooks/useVisibilityOnce'
 import { useEventFilterCheck, useSemanticFiltering, mergeResults } from '@/hooks/useKeywordFilters'
@@ -147,6 +148,8 @@ export default function FeedPage() {
   )
   const [activeSectionId, setActiveSectionId] = useState(DEFAULT_SECTIONS[0]!.id)
 
+  const { profile: currentUserProfile } = useProfile(currentUser?.pubkey)
+  const { isMuted, loading: muteListLoading } = useMuteList()
   const activeSection = useMemo<FeedSection>(() => {
     if (normalizedTag) {
       return {
@@ -195,13 +198,14 @@ export default function FeedPage() {
 
   const visibleEvents = useMemo(
     () => events.filter((event) => (
-      !moderationDocumentIds.has(event.id) || allowedModerationIds.has(event.id)
+      !isMuted(event.pubkey) &&
+      (!moderationDocumentIds.has(event.id) || allowedModerationIds.has(event.id))
     )),
-    [allowedModerationIds, events, moderationDocumentIds],
+    [allowedModerationIds, events, isMuted, moderationDocumentIds],
   )
   const heroEvent = visibleEvents[0] ?? null
   const secondaryEvents = visibleEvents.slice(1)
-  const feedLoading = loading || moderationLoading
+  const feedLoading = loading || moderationLoading || muteListLoading
 
   const checkEvent      = useEventFilterCheck()
   const semanticResults = useSemanticFiltering(visibleEvents)
@@ -300,21 +304,67 @@ export default function FeedPage() {
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleCompose}
-                  className="
-                    app-panel-muted
-                    flex h-10 w-10 shrink-0 items-center justify-center rounded-full
-                    text-[rgb(var(--color-label))]
-                    transition-transform active:scale-[0.98]
-                  "
-                  aria-label="Compose a note"
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-                    <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                  </svg>
-                </button>
+                <div className="flex items-center gap-3">
+                  {!currentUser && (
+                    <button
+                      type="button"
+                      onClick={() => navigate('/onboard')}
+                      className="
+                        app-panel-muted
+                        flex h-10 shrink-0 items-center justify-center rounded-full
+                        px-3 text-[13px] font-medium text-[rgb(var(--color-label))]
+                        transition-transform active:scale-[0.98]
+                      "
+                      aria-label="Sign In"
+                    >
+                      Sign In
+                    </button>
+                  )}
+
+                  {currentUser && (
+                    <button
+                      type="button"
+                      onClick={() => navigate('/profile')}
+                      className="
+                        app-panel-muted
+                        flex h-10 w-10 shrink-0 items-center justify-center rounded-full
+                        overflow-hidden text-[rgb(var(--color-label-secondary))]
+                        transition-transform active:scale-[0.98]
+                      "
+                      aria-label="My Profile"
+                    >
+                      {currentUserProfile?.picture ? (
+                        <img
+                          src={currentUserProfile.picture}
+                          alt="Profile"
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="8" r="5" />
+                          <path d="M20 21a8 8 0 1 0-16 0" />
+                        </svg>
+                      )}
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleCompose}
+                    className="
+                      app-panel-muted
+                      flex h-10 w-10 shrink-0 items-center justify-center rounded-full
+                      text-[rgb(var(--color-label))]
+                      transition-transform active:scale-[0.98]
+                    "
+                    aria-label="Compose a note"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+                      <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                </div>
               </div>
 
               <button
@@ -499,6 +549,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult }: Seco
           pubkey={event.pubkey}
           profile={profile}
           timestamp={event.created_at}
+          actions
         />
         {(repost || thread || comment) && (
           <p className="mt-3 text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">

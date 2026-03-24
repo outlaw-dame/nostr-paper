@@ -15,7 +15,7 @@ import { bootstrap } from '@/lib/bootstrap'
 import { AppContext, type AppAction, type AppState } from '@/contexts/app-context'
 import { syncCurrentUserContactList } from '@/lib/nostr/contacts'
 import { refreshNip05Verifications } from '@/lib/nostr/nip05'
-import { getCurrentUser } from '@/lib/nostr/ndk'
+import { getCurrentUser, performLogout, STORAGE_KEY_PUBKEY } from '@/lib/nostr/ndk'
 
 const initialState: AppState = {
   status:      'idle',
@@ -67,6 +67,11 @@ function appReducer(state: AppState, action: AppAction): AppState {
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialState)
   const abortRef = useRef<AbortController | null>(null)
+
+  function logout() {
+    performLogout()
+    dispatch({ type: 'SET_USER', payload: null })
+  }
 
   // Online/offline tracking
   useEffect(() => {
@@ -124,9 +129,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
               if (signal.aborted) return
               console.warn('[App] Kind-3 contact list sync degraded:', error)
             })
+          } else if (!signal.aborted) {
+            // No signer — check for read-only pubkey saved from OnboardPage
+            const savedPubkey = localStorage.getItem(STORAGE_KEY_PUBKEY)
+            if (savedPubkey) {
+              dispatch({ type: 'SET_USER', payload: { pubkey: savedPubkey } })
+            }
           }
         } catch {
-          // No signer available — anonymous session
+          // No signer available — check read-only pubkey fallback
+          const savedPubkey = localStorage.getItem(STORAGE_KEY_PUBKEY)
+          if (savedPubkey && !signal.aborted) {
+            dispatch({ type: 'SET_USER', payload: { pubkey: savedPubkey } })
+          }
         }
       }
     }).catch((error: unknown) => {
@@ -147,7 +162,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <AppContext.Provider value={{ ...state, dispatch }}>
+    <AppContext.Provider value={{ ...state, dispatch, logout }}>
       {children}
     </AppContext.Provider>
   )

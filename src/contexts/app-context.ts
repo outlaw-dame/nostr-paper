@@ -30,6 +30,7 @@ export type AppAction =
 
 export interface AppContextValue extends AppState {
   dispatch: React.Dispatch<AppAction>
+  logout: () => void
 }
 
 const APP_CONTEXT_SYMBOL = Symbol.for('nostr-paper.AppContext')

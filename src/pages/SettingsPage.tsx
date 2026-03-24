@@ -10,12 +10,13 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Page, Navbar, Block, BlockTitle, List, ListItem, Button } from 'konsta/react'
 import { motion, AnimatePresence } from 'motion/react'
 import { BlossomUpload } from '@/components/blossom/BlossomUpload'
 import { UserStatusBody } from '@/components/nostr/UserStatusBody'
 import { TranslationSettingsCard } from '@/components/translation/TranslationSettingsCard'
+import { SemanticFilterSettings } from '@/components/filters/SemanticFilterSettings'
 import { useApp } from '@/contexts/app-context'
 import { useBlossomMediaLibrary } from '@/hooks/useBlossom'
 import { useUserStatus } from '@/hooks/useUserStatus'
@@ -83,6 +84,14 @@ function parseDateTimeLocalInput(value: string): number | null {
 
 export default function SettingsPage() {
   const { currentUser } = useApp()
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    if (!currentUser) {
+      navigate('/onboard', { replace: true })
+    }
+  }, [currentUser, navigate])
+
   const handlerOrigin = getNostrPaperHandlerOrigin()
   const [servers,   setServers]   = useState<ServerEntry[]>([])
   const [loading,   setLoading]   = useState(true)
@@ -566,22 +575,9 @@ export default function SettingsPage() {
         </>
       )}
 
-      <BlockTitle>Content Filters</BlockTitle>
-      <Block>
-        <Link
-          to="/filters"
-          className="
-            block rounded-[20px] border border-[rgb(var(--color-fill)/0.16)]
-            bg-[rgb(var(--color-bg-secondary))] p-4
-          "
-        >
-          <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
-            Keyword &amp; Semantic Filters
-          </p>
-          <p className="mt-1 text-[14px] leading-relaxed text-[rgb(var(--color-label-secondary))]">
-            Hide or warn on posts matching words, phrases, hashtags, or related concepts — including author names and bios.
-          </p>
-        </Link>
+      <BlockTitle>Semantic Keyword Filters</BlockTitle>
+      <Block className="!p-0">
+        <SemanticFilterSettings />
       </Block>
 
       <BlockTitle>Translation</BlockTitle>

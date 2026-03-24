@@ -13,6 +13,7 @@
 
 import NDK, {
   NDKNip07Signer,
+  NDKPrivateKeySigner,
   type NDKCacheAdapter,
   type NDKCacheEntry,
   type NDKEvent,
@@ -171,13 +172,25 @@ export async function initNDK(options: InitNDKOptions = {}): Promise<NDK> {
     .filter(isValidRelayURL)
     .slice(0, 20) // hard cap
 
-  // Create signer — NIP-07 only (no private key handling in this app)
-  let signer: NDKNip07Signer | undefined
+  // Create signer — NIP-07 preferred, nsec localStorage fallback
+  let signer: NDKNip07Signer | NDKPrivateKeySigner | undefined
   if (typeof window !== 'undefined' && 'nostr' in window) {
     try {
       signer = new NDKNip07Signer()
     } catch {
       // Extension not available or rejected — proceed unsigned
+    }
+  }
+
+  // Fall back to stored nsec (set via loginWithNsec)
+  if (!signer && typeof localStorage !== 'undefined') {
+    const savedNsec = localStorage.getItem('nostr-paper:nsec')
+    if (savedNsec) {
+      try {
+        signer = new NDKPrivateKeySigner(savedNsec)
+      } catch {
+        localStorage.removeItem('nostr-paper:nsec')
+      }
     }
   }
 
@@ -220,6 +233,46 @@ export async function getCurrentUser(): Promise<NDKUser | null> {
     return await ndk.signer.user()
   } catch {
     return null
+  }
+}
+
+// ── Identity Helpers ─────────────────────────────────────────
+
+export const STORAGE_KEY_NSEC  = 'nostr-paper:nsec'
+export const STORAGE_KEY_PUBKEY = 'nostr-paper:pubkey'
+
+/**
+ * Log in with a private key (nsec). Stores nsec in localStorage
+ * and attaches a signer to the live NDK instance.
+ * Returns the hex pubkey on success.
+ */
+export async function loginWithNsec(nsec: string): Promise<string> {
+  const signer = new NDKPrivateKeySigner(nsec)
+  const user = await signer.user()
+  const ndk = getNDK()
+  ndk.signer = signer
+  localStorage.setItem(STORAGE_KEY_NSEC, nsec)
+  localStorage.removeItem(STORAGE_KEY_PUBKEY)
+  return user.pubkey
+}
+
+/**
+ * Log in read-only with a pubkey (npub or hex).
+ * No signer — profile and settings are viewable but events can't be signed.
+ */
+export function loginWithPubkey(pubkey: string): void {
+  localStorage.setItem(STORAGE_KEY_PUBKEY, pubkey)
+  localStorage.removeItem(STORAGE_KEY_NSEC)
+}
+
+/**
+ * Clear all stored credentials and remove the NDK signer.
+ */
+export function performLogout(): void {
+  localStorage.removeItem(STORAGE_KEY_NSEC)
+  localStorage.removeItem(STORAGE_KEY_PUBKEY)
+  if (_ndk) {
+    _ndk.signer = undefined
   }
 }
 

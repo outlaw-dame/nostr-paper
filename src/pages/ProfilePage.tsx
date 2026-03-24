@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useTransition, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, useTransition, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ReportSheet } from '@/components/nostr/ReportSheet'
 import { UserStatusBody } from '@/components/nostr/UserStatusBody'
@@ -10,6 +10,7 @@ import { useApp } from '@/contexts/app-context'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { useMediaModerationDocuments } from '@/hooks/useMediaModeration'
 import { useProfileModeration } from '@/hooks/useModeration'
+import { useMuteList } from '@/hooks/useMuteList'
 import { usePageHead } from '@/hooks/usePageHead'
 import { useProfile } from '@/hooks/useProfile'
 import { useUserStatus } from '@/hooks/useUserStatus'
@@ -347,9 +348,21 @@ function ExpandableSectionCard({
 
 export default function ProfilePage() {
   const navigate = useNavigate()
+  const { currentUser, logout } = useApp()
   const { pubkey: routePubkey } = useParams<{ pubkey: string }>()
-  const pubkey = decodeProfileReference(routePubkey)?.pubkey ?? null
-  const { currentUser } = useApp()
+  
+  const pubkey = useMemo(() => {
+    const decoded = routePubkey ? decodeProfileReference(routePubkey)?.pubkey : null
+    return decoded ?? currentUser?.pubkey ?? null
+  }, [routePubkey, currentUser])
+
+  // No route pubkey + no logged-in user → send to onboarding
+  useEffect(() => {
+    if (!routePubkey && !currentUser) {
+      navigate('/onboard', { replace: true })
+    }
+  }, [routePubkey, currentUser, navigate])
+
   const [, startTransition] = useTransition()
   
   // Critical data: load immediately
@@ -386,6 +399,7 @@ export default function ProfilePage() {
   const [reported, setReported] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [muting, setMuting] = useState(false)
   const [expandedImage, setExpandedImage] = useState<ExpandedProfileImage | null>(null)
   const displayProfile = useMemo<Profile | null>(() => {
     if (!profile || !profileTextBlocked) return profile
@@ -449,6 +463,36 @@ export default function ProfilePage() {
         }
       : {},
   )
+
+  const { isMuted, mute, unmute, loading: muteListLoading } = useMuteList()
+  const isMutedProfile = pubkey ? isMuted(pubkey) : false
+
+  const handleMuteToggle = async () => {
+    if (!pubkey || muting) return
+    setMuting(true)
+    setError(null)
+    setMessage(null)
+    try {
+      if (isMutedProfile) {
+        await unmute(pubkey)
+        setMessage('Profile unmuted.')
+      } else {
+        await mute(pubkey)
+        setMessage('Profile muted. You will no longer see their notes.')
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update mute list.')
+    } finally {
+      setMuting(false)
+    }
+  }
+
+  const handleLogout = useCallback(() => {
+    if (logout) {
+      logout()
+      navigate('/', { replace: true })
+    }
+  }, [logout, navigate])
 
   const isSelf = pubkey !== null && currentUser?.pubkey === pubkey
   const currentEntry = useMemo(
@@ -760,6 +804,26 @@ export default function ProfilePage() {
             Invalid pubkey in the profile route.
           </p>
         </div>
+      ) : isMutedProfile && !isSelf ? (
+        <div className="flex flex-col items-center justify-center px-4 py-20 text-center">
+          <div className="mb-5 flex h-20 w-20 items-center justify-center rounded-full bg-[rgb(var(--color-fill)/0.08)] text-[32px]">
+            🔕
+          </div>
+          <h2 className="text-[22px] font-semibold text-[rgb(var(--color-label))]">
+            {profileLabel} is muted
+          </h2>
+          <p className="mt-2 max-w-xs text-[15px] leading-relaxed text-[rgb(var(--color-label-secondary))]">
+            You have muted this account. Their posts and profile details are hidden.
+          </p>
+          <button
+            type="button"
+            onClick={() => void handleMuteToggle()}
+            disabled={muting || muteListLoading}
+            className="mt-6 rounded-[14px] bg-[rgb(var(--color-label))] px-6 py-3 text-[15px] font-medium text-white transition-opacity active:opacity-75 disabled:opacity-40"
+          >
+            {muting ? 'Updating…' : 'Unmute'}
+          </button>
+        </div>
       ) : (
         <div className="px-4 pb-10 pb-safe">
 
@@ -848,6 +912,13 @@ export default function ProfilePage() {
                     >
                       Music Status
                     </Link>
+                    <button
+                      type="button"
+                      onClick={handleLogout}
+                      className="rounded-[14px] border border-[rgb(var(--color-system-red)/0.22)] bg-[rgb(var(--color-system-red)/0.08)] px-4 py-2.5 text-[14px] font-medium text-[rgb(var(--color-system-red))] transition-opacity active:opacity-75"
+                    >
+                      Logout
+                    </button>
                   </>
                 ) : (
                   <>
@@ -864,6 +935,20 @@ export default function ProfilePage() {
                         Connect a signer to follow
                       </span>
                     )}
+
+                    <button
+                      type="button"
+                      onClick={() => void handleMuteToggle()}
+                      disabled={!currentUser || muting || muteListLoading}
+                      className="
+                        rounded-[14px] border border-[rgb(var(--color-fill)/0.2)]
+                        bg-[rgb(var(--color-bg))] px-4 py-2.5
+                        text-[14px] font-medium text-[rgb(var(--color-label))]
+                        transition-opacity active:opacity-75 disabled:opacity-40
+                      "
+                    >
+                      {muting ? 'Updating…' : isMutedProfile ? 'Unmute' : 'Mute'}
+                    </button>
 
                     <button
                       type="button"
