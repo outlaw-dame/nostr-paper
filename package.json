@@ -6,6 +6,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:5173": "VITE_DEV_PORT=5173 vite",
+    "dev:5174": "VITE_DEV_PORT=5174 vite",
+    "dev:auto": "vite --strictPort false",
     "dev:host": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "precompress": "node scripts/precompress.mjs",

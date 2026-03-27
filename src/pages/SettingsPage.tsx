@@ -11,7 +11,7 @@ import { getFeedResumeEnabled, setFeedResumeEnabled } from '@/lib/feed/resumeSet
 import { getFeedInlineMediaAutoplayEnabled, setFeedInlineMediaAutoplayEnabled } from '@/lib/ui/zenSettings'
 import { getNDK } from '@/lib/nostr/ndk'
 import { withRetry } from '@/lib/retry'
-import { sanitizeName } from '@/lib/security/sanitize'
+import { sanitizeName, sanitizeText } from '@/lib/security/sanitize'
 
 export default function SettingsPage() {
   const navigate = useNavigate()
@@ -23,6 +23,7 @@ export default function SettingsPage() {
   const [resumeFeedPosition, setResumeFeedPosition] = useState(true)
   const [feedInlineAutoplayEnabled, setFeedInlineAutoplayEnabledState] = useState(true)
   const [displayNameDraft, setDisplayNameDraft] = useState('')
+  const [bioDraft, setBioDraft] = useState('')
   const [displayNameSaving, setDisplayNameSaving] = useState(false)
   const [displayNameError, setDisplayNameError] = useState<string | null>(null)
   const [displayNameSaved, setDisplayNameSaved] = useState(false)
@@ -51,7 +52,8 @@ export default function SettingsPage() {
 
   useEffect(() => {
     setDisplayNameDraft(currentProfile?.display_name ?? '')
-  }, [currentProfile?.display_name])
+    setBioDraft(currentProfile?.about ?? '')
+  }, [currentProfile?.about, currentProfile?.display_name])
 
   const handleLogout = () => {
     if (logout) {
@@ -82,6 +84,7 @@ export default function SettingsPage() {
     if (!currentUser?.pubkey) return
 
     const sanitizedDisplayName = sanitizeName(displayNameDraft)
+    const sanitizedBio = sanitizeText(bioDraft)
     setDisplayNameSaving(true)
     setDisplayNameError(null)
     setDisplayNameSaved(false)
@@ -94,7 +97,7 @@ export default function SettingsPage() {
       const content = {
         name: currentProfile?.name ?? '',
         display_name: sanitizedDisplayName,
-        about: currentProfile?.about ?? '',
+        about: sanitizedBio,
         website: currentProfile?.website ?? '',
         picture: currentProfile?.picture ?? '',
         banner: currentProfile?.banner ?? '',
@@ -111,6 +114,12 @@ export default function SettingsPage() {
     } finally {
       setDisplayNameSaving(false)
     }
+  }
+
+  const handleBioChange = (value: string) => {
+    setBioDraft(value)
+    setDisplayNameSaved(false)
+    setDisplayNameError(null)
   }
 
   return (
@@ -171,13 +180,25 @@ export default function SettingsPage() {
                     placeholder="How your name appears"
                     className="w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[15px] text-[rgb(var(--color-label))] placeholder:text-[rgb(var(--color-label-tertiary))] outline-none transition-colors focus:border-[rgb(var(--color-accent))]"
                   />
+                  <label className="mt-3 block text-[13px] font-medium text-[rgb(var(--color-label-secondary))]">
+                    Bio
+                  </label>
+                  <textarea
+                    value={bioDraft}
+                    onChange={(event) => {
+                      handleBioChange(event.target.value)
+                    }}
+                    placeholder="Tell people a little about yourself"
+                    rows={4}
+                    className="mt-1 w-full resize-y rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[15px] text-[rgb(var(--color-label))] placeholder:text-[rgb(var(--color-label-tertiary))] outline-none transition-colors focus:border-[rgb(var(--color-accent))]"
+                  />
                   <button
                     type="button"
                     onClick={() => void handleSaveDisplayName()}
                     disabled={displayNameSaving}
                     className="w-full rounded-[12px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[14px] font-medium text-[rgb(var(--color-label))] disabled:opacity-50"
                   >
-                    {displayNameSaving ? 'Saving...' : 'Save Display Name'}
+                    {displayNameSaving ? 'Saving...' : 'Save Profile'}
                   </button>
                   {displayNameError && (
                     <p className="text-[13px] text-[rgb(var(--color-system-red))]">{displayNameError}</p>

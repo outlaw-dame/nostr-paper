@@ -42,6 +42,7 @@ const DEV_FEED_PROXY_PATH = '/__dev/feed'
 const DEV_FEED_PROXY_TIMEOUT_MS = 12_000
 const DEV_FEED_PROXY_MAX_BYTES = 1 * 1024 * 1024
 const DEV_FEED_PROXY_MAX_REDIRECTS = 3
+const DEV_SERVER_PORT = Number.parseInt(process.env.VITE_DEV_PORT ?? '5173', 10) || 5173
 const ENABLE_LOCAL_CROSS_ORIGIN_ISOLATION = process.env.VITE_ENABLE_LOCAL_COI === 'true'
 const SAFE_BROWSING_BACKEND_ORIGIN = (process.env.SAFE_BROWSING_BACKEND_ORIGIN ?? 'http://127.0.0.1:7080').trim()
 const LOCAL_CROSS_ORIGIN_ISOLATION_HEADERS = ENABLE_LOCAL_CROSS_ORIGIN_ISOLATION
@@ -1369,8 +1370,8 @@ export default defineConfig(({ mode }) => {
 
     server: {
       host: '0.0.0.0',
-      port: 5173,
-      strictPort: false,
+      port: DEV_SERVER_PORT,
+      strictPort: true,
       headers: LOCAL_CROSS_ORIGIN_ISOLATION_HEADERS,
       proxy: {
         '/api/safe-browsing/check': {
