@@ -7,7 +7,9 @@
  */
 
 const PROD_PROXY_URL = import.meta.env.VITE_SAFE_BROWSING_PROXY_URL as string | undefined
-const DEFAULT_PROXY_PATH = '/api/safe-browsing/check'
+const DEV_PROXY_PATH = '/__dev/safe-browsing'
+const PROD_PROXY_PATH = '/api/safe-browsing/check'
+const DEFAULT_PROXY_PATH = import.meta.env.DEV ? DEV_PROXY_PATH : PROD_PROXY_PATH
 const PROXY_BASE = PROD_PROXY_URL ?? DEFAULT_PROXY_PATH
 
 const MAX_CACHE = 500

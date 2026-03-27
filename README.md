@@ -91,10 +91,10 @@ This project supports Google Safe Browsing checks before fetching Open Graph pre
 
 1. Copy [.env.example](.env.example) to `.env.local`.
 2. Set `GOOGLE_SAFE_BROWSING_API_KEY` for local dev proxy checks.
-3. Frontend defaults to same-origin `POST /api/safe-browsing/check`.
-4. In Vite dev, that path proxies to `http://127.0.0.1:7080/safe-browsing/check` by default.
-5. Optional: set `SAFE_BROWSING_BACKEND_ORIGIN` to change the dev proxy backend origin.
-6. Optional: set `VITE_SAFE_BROWSING_PROXY_URL` to fully override the frontend endpoint.
+3. In Vite dev, frontend defaults to same-origin `POST /__dev/safe-browsing`, handled directly by Vite middleware.
+4. Production builds default to same-origin `POST /api/safe-browsing/check`.
+5. Optional: set `VITE_SAFE_BROWSING_PROXY_URL` to fully override the frontend endpoint.
+6. Optional: if you want local dev to call the bundled Python server instead, point the frontend at `/api/safe-browsing/check` and set `SAFE_BROWSING_BACKEND_ORIGIN`.
 
 If you use the bundled Python server, the endpoint is:
 
