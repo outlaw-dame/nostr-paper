@@ -283,6 +283,8 @@ export function ComposeSheet() {
     })
   }
 
+  if (!open) return null
+
   return (
     <Sheet
       opened={open}

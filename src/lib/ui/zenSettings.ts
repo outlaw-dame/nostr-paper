@@ -4,7 +4,7 @@ export const ZEN_SETTINGS_UPDATED_EVENT = 'nostr-paper:zen-settings-updated'
 
 interface ZenSettings {
   metricsVisible?: boolean
-  boostCarouselVisible?: boolean
+  repostCarouselVisible?: boolean
 }
 
 function getStorageKey(scopeId?: string | null): string {
@@ -55,15 +55,15 @@ export function setMetricsVisible(visible: boolean, scopeId?: string | null): vo
   }, scopeId)
 }
 
-export function getBoostCarouselVisible(scopeId?: string | null): boolean {
-  const visible = readZenSettings(scopeId).boostCarouselVisible
+export function getRepostCarouselVisible(scopeId?: string | null): boolean {
+  const visible = readZenSettings(scopeId).repostCarouselVisible
   return visible === false ? false : true
 }
 
-export function setBoostCarouselVisible(visible: boolean, scopeId?: string | null): void {
+export function setRepostCarouselVisible(visible: boolean, scopeId?: string | null): void {
   const previous = readZenSettings(scopeId)
   writeZenSettings({
     ...previous,
-    boostCarouselVisible: Boolean(visible),
+    repostCarouselVisible: Boolean(visible),
   }, scopeId)
 }

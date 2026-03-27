@@ -4,13 +4,23 @@ import { useEvent } from '@/hooks/useEvent'
 import { parseAddressCoordinate } from '@/lib/nostr/addressable'
 import { parseRepostEvent } from '@/lib/nostr/repost'
 import type { NostrEvent } from '@/types'
-import { Kind } from '@/types'
 
 interface RepostBodyProps {
   event: NostrEvent
   className?: string
   compact?: boolean
   linked?: boolean
+}
+
+function RepostIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M17 1l4 4-4 4" />
+      <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+      <path d="M7 23l-4-4 4-4" />
+      <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+    </svg>
+  )
 }
 
 export function RepostBody({
@@ -33,13 +43,14 @@ export function RepostBody({
 
   if (!repost) return null
 
-  const label = repost.repostKind === Kind.GenericRepost ? 'Reposted Event' : 'Reposted Note'
-
   return (
     <div className={`space-y-3 ${className}`}>
-      <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-        {label}
-      </p>
+      <div className="flex items-center gap-1.5">
+        <RepostIcon />
+        <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+          Repost
+        </p>
+      </div>
 
       {targetEvent ? (
         <EventPreviewCard event={targetEvent} compact={compact} linked={linked} />

@@ -1304,7 +1304,11 @@ export default defineConfig(({ mode }) => {
         filename: 'sw.ts',
         registerType: 'prompt',
         devOptions: {
-          enabled: true,
+          // Keep service workers off during local Vite dev. We rely on the
+          // normal dev server plus optional COI headers, and a dev SW can get
+          // stuck controlling localhost even though the app explicitly skips SW
+          // registration there.
+          enabled: false,
           type: 'module',
         },
         injectManifest: {

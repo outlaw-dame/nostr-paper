@@ -23,7 +23,7 @@ export function StoryRail({ onComposeStory }: StoryRailProps) {
 
   return (
     <>
-      <section className="app-panel rounded-ios-xl px-4 py-3">
+      <section className="px-1 py-1">
         <div className="flex items-end justify-between gap-3">
           <div className="min-w-0">
             <p className="section-kicker">Stories</p>

@@ -1,38 +1,38 @@
 import { parseRepostEvent } from '@/lib/nostr/repost'
 import type { NostrEvent } from '@/types'
 
-export interface BoostCarouselItem {
+export interface RepostCarouselItem {
   targetEventId: string
   targetEvent: NostrEvent
   repostCount: number
   reposterPubkeys: string[]
-  lastBoostedAt: number
+  lastRepostedAt: number
 }
 
-interface CollectBoostCarouselItemsOptions {
-  minBoosts?: number
+interface CollectRepostCarouselItemsOptions {
+  minReposts?: number
   maxItems?: number
 }
 
-interface BoostAggregate {
+interface RepostAggregate {
   targetEventId: string
   targetEvent: NostrEvent | null
   reposterPubkeys: Set<string>
-  lastBoostedAt: number
+  lastRepostedAt: number
 }
 
-const DEFAULT_MIN_BOOSTS = 3
+const DEFAULT_MIN_REPOSTS = 3
 const DEFAULT_MAX_ITEMS = 10
 
-export function collectBoostCarouselItems(
+export function collectRepostCarouselItems(
   events: NostrEvent[],
-  options: CollectBoostCarouselItemsOptions = {},
-): BoostCarouselItem[] {
-  const minBoosts = Math.max(1, Math.floor(options.minBoosts ?? DEFAULT_MIN_BOOSTS))
+  options: CollectRepostCarouselItemsOptions = {},
+): RepostCarouselItem[] {
+  const minReposts = Math.max(1, Math.floor(options.minReposts ?? DEFAULT_MIN_REPOSTS))
   const maxItems = Math.max(1, Math.floor(options.maxItems ?? DEFAULT_MAX_ITEMS))
 
   const eventsById = new Map(events.map((event) => [event.id, event]))
-  const aggregates = new Map<string, BoostAggregate>()
+  const aggregates = new Map<string, RepostAggregate>()
 
   for (const event of events) {
     const parsed = parseRepostEvent(event)
@@ -42,7 +42,7 @@ export function collectBoostCarouselItems(
 
     if (existing) {
       existing.reposterPubkeys.add(parsed.pubkey)
-      existing.lastBoostedAt = Math.max(existing.lastBoostedAt, parsed.createdAt)
+      existing.lastRepostedAt = Math.max(existing.lastRepostedAt, parsed.createdAt)
       if (!existing.targetEvent) {
         existing.targetEvent = parsed.embeddedEvent ?? eventsById.get(parsed.targetEventId) ?? null
       }
@@ -53,7 +53,7 @@ export function collectBoostCarouselItems(
       targetEventId: parsed.targetEventId,
       targetEvent: eventsById.get(parsed.targetEventId) ?? parsed.embeddedEvent ?? null,
       reposterPubkeys: new Set([parsed.pubkey]),
-      lastBoostedAt: parsed.createdAt,
+      lastRepostedAt: parsed.createdAt,
     })
   }
 
@@ -64,12 +64,12 @@ export function collectBoostCarouselItems(
       targetEvent: aggregate.targetEvent!,
       repostCount: aggregate.reposterPubkeys.size,
       reposterPubkeys: [...aggregate.reposterPubkeys],
-      lastBoostedAt: aggregate.lastBoostedAt,
+      lastRepostedAt: aggregate.lastRepostedAt,
     }))
-    .filter((item) => item.repostCount >= minBoosts)
+    .filter((item) => item.repostCount >= minReposts)
     .sort((left, right) => (
       right.repostCount - left.repostCount
-      || right.lastBoostedAt - left.lastBoostedAt
+      || right.lastRepostedAt - left.lastRepostedAt
       || right.targetEvent.created_at - left.targetEvent.created_at
       || left.targetEvent.id.localeCompare(right.targetEvent.id)
     ))

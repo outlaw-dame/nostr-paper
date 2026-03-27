@@ -3,9 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import { AppearanceSettingsCard } from '@/components/cards/AppearanceSettingsCard'
 import { useApp } from '@/contexts/app-context'
 import {
-  getBoostCarouselVisible,
+  getRepostCarouselVisible,
   getMetricsVisible,
-  setBoostCarouselVisible,
+  setRepostCarouselVisible,
   setMetricsVisible,
 } from '@/lib/ui/zenSettings'
 
@@ -15,11 +15,11 @@ export default function AppearancePage() {
 
   const scopeId = useMemo(() => currentUser?.pubkey ?? 'anon', [currentUser?.pubkey])
   const [metricsVisible, setMetricsVisibleState] = useState(true)
-  const [boostCarouselVisible, setBoostCarouselVisibleState] = useState(true)
+  const [repostCarouselVisible, setRepostCarouselVisibleState] = useState(true)
 
   useEffect(() => {
     setMetricsVisibleState(getMetricsVisible(scopeId))
-    setBoostCarouselVisibleState(getBoostCarouselVisible(scopeId))
+    setRepostCarouselVisibleState(getRepostCarouselVisible(scopeId))
   }, [scopeId])
 
   return (
@@ -101,7 +101,7 @@ export default function AppearancePage() {
             <label className="flex items-start gap-3">
               <div className="mt-0.5 flex-1">
                 <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
-                  Show boosts carousel
+                  Show repost highlights
                 </p>
                 <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
                   Hide the repost highlights rail for a simpler, minimal feed layout.
@@ -110,25 +110,25 @@ export default function AppearancePage() {
               <button
                 type="button"
                 role="switch"
-                aria-checked={boostCarouselVisible}
+                aria-checked={repostCarouselVisible}
                 onClick={() => {
-                  const next = !boostCarouselVisible
-                  setBoostCarouselVisibleState(next)
-                  setBoostCarouselVisible(next, scopeId)
+                  const next = !repostCarouselVisible
+                  setRepostCarouselVisibleState(next)
+                  setRepostCarouselVisible(next, scopeId)
                 }}
                 className="
                   shrink-0 mt-0.5 w-11 h-6 rounded-full
                   transition-colors duration-200
                 "
                 style={{
-                  backgroundColor: boostCarouselVisible
+                  backgroundColor: repostCarouselVisible
                     ? 'rgb(var(--color-system-green))'
                     : 'rgb(var(--color-fill-secondary) / 0.3)',
                 }}
               >
                 <span
                   className="block w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200"
-                  style={{ transform: `translateX(${boostCarouselVisible ? 22 : 2}px)` }}
+                  style={{ transform: `translateX(${repostCarouselVisible ? 22 : 2}px)` }}
                 />
               </button>
             </label>

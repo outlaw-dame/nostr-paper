@@ -16,7 +16,7 @@ import { motion, useMotionValue, useTransform, AnimatePresence } from 'motion/re
 import { useApp } from '@/contexts/app-context'
 import { useNostrFeed } from '@/hooks/useNostrFeed'
 import { HeroCard } from '@/components/cards/HeroCard'
-import { BoostCarousel } from '@/components/feed/BoostCarousel'
+import { RepostCarousel } from '@/components/feed/RepostCarousel'
 import { StoryRail } from '@/components/feed/StoryRail'
 import { SectionRail } from '@/components/feed/SectionRail'
 import { FeedSkeleton } from '@/components/feed/FeedSkeleton'
@@ -45,7 +45,7 @@ import { useSelfThreadIndex } from '@/hooks/useSelfThreadIndex'
 import { useVisibilityOnce } from '@/hooks/useVisibilityOnce'
 import { useEventFilterCheck, useSemanticFiltering, mergeResults } from '@/hooks/useKeywordFilters'
 import { buildComposeSearch } from '@/lib/compose'
-import { collectBoostCarouselItems } from '@/lib/feed/boosts'
+import { collectRepostCarouselItems } from '@/lib/feed/reposts'
 import { getFeedHeaderSection } from '@/lib/feed/headerSection'
 import { buildFeedRailSections } from '@/lib/feed/railSections'
 import { type SavedTagFeed } from '@/lib/feed/tagFeeds'
@@ -58,7 +58,7 @@ import {
   type TagTimelineSpec,
 } from '@/lib/feed/tagTimeline'
 import { FEED_RESUME_UPDATED_EVENT, getFeedResumeEnabled } from '@/lib/feed/resumeSettings'
-import { getBoostCarouselVisible, ZEN_SETTINGS_UPDATED_EVENT } from '@/lib/ui/zenSettings'
+import { getRepostCarouselVisible, ZEN_SETTINGS_UPDATED_EVENT } from '@/lib/ui/zenSettings'
 import { filterNsfwTaggedEvents } from '@/lib/moderation/nsfwTags'
 import { buildEventModerationDocument } from '@/lib/moderation/content'
 import { parseRepostEvent } from '@/lib/nostr/repost'
@@ -174,6 +174,14 @@ const DEFAULT_SECTIONS: FeedRailSection[] = [
     },
   },
 ]
+
+const TAG_FEEDS_SECTION: FeedRailSection = {
+  id: 'tag-feeds:manage',
+  label: 'Tags',
+  summary: 'Create and manage saved tag feeds.',
+  href: '/settings/tag-feeds',
+  filter: DEFAULT_SECTIONS[0]!.filter,
+}
 
 const COMPOSE_TRIGGER_OFFSET = 85  // px downward pull to open compose sheet
 const FEED_VIEW_STATE_KEY = 'nostr-paper:feed:view-state:v1'
@@ -337,10 +345,11 @@ export default function FeedPage() {
       defaultSections: DEFAULT_SECTIONS,
       savedTagSections,
       routeSection,
+      emptyTagSection: TAG_FEEDS_SECTION,
     })
   }, [routeSection, savedTagSections])
   const [activeSectionId, setActiveSectionId] = useState(DEFAULT_SECTIONS[0]!.id)
-  const [boostCarouselVisible, setBoostCarouselVisible] = useState(true)
+  const [repostCarouselVisible, setRepostCarouselVisible] = useState(true)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const restoreCompletedRef = useRef(false)
   const rafSaveRef = useRef<number | null>(null)
@@ -435,28 +444,28 @@ export default function FeedPage() {
     ),
     [allowedModerationIds, hideNsfwTaggedPosts, isMuted, moderationDocumentIds, tagMatchedEvents],
   )
-  const boostCarouselItems = useMemo(
-    () => collectBoostCarouselItems(visibleEvents, { minBoosts: 3, maxItems: 12 }),
+  const repostCarouselItems = useMemo(
+    () => collectRepostCarouselItems(visibleEvents, { minReposts: 3, maxItems: 12 }),
     [visibleEvents],
   )
-  const boostFeatureEnabled = !activeTagTimeline && activeSection.id === 'feed' && boostCarouselVisible
-  const featuredBoostTargetIds = useMemo(
-    () => (boostFeatureEnabled
-      ? new Set(boostCarouselItems.map((item) => item.targetEventId))
+  const repostFeatureEnabled = !activeTagTimeline && activeSection.id === 'feed' && repostCarouselVisible
+  const featuredRepostTargetIds = useMemo(
+    () => (repostFeatureEnabled
+      ? new Set(repostCarouselItems.map((item) => item.targetEventId))
       : new Set<string>()),
-    [boostCarouselItems, boostFeatureEnabled],
+    [repostCarouselItems, repostFeatureEnabled],
   )
   const curatedFeedEvents = useMemo(() => {
-    if (!boostFeatureEnabled) return visibleEvents
+    if (!repostFeatureEnabled) return visibleEvents
 
     const reducedEvents = visibleEvents.filter((event) => {
       const repost = parseRepostEvent(event)
       if (!repost) return true
-      return !featuredBoostTargetIds.has(repost.targetEventId)
+      return !featuredRepostTargetIds.has(repost.targetEventId)
     })
 
     return reducedEvents.length >= MIN_PRIMARY_FEED_ITEMS ? reducedEvents : visibleEvents
-  }, [boostFeatureEnabled, featuredBoostTargetIds, visibleEvents])
+  }, [featuredRepostTargetIds, repostFeatureEnabled, visibleEvents])
   const heroEvent = curatedFeedEvents[0] ?? null
   const secondaryEvents = curatedFeedEvents.slice(1)
   const feedLoading = loading || semanticTimelineLoading || moderationLoading || muteListLoading
@@ -662,18 +671,18 @@ export default function FeedPage() {
 
   useEffect(() => {
     const scopeId = currentUser?.pubkey ?? 'anon'
-    setBoostCarouselVisible(getBoostCarouselVisible(scopeId))
+    setRepostCarouselVisible(getRepostCarouselVisible(scopeId))
 
     const onUpdated = (event: Event) => {
       const customEvent = event as CustomEvent<{ scopeId?: string }>
       if ((customEvent.detail?.scopeId ?? 'anon') !== scopeId) return
-      setBoostCarouselVisible(getBoostCarouselVisible(scopeId))
+      setRepostCarouselVisible(getRepostCarouselVisible(scopeId))
     }
 
     const onStorage = (storageEvent: StorageEvent) => {
       if (!storageEvent.key) return
       if (!storageEvent.key.endsWith(`:${scopeId}`)) return
-      setBoostCarouselVisible(getBoostCarouselVisible(scopeId))
+      setRepostCarouselVisible(getRepostCarouselVisible(scopeId))
     }
 
     window.addEventListener(ZEN_SETTINGS_UPDATED_EVENT, onUpdated as EventListener)
@@ -686,8 +695,8 @@ export default function FeedPage() {
   }, [currentUser?.pubkey])
 
   const sectionSummary = headerSection.summary
-  const showStories = !activeTagTimeline && activeSection.id === 'feed' && currentUser !== null
-  const showBoostCarousel = boostFeatureEnabled && boostCarouselItems.length > 0
+  const showStories = !activeTagTimeline && activeSection.id === 'feed'
+  const showRepostCarousel = repostFeatureEnabled && repostCarouselItems.length > 0
 
   return (
     <div className="min-h-dvh bg-[rgb(var(--color-bg))] flex flex-col overflow-hidden">
@@ -730,8 +739,8 @@ export default function FeedPage() {
           "
         >
           <div className="pb-6 pt-safe">
-            <section className="app-chrome rounded-ios-xl px-4 pb-3 pt-2.5">
-              <div className="flex items-start justify-between gap-3">
+            <section className="px-1 pt-2">
+              <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   <p className="section-kicker">Nostr Paper</p>
                   <h1 className="mt-1.5 text-[30px] font-semibold leading-[1.02] tracking-[-0.04em] text-[rgb(var(--color-label))]">
@@ -742,105 +751,79 @@ export default function FeedPage() {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-3">
-                  {!currentUser && (
-                    <button
-                      type="button"
-                      onClick={() => navigate('/onboard')}
-                      className="
-                        app-panel-muted
-                        flex h-10 shrink-0 items-center justify-center rounded-full
-                        px-3 text-[13px] font-medium text-[rgb(var(--color-label))]
-                        transition-transform active:scale-[0.98]
-                      "
-                      aria-label="Sign In"
-                    >
-                      Sign In
-                    </button>
-                  )}
-
-                  {currentUser && (
-                    <button
-                      type="button"
-                      onClick={() => navigate('/profile')}
-                      className="
-                        app-panel-muted
-                        flex h-10 w-10 shrink-0 items-center justify-center rounded-full
-                        overflow-hidden text-[rgb(var(--color-label-secondary))]
-                        transition-transform active:scale-[0.98]
-                      "
-                      aria-label="My Profile"
-                    >
-                      {currentUserProfile?.picture ? (
-                        <img
-                          src={currentUserProfile.picture}
-                          alt="Profile"
-                          className="h-full w-full object-cover"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <circle cx="12" cy="8" r="5" />
-                          <path d="M20 21a8 8 0 1 0-16 0" />
-                        </svg>
-                      )}
-                    </button>
-                  )}
-
-                  {currentUser && (
-                    <button
-                      type="button"
-                      onClick={() => navigate('/activity')}
-                      className="
-                        app-panel-muted
-                        relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full
-                        text-[rgb(var(--color-label-secondary))]
-                        transition-transform active:scale-[0.98]
-                      "
-                      aria-label="Activity"
-                    >
-                      {hasUnreadActivity && (
-                        <span
-                          className="absolute -right-0.5 -top-0.5 min-w-[16px] rounded-full bg-[rgb(var(--color-system-red))] px-1 py-[1px] text-center text-[10px] font-semibold leading-[1.2] text-white"
-                          aria-label={`${activityUnreadCount} unread notifications`}
-                        >
-                          {activityUnreadBadgeText}
-                        </span>
-                      )}
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8" />
-                        <path d="M10.5 20a1.5 1.5 0 0 0 3 0" />
+                <div className="flex items-center gap-1 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => navigate(currentUser ? '/profile' : '/onboard')}
+                    className="
+                      flex h-10 w-10 shrink-0 items-center justify-center rounded-full
+                      overflow-hidden text-[rgb(var(--color-label-secondary))]
+                      transition-opacity active:opacity-70
+                    "
+                    aria-label={currentUser ? 'My Profile' : 'Sign In'}
+                  >
+                    {currentUserProfile?.picture ? (
+                      <img
+                        src={currentUserProfile.picture}
+                        alt="Profile"
+                        className="h-9 w-9 rounded-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <circle cx="12" cy="8" r="5" />
+                        <path d="M20 21a8 8 0 0 0-16 0" />
                       </svg>
-                    </button>
-                  )}
+                    )}
+                  </button>
 
-                  {currentUser && (
-                    <button
-                      type="button"
-                      onClick={() => navigate('/settings')}
-                      className="
-                        app-panel-muted
-                        flex h-10 w-10 shrink-0 items-center justify-center rounded-full
-                        text-[rgb(var(--color-label-secondary))]
-                        transition-transform active:scale-[0.98]
-                      "
-                      aria-label="Settings"
-                    >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                        <circle cx="12" cy="12" r="3" />
-                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                      </svg>
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => navigate('/activity')}
+                    className="
+                      relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full
+                      text-[rgb(var(--color-label-secondary))]
+                      transition-opacity active:opacity-70
+                    "
+                    aria-label="Activity"
+                  >
+                    {currentUser && hasUnreadActivity && (
+                      <span
+                        className="absolute -right-0.5 -top-0.5 min-w-[16px] rounded-full bg-[rgb(var(--color-system-red))] px-1 py-[1px] text-center text-[10px] font-semibold leading-[1.2] text-white"
+                        aria-label={`${activityUnreadCount} unread notifications`}
+                      >
+                        {activityUnreadBadgeText}
+                      </span>
+                    )}
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8" />
+                      <path d="M10.5 20a1.5 1.5 0 0 0 3 0" />
+                    </svg>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => navigate('/settings')}
+                    className="
+                      flex h-10 w-10 shrink-0 items-center justify-center rounded-full
+                      text-[rgb(var(--color-label-secondary))]
+                      transition-opacity active:opacity-70
+                    "
+                    aria-label="Settings"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <circle cx="12" cy="12" r="3" />
+                      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                    </svg>
+                  </button>
 
                   <button
                     type="button"
                     onClick={handleCompose}
                     className="
-                      app-panel-muted
                       flex h-10 w-10 shrink-0 items-center justify-center rounded-full
                       text-[rgb(var(--color-label))]
-                      transition-transform active:scale-[0.98]
+                      transition-opacity active:opacity-70
                     "
                     aria-label="Compose a note"
                   >
@@ -855,9 +838,9 @@ export default function FeedPage() {
                 type="button"
                 onClick={() => navigate('/explore')}
                 className="
-                  app-panel-muted mt-3 flex h-10 w-full items-center gap-3 rounded-[14px] px-3.5
-                  text-left text-[14px] text-[rgb(var(--color-label-tertiary))]
-                  transition-colors active:opacity-80
+                  mt-4 flex w-full items-center gap-3 border-b border-[rgb(var(--color-fill)/0.12)] pb-3
+                  text-left text-[15px] text-[rgb(var(--color-label-tertiary))]
+                  transition-opacity active:opacity-80
                 "
                 aria-label="Open search"
               >
@@ -869,11 +852,11 @@ export default function FeedPage() {
                   <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.5" />
                   <path d="M10 10l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                 </svg>
-                <span>Search notes, articles, videos, and people</span>
+                <span className="truncate">Search notes, articles, videos, and people</span>
               </button>
             </section>
 
-            <div className="mt-3">
+            <div className="mt-2">
               <SectionRail
                 sections={railSections}
                 activeId={activeSection.id}
@@ -893,9 +876,9 @@ export default function FeedPage() {
               </div>
             )}
 
-            {showBoostCarousel && (
+            {showRepostCarousel && (
               <div className="mt-3">
-                <BoostCarousel items={boostCarouselItems} />
+                <RepostCarousel items={repostCarouselItems} />
               </div>
             )}
 

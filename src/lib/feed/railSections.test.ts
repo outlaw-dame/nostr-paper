@@ -62,4 +62,20 @@ describe('buildFeedRailSections', () => {
       'articles',
     ])
   })
+
+  it('adds a fallback tag section when there are no saved or active tag feeds', () => {
+    const sections = buildFeedRailSections({
+      defaultSections: DEFAULT_SECTIONS,
+      savedTagSections: [],
+      routeSection: null,
+      emptyTagSection: { id: 'tag-feed:manage', label: 'Tags' },
+    })
+
+    expect(sections.map((section) => section.id)).toEqual([
+      'feed',
+      'tag-feed:manage',
+      'notes',
+      'articles',
+    ])
+  })
 })

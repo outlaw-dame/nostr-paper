@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { EventPreviewCard } from '@/components/nostr/EventPreviewCard'
 import { useApp } from '@/contexts/app-context'
-import { getBoostCarouselVisible, ZEN_SETTINGS_UPDATED_EVENT } from '@/lib/ui/zenSettings'
-import type { BoostCarouselItem } from '@/lib/feed/boosts'
+import { getRepostCarouselVisible, ZEN_SETTINGS_UPDATED_EVENT } from '@/lib/ui/zenSettings'
+import type { RepostCarouselItem } from '@/lib/feed/reposts'
 
-interface BoostCarouselProps {
-  items: BoostCarouselItem[]
+interface RepostCarouselProps {
+  items: RepostCarouselItem[]
 }
 
-function formatBoostRecency(timestamp: number): string {
+function formatRepostRecency(timestamp: number): string {
   const delta = Math.floor(Date.now() / 1000) - timestamp
   if (delta < 60) return 'just now'
   if (delta < 3_600) return `${Math.floor(delta / 60)}m ago`
@@ -16,24 +16,24 @@ function formatBoostRecency(timestamp: number): string {
   return `${Math.floor(delta / 86_400)}d ago`
 }
 
-export function BoostCarousel({ items }: BoostCarouselProps) {
+export function RepostCarousel({ items }: RepostCarouselProps) {
   const { currentUser } = useApp()
   const scopeId = useMemo(() => currentUser?.pubkey ?? 'anon', [currentUser?.pubkey])
   const [visible, setVisible] = useState(true)
 
   useEffect(() => {
-    setVisible(getBoostCarouselVisible(scopeId))
+    setVisible(getRepostCarouselVisible(scopeId))
 
     const onUpdated = (event: Event) => {
       const customEvent = event as CustomEvent<{ scopeId?: string }>
       if ((customEvent.detail?.scopeId ?? 'anon') !== scopeId) return
-      setVisible(getBoostCarouselVisible(scopeId))
+      setVisible(getRepostCarouselVisible(scopeId))
     }
 
     const onStorage = (event: StorageEvent) => {
       if (!event.key) return
       if (!event.key.endsWith(`:${scopeId}`)) return
-      setVisible(getBoostCarouselVisible(scopeId))
+      setVisible(getRepostCarouselVisible(scopeId))
     }
 
     window.addEventListener(ZEN_SETTINGS_UPDATED_EVENT, onUpdated as EventListener)
@@ -57,9 +57,9 @@ export function BoostCarousel({ items }: BoostCarouselProps) {
       />
       <div className="flex items-end justify-between gap-3">
         <div className="min-w-0">
-          <p className="section-kicker">Boosts Carousel</p>
+          <p className="section-kicker">Reposts</p>
           <p className="mt-1 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
-            Popular reposted posts, separated from the main feed.
+            Popular reposts, separated from the main feed.
           </p>
         </div>
         <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
@@ -82,11 +82,11 @@ export function BoostCarousel({ items }: BoostCarouselProps) {
               <div className="flex items-center gap-2">
                 {index === 0 && (
                   <span className="rounded-full bg-[rgb(var(--color-accent)/0.12)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label))]">
-                    Top boost
+                    Top repost
                   </span>
                 )}
                 <span className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
-                  {formatBoostRecency(item.lastBoostedAt)}
+                  {formatRepostRecency(item.lastRepostedAt)}
                 </span>
               </div>
             </div>

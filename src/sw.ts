@@ -51,7 +51,7 @@ async function pruneStaleCaches(): Promise<void> {
 self.addEventListener('fetch', (event) => {
   const { request } = event
   const url = new URL(request.url)
-  if (isLocalDevelopmentHost(self.location.hostname)) return
+  if (import.meta.env.DEV && isLocalDevelopmentHost(self.location.hostname)) return
   if (url.origin !== self.location.origin) return
   if (request.mode === 'navigate') {
     event.respondWith(injectCrossOriginHeaders(request))

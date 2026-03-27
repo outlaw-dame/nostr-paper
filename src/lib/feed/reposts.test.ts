@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { collectBoostCarouselItems } from './boosts'
+import { collectRepostCarouselItems } from './reposts'
 import type { NostrEvent } from '@/types'
 import { Kind } from '@/types'
 
@@ -29,7 +29,7 @@ function makeRepost(id: string, pubkey: string, target: NostrEvent, createdAt: n
   )
 }
 
-describe('collectBoostCarouselItems', () => {
+describe('collectRepostCarouselItems', () => {
   it('keeps only targets with at least three unique reposts', () => {
     const targetA = makeEvent('a'.repeat(64), 'b'.repeat(64), Kind.ShortNote, 100, 'Target A')
     const targetB = makeEvent('c'.repeat(64), 'd'.repeat(64), Kind.ShortNote, 100, 'Target B')
@@ -44,7 +44,7 @@ describe('collectBoostCarouselItems', () => {
       makeRepost('5'.repeat(64), '2'.repeat(64), targetB, 240),
     ]
 
-    const items = collectBoostCarouselItems(events, { minBoosts: 3 })
+    const items = collectRepostCarouselItems(events, { minReposts: 3 })
 
     expect(items).toHaveLength(1)
     expect(items[0]?.targetEventId).toBe(targetA.id)
@@ -62,7 +62,7 @@ describe('collectBoostCarouselItems', () => {
       makeRepost('d'.repeat(64), '5'.repeat(64), target, 230),
     ]
 
-    const items = collectBoostCarouselItems(events, { minBoosts: 3 })
+    const items = collectRepostCarouselItems(events, { minReposts: 3 })
 
     expect(items).toHaveLength(1)
     expect(items[0]?.repostCount).toBe(3)

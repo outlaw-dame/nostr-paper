@@ -22,7 +22,7 @@ const AUTO_RETRY_COOLDOWN_MS = 30_000
 export function TranslateTextPanel({
   text,
   className = '',
-  autoStart = true,
+  autoStart = false,
 }: TranslateTextPanelProps) {
   const [result, setResult] = useState<TranslationResult | null>(null)
   const [hidden, setHidden] = useState(false)
