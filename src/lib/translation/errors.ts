@@ -1,5 +1,5 @@
 export interface TranslationServiceErrorOptions {
-  code: 'config' | 'network' | 'provider' | 'parse' | 'unavailable'
+  code: 'config' | 'network' | 'provider' | 'parse' | 'same-language' | 'unavailable'
   status?: number
 }
 

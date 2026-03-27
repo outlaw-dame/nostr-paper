@@ -1,4 +1,5 @@
 import { createStore, del, get, set } from 'idb-keyval'
+import { getBrowserLanguage } from '@/lib/translation/detect'
 
 export type TranslationProvider = 'deepl' | 'libretranslate' | 'small100' | 'opusmt' | 'translang' | 'lingva'
 export type DeepLApiPlan = 'free' | 'pro'
@@ -82,6 +83,10 @@ let memoryPreferences = { ...DEFAULT_PREFERENCES }
 let memorySecrets = { ...DEFAULT_SECRETS }
 let memoryCryptoKey: CryptoKey | null = null
 let cachedConfiguration: TranslationConfiguration | null = null
+
+function getBrowserTargetLanguageFallback(): string | null {
+  return getBrowserLanguage()
+}
 
 function canUsePersistentStorage(): boolean {
   return (
@@ -197,32 +202,32 @@ function normalizeLocalServiceUrl(rawUrl: string | undefined): string {
   }
 }
 
-function normalizeDeepLLanguage(value: string | undefined, allowAuto = false): string {
+function normalizeDeepLLanguage(value: string | undefined, allowAuto = false, fallback = DEFAULT_PREFERENCES.deeplTargetLanguage): string {
   const normalized = typeof value === 'string' ? value.trim().toUpperCase() : ''
   if (allowAuto && normalized === 'AUTO') return 'auto'
-  if (!normalized) return allowAuto ? 'auto' : DEFAULT_PREFERENCES.deeplTargetLanguage
+  if (!normalized) return allowAuto ? 'auto' : fallback
   if (isStructuredLanguageCode(normalized, { primaryMin: 2, primaryMax: 3, primaryCase: 'upper', allowAuto: false })) {
     return normalized
   }
-  return allowAuto ? 'auto' : DEFAULT_PREFERENCES.deeplTargetLanguage
+  return allowAuto ? 'auto' : fallback
 }
 
-function normalizeLibreLanguage(value: string | undefined, allowAuto = false): string {
+function normalizeLibreLanguage(value: string | undefined, allowAuto = false, fallback = DEFAULT_PREFERENCES.libreTargetLanguage): string {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : ''
   if (allowAuto && normalized === 'auto') return 'auto'
-  if (!normalized) return allowAuto ? 'auto' : DEFAULT_PREFERENCES.libreTargetLanguage
+  if (!normalized) return allowAuto ? 'auto' : fallback
   if (isStructuredLanguageCode(normalized, { primaryMin: 2, primaryMax: 3, primaryCase: 'lower', allowAuto: false })) {
     return normalized
   }
-  return allowAuto ? 'auto' : DEFAULT_PREFERENCES.libreTargetLanguage
+  return allowAuto ? 'auto' : fallback
 }
 
-function normalizeTranslangLanguage(value: string | undefined, allowAuto = false): string {
+function normalizeTranslangLanguage(value: string | undefined, allowAuto = false, fallback = DEFAULT_PREFERENCES.translangTargetLanguage): string {
   const normalized = typeof value === 'string' ? value.trim() : ''
-  if (!normalized) return allowAuto ? 'auto' : DEFAULT_PREFERENCES.translangTargetLanguage
+  if (!normalized) return allowAuto ? 'auto' : fallback
   if (allowAuto && normalized.toLowerCase() === 'auto') return 'auto'
   if (!isStructuredLanguageCode(normalized.toLowerCase(), { primaryMin: 2, primaryMax: 3, primaryCase: 'lower', allowAuto: false })) {
-    return allowAuto ? 'auto' : DEFAULT_PREFERENCES.translangTargetLanguage
+    return allowAuto ? 'auto' : fallback
   }
 
   const [primary, ...rest] = normalized.split('-')
@@ -240,6 +245,16 @@ export function normalizeTranslationPreferences(
   input: Partial<TranslationPreferences> | null | undefined,
 ): TranslationPreferences {
   const raw = input ?? {}
+  const browserTarget = getBrowserTargetLanguageFallback()
+  const deeplTargetFallback = browserTarget
+    ? normalizeDeepLLanguage(browserTarget, false)
+    : DEFAULT_PREFERENCES.deeplTargetLanguage
+  const libreTargetFallback = browserTarget
+    ? normalizeLibreLanguage(browserTarget, false)
+    : DEFAULT_PREFERENCES.libreTargetLanguage
+  const translangTargetFallback = browserTarget
+    ? normalizeTranslangLanguage(browserTarget, false)
+    : DEFAULT_PREFERENCES.translangTargetLanguage
 
   return {
     provider: raw.provider === 'deepl' ? 'deepl'
@@ -250,25 +265,25 @@ export function normalizeTranslationPreferences(
       : raw.provider === 'opusmt' ? 'opusmt'
       : DEFAULT_PREFERENCES.provider,
     deeplPlan: raw.deeplPlan === 'pro' ? 'pro' : 'free',
-    deeplTargetLanguage: normalizeDeepLLanguage(raw.deeplTargetLanguage, false),
+    deeplTargetLanguage: normalizeDeepLLanguage(raw.deeplTargetLanguage, false, deeplTargetFallback),
     deeplSourceLanguage: normalizeDeepLLanguage(raw.deeplSourceLanguage, true),
     libreBaseUrl: normalizeRemoteUrl(raw.libreBaseUrl),
-    libreTargetLanguage: normalizeLibreLanguage(raw.libreTargetLanguage, false),
+    libreTargetLanguage: normalizeLibreLanguage(raw.libreTargetLanguage, false, libreTargetFallback),
     libreSourceLanguage: normalizeLibreLanguage(raw.libreSourceLanguage, true),
     translangBaseUrl: typeof raw.translangBaseUrl === 'string'
       ? normalizeRemoteUrl(raw.translangBaseUrl)
       : DEFAULT_PREFERENCES.translangBaseUrl,
-    translangTargetLanguage: normalizeTranslangLanguage(raw.translangTargetLanguage, false),
+    translangTargetLanguage: normalizeTranslangLanguage(raw.translangTargetLanguage, false, translangTargetFallback),
     translangSourceLanguage: normalizeTranslangLanguage(raw.translangSourceLanguage, true),
     lingvaBaseUrl: typeof raw.lingvaBaseUrl === 'string'
       ? normalizeRemoteUrl(raw.lingvaBaseUrl)
       : DEFAULT_PREFERENCES.lingvaBaseUrl,
-    lingvaTargetLanguage: normalizeLibreLanguage(raw.lingvaTargetLanguage, false),
+    lingvaTargetLanguage: normalizeLibreLanguage(raw.lingvaTargetLanguage, false, libreTargetFallback),
     lingvaSourceLanguage: normalizeLibreLanguage(raw.lingvaSourceLanguage, true),
     small100BaseUrl: normalizeLocalServiceUrl(raw.small100BaseUrl),
-    small100TargetLanguage: normalizeLibreLanguage(raw.small100TargetLanguage, false),
+    small100TargetLanguage: normalizeLibreLanguage(raw.small100TargetLanguage, false, libreTargetFallback),
     small100SourceLanguage: normalizeLibreLanguage(raw.small100SourceLanguage, true),
-    opusMtTargetLanguage: normalizeLibreLanguage(raw.opusMtTargetLanguage, false),
+    opusMtTargetLanguage: normalizeLibreLanguage(raw.opusMtTargetLanguage, false, libreTargetFallback),
     opusMtSourceLanguage: normalizeLibreLanguage(raw.opusMtSourceLanguage, true),
   }
 }

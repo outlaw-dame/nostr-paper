@@ -4,6 +4,8 @@ import { AuthorRow } from '@/components/profile/AuthorRow'
 import { useKeywordFilters } from '@/hooks/useKeywordFilters'
 import { useMuteList } from '@/hooks/useMuteList'
 import { useProfile } from '@/hooks/useProfile'
+import { useHideNsfwTaggedPosts } from '@/hooks/useHideNsfwTaggedPosts'
+import { setHideNsfwTaggedPostsEnabled } from '@/lib/moderation/nsfwSettings'
 import type { FilterAction, FilterScope, KeywordFilter } from '@/lib/filters/types'
 
 const ACTION_LABELS: Record<FilterAction, string> = {
@@ -88,6 +90,7 @@ export default function ModerationPage() {
   const navigate = useNavigate()
   const { filters, loading: filtersLoading } = useKeywordFilters()
   const { mutedPubkeys, loading: muteListLoading, unmute } = useMuteList()
+  const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
   const [busyPubkeys, setBusyPubkeys] = useState<Set<string>>(new Set())
 
   const mutedList = useMemo(() => Array.from(mutedPubkeys), [mutedPubkeys])
@@ -217,7 +220,37 @@ export default function ModerationPage() {
 
         <section>
           <h2 className="section-kicker px-1 mb-3">Automatic Moderation</h2>
-          <div className="app-panel rounded-ios-xl p-4 card-elevated">
+          <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-5">
+            <label className="flex items-start gap-3">
+              <div className="mt-0.5 flex-1">
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
+                  Hide posts with #nsfw tags
+                </p>
+                <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
+                  Automatically hide posts tagged with the exact hashtag #nsfw across feed and search surfaces.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={hideNsfwTaggedPosts}
+                onClick={() => setHideNsfwTaggedPostsEnabled(!hideNsfwTaggedPosts)}
+                className="
+                  shrink-0 mt-0.5 w-11 h-6 rounded-full
+                  transition-colors duration-200
+                "
+                style={{
+                  backgroundColor: hideNsfwTaggedPosts
+                    ? 'rgb(var(--color-system-green))'
+                    : 'rgb(var(--color-fill-secondary) / 0.3)',
+                }}
+              >
+                <span
+                  className="block w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200"
+                  style={{ transform: `translateX(${hideNsfwTaggedPosts ? 22 : 2}px)` }}
+                />
+              </button>
+            </label>
             <p className="text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
               Extreme-harm detection runs on-device and Tagr moderation labels are merged from trusted relays.
               Tagr blocks are shown with a visible indicator while non-Tagr blocks can be silently hidden in feed cards.

@@ -14,15 +14,16 @@
 import NDK, {
   NDKNip07Signer,
   NDKPrivateKeySigner,
+  NDKRelay,
   type NDKCacheAdapter,
   type NDKCacheEntry,
   type NDKEvent,
   type NDKFilter as NDKNativeFilter,
-  type NDKRelay,
   type NDKSubscription,
   type NDKUser,
   type NDKUserProfile,
 } from '@nostr-dev-kit/ndk'
+import { getStoredRelayUrls } from '@/lib/relay/relaySettings'
 import { insertEvent, queryEvents, getProfile, getProfiles } from '@/lib/db/nostr'
 import { isValidRelayURL } from '@/lib/security/sanitize'
 import type { Profile, NostrEvent, NostrFilter } from '@/types'
@@ -167,8 +168,9 @@ export interface InitNDKOptions {
 export async function initNDK(options: InitNDKOptions = {}): Promise<NDK> {
   if (_ndk) return _ndk
 
-  // Validate and filter relay URLs
-  const relays = (options.relays ?? DEFAULT_RELAYS)
+  // Validate and filter relay URLs — use user's stored list if they've customised it
+  const storedRelays = getStoredRelayUrls()
+  const relays = (options.relays ?? storedRelays ?? DEFAULT_RELAYS)
     .filter(isValidRelayURL)
     .slice(0, 20) // hard cap
 
@@ -284,4 +286,34 @@ export function disconnectNDK(): void {
   // NDK doesn't have a global disconnect — close pool
   _ndk.pool.relays.forEach(relay => relay.disconnect())
   _ndk = null
+}
+
+// ── Live Relay Pool Management ───────────────────────────────
+
+/**
+ * Add a relay URL to the active NDK pool and start connecting.
+ * Safe to call after initNDK(). No-ops if NDK is not initialized yet.
+ */
+export function addRelayToPool(url: string): void {
+  if (!_ndk || !isValidRelayURL(url)) return
+  if (_ndk.pool.relays.has(url)) return
+  const relay = new NDKRelay(url, _ndk.relayAuthDefaultPolicy, _ndk)
+  _ndk.pool.addRelay(relay, true)
+}
+
+/**
+ * Remove a relay URL from the active NDK pool and disconnect it.
+ * Safe to call with unknown URLs (no-op if not in pool).
+ */
+export function removeRelayFromPool(url: string): void {
+  if (!_ndk) return
+  _ndk.pool.removeRelay(url)
+}
+
+/**
+ * Returns the current ordered list of relay URLs in the NDK pool.
+ */
+export function getPoolRelayUrls(): string[] {
+  if (!_ndk) return []
+  return Array.from(_ndk.pool.relays.keys())
 }

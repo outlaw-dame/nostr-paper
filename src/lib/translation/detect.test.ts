@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { detectScriptLanguage } from '@/lib/translation/detect'
+import {
+  detectLikelyLanguage,
+  detectScriptLanguage,
+  languagesProbablyMatch,
+} from '@/lib/translation/detect'
 
 describe('detectScriptLanguage', () => {
   it('detects additional Asian scripts used by fallback providers', () => {
@@ -10,5 +14,18 @@ describe('detectScriptLanguage', () => {
 
   it('keeps returning null for clearly Latin-script text', () => {
     expect(detectScriptLanguage('This is an English sentence.')).toBeNull()
+  })
+})
+
+describe('detectLikelyLanguage', () => {
+  it('detects likely English text with common stopwords', () => {
+    expect(detectLikelyLanguage('This is an English sentence about the new release and what it means for users.')).toBe('en')
+  })
+})
+
+describe('languagesProbablyMatch', () => {
+  it('compares primary language subtags only', () => {
+    expect(languagesProbablyMatch('en-US', 'en')).toBe(true)
+    expect(languagesProbablyMatch('ja', 'en')).toBe(false)
   })
 })

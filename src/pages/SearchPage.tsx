@@ -23,12 +23,14 @@ import { useSearch } from '@/hooks/useSearch'
 import { useProfile } from '@/hooks/useProfile'
 import { useSelfThreadIndex } from '@/hooks/useSelfThreadIndex'
 import { useMuteList } from '@/hooks/useMuteList'
+import { useHideNsfwTaggedPosts } from '@/hooks/useHideNsfwTaggedPosts'
 import { getEventMediaAttachments, getImetaHiddenUrls } from '@/lib/nostr/imeta'
 import { parseLongFormEvent } from '@/lib/nostr/longForm'
 import {
   buildEventModerationDocument,
   buildProfileModerationDocument,
 } from '@/lib/moderation/content'
+import { filterNsfwTaggedEvents } from '@/lib/moderation/nsfwTags'
 import { formatNip05Identifier } from '@/lib/nostr/nip05'
 import { parsePollEvent } from '@/lib/nostr/polls'
 import { parseSearchQuery, warmSearchRelays } from '@/lib/nostr/search'
@@ -85,6 +87,7 @@ export default function SearchPage() {
   })
 
   const { isMuted, loading: muteListLoading } = useMuteList()
+  const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
   const checkEvent = useEventFilterCheck()
 
   const parsedQuery = useMemo(() => parseSearchQuery(query), [query])
@@ -121,8 +124,11 @@ export default function SearchPage() {
     loading: profileModerationLoading,
   } = useModerationDocuments(profileModerationDocuments)
   const visibleEvents = useMemo(
-    () => events.filter((event) => !isMuted(event.pubkey) && (!eventModerationIds.has(event.id) || allowedEventIds.has(event.id))),
-    [allowedEventIds, eventModerationIds, events, isMuted],
+    () => filterNsfwTaggedEvents(
+      events.filter((event) => !isMuted(event.pubkey) && (!eventModerationIds.has(event.id) || allowedEventIds.has(event.id))),
+      hideNsfwTaggedPosts,
+    ),
+    [allowedEventIds, eventModerationIds, events, hideNsfwTaggedPosts, isMuted],
   )
   const semanticFilterResults = useSemanticFiltering(visibleEvents)
   const visibleProfiles = useMemo(

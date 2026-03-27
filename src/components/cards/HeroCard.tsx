@@ -22,11 +22,13 @@ import { useProfile } from '@/hooks/useProfile'
 import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { useStoryCardPreview } from '@/hooks/useStoryCardPreview'
 import { SensitiveImage } from '@/components/media/SensitiveImage'
+import { EventMetricsRow } from '@/components/nostr/EventMetricsRow'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { TwemojiText } from '@/components/ui/TwemojiText'
 import { ExpandedNote } from './ExpandedNote'
 import { NoteContent } from './NoteContent'
 import { getQuotePostBody, getRepostPreviewText, parseQuoteTags } from '@/lib/nostr/repost'
+import { getProxyInfo, getProtocolMeta } from '@/lib/nostr/proxyTag'
 import { sanitizeText } from '@/lib/security/sanitize'
 import type { NostrEvent } from '@/types'
 
@@ -86,6 +88,8 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
 
   const previewText = (storySummary || rawPreview).slice(0, 180)
   const displayTitle = storyTitle
+
+  const proxyInfo = isArticleStory ? null : getProxyInfo(event)
 
   const videoAutoplaySources = videoPlaybackPlan?.sources ?? []
   const canAutoplayVideo = Boolean(video && videoAutoplaySources.length > 0 && !contentWarning && followStatus !== false)
@@ -196,7 +200,7 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
           "
           style={{ opacity: glassOpacity, y: contentY }}
         >
-          <motion.div style={{ y: pillY }}>
+          <motion.div style={{ y: pillY }} className="flex items-center gap-2 flex-wrap">
             <span className="
               inline-flex items-center rounded-full
               bg-white/14 px-3 py-1
@@ -205,6 +209,17 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
             ">
               {heroLabel}
             </span>
+            {proxyInfo && (
+              <span
+                className="inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] backdrop-blur-md"
+                style={{
+                  background: getProtocolMeta(proxyInfo.protocol).glassBackground,
+                  color:      getProtocolMeta(proxyInfo.protocol).glassColor,
+                }}
+              >
+                {getProtocolMeta(proxyInfo.protocol).label}
+              </span>
+            )}
           </motion.div>
 
           <AuthorRow
@@ -244,6 +259,8 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
               "
             />
           )}
+
+          <EventMetricsRow event={event} tone="inverse" className="[text-shadow:0_1px_3px_rgba(0,0,0,0.45)]" />
         </motion.div>
       </motion.article>
 

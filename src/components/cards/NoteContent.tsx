@@ -31,6 +31,7 @@ interface NoteContentProps {
   interactive?: boolean
   allowTranslation?: boolean
   enableMarkdown?: boolean
+  showEntityPreviews?: boolean
 }
 
 type ContentToken =
@@ -328,6 +329,7 @@ export function NoteContent({
   interactive = true,
   allowTranslation = false,
   enableMarkdown = false,
+  showEntityPreviews = true,
 }: NoteContentProps) {
   const hiddenUrlSet = React.useMemo(() => new Set(hiddenUrls), [hiddenUrls])
   const tokens = React.useMemo(
@@ -369,7 +371,7 @@ export function NoteContent({
     return (
       <>
         <MarkdownContent content={content} className={className} interactive={interactive} />
-        {interactive && entityCandidates.length > 0 && (
+        {interactive && showEntityPreviews && entityCandidates.length > 0 && (
           <EntityPreviewStack candidates={entityCandidates} />
         )}
         {allowTranslation && translationSourceText && (
@@ -387,7 +389,7 @@ export function NoteContent({
       `}>
         {tokens.map((token, index) => renderToken(token, index, false, interactive))}
       </p>
-      {interactive && entityCandidates.length > 0 && (
+      {interactive && showEntityPreviews && entityCandidates.length > 0 && (
         <EntityPreviewStack candidates={entityCandidates} />
       )}
       {allowTranslation && translationSourceText && (

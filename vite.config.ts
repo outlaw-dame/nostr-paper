@@ -51,6 +51,90 @@ const LOCAL_CROSS_ORIGIN_ISOLATION_HEADERS = ENABLE_LOCAL_CROSS_ORIGIN_ISOLATION
     }
   : undefined
 
+function normalizeModuleId(id: string): string {
+  return id.replace(/\\/g, '/')
+}
+
+function pickManualChunk(id: string): string | undefined {
+  const normalized = normalizeModuleId(id)
+
+  if (normalized.includes('/node_modules/')) {
+    if (
+      normalized.includes('/react/') ||
+      normalized.includes('/react-dom/') ||
+      normalized.includes('/react-router-dom/')
+    ) {
+      return 'react-vendor'
+    }
+
+    if (
+      normalized.includes('/motion/') ||
+      normalized.includes('/@use-gesture/')
+    ) {
+      return 'motion-vendor'
+    }
+
+    if (normalized.includes('/konsta/')) {
+      return 'ui-vendor'
+    }
+
+    if (
+      normalized.includes('/nostr-tools/') ||
+      normalized.includes('/@nostr-dev-kit/ndk/') ||
+      normalized.includes('/tseep/')
+    ) {
+      return 'nostr-vendor'
+    }
+
+    if (
+      normalized.includes('/@huggingface/transformers/') ||
+      normalized.includes('/onnxruntime-web/')
+    ) {
+      return 'ai-vendor'
+    }
+
+    if (normalized.includes('/idb-keyval/')) {
+      return 'storage-vendor'
+    }
+  }
+
+  if (
+    normalized.includes('/src/lib/translation/') ||
+    normalized.includes('/src/components/translation/')
+  ) {
+    return 'translation'
+  }
+
+  if (
+    normalized.includes('/src/lib/semantic/') ||
+    normalized.includes('/src/hooks/useKeywordFilters') ||
+    normalized.includes('/src/hooks/useTagTimelineSemanticFeed')
+  ) {
+    return 'semantic'
+  }
+
+  if (
+    normalized.includes('/src/lib/moderation/') ||
+    normalized.includes('/src/hooks/useModeration') ||
+    normalized.includes('/src/hooks/useMediaModeration') ||
+    normalized.includes('/src/hooks/useHideNsfwTaggedPosts')
+  ) {
+    return 'moderation'
+  }
+
+  if (
+    normalized.includes('/src/lib/db/') ||
+    normalized.includes('/src/lib/nostr/') ||
+    normalized.includes('/src/hooks/useNostrFeed') ||
+    normalized.includes('/src/hooks/useProfile') ||
+    normalized.includes('/src/hooks/useFollowStatus')
+  ) {
+    return 'nostr-core'
+  }
+
+  return undefined
+}
+
 // Private IP ranges — block to prevent SSRF in dev proxy
 const PRIVATE_IP_RE = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.0\.0\.0|::1|localhost)/i
 
@@ -1263,17 +1347,18 @@ export default defineConfig(({ mode }) => {
     ].filter(Boolean),
 
     resolve: {
-      alias: {
-        '@':           resolve(__dirname, 'src'),
-        '@lib':        resolve(__dirname, 'src/lib'),
-        '@components': resolve(__dirname, 'src/components'),
-        '@hooks':      resolve(__dirname, 'src/hooks'),
-        '@types':      resolve(__dirname, 'src/types'),
-        '@contexts':   resolve(__dirname, 'src/contexts'),
-        '@pages':      resolve(__dirname, 'src/pages'),
-        '@styles':     resolve(__dirname, 'src/styles'),
-        '@workers':    resolve(__dirname, 'src/workers'),
-      },
+      alias: [
+        { find: /^tseep$/, replacement: resolve(__dirname, 'src/shims/tseep-safe.ts') },
+        { find: '@lib', replacement: resolve(__dirname, 'src/lib') },
+        { find: '@components', replacement: resolve(__dirname, 'src/components') },
+        { find: '@hooks', replacement: resolve(__dirname, 'src/hooks') },
+        { find: '@types', replacement: resolve(__dirname, 'src/types') },
+        { find: '@contexts', replacement: resolve(__dirname, 'src/contexts') },
+        { find: '@pages', replacement: resolve(__dirname, 'src/pages') },
+        { find: '@styles', replacement: resolve(__dirname, 'src/styles') },
+        { find: '@workers', replacement: resolve(__dirname, 'src/workers') },
+        { find: '@', replacement: resolve(__dirname, 'src') },
+      ],
     },
 
     assetsInclude: ['**/*.wasm'],
@@ -1310,14 +1395,10 @@ export default defineConfig(({ mode }) => {
     build: {
       target: 'es2022',
       sourcemap: mode !== 'production',
+      chunkSizeWarningLimit: 900,
       rollupOptions: {
         output: {
-          manualChunks: {
-            'react-vendor': ['react', 'react-dom', 'react-router-dom'],
-            'motion-vendor': ['motion', '@use-gesture/react'],
-            'nostr-vendor': ['nostr-tools', '@nostr-dev-kit/ndk'],
-            'ui-vendor': ['konsta/react'],
-          },
+          manualChunks: pickManualChunk,
         },
       },
     },

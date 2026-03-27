@@ -4,13 +4,14 @@
  * Identity sign-in screen. Three paths:
  *  1. Continue as saved user (nsec or npub stored from prior session)
  *  2. Enter a private key (nsec) — full signing capability
- *  3. Enter a public key (npub/hex) — read-only profile access
+ *  3. Enter a public identity (npub/hex/NIP-05) — read-only profile access
  */
 
 import React, { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProfile } from '@/hooks/useProfile'
 import { decodeProfileReference } from '@/lib/nostr/nip21'
+import { parseNip05Identifier, resolveNip05Identifier } from '@/lib/nostr/nip05'
 import {
   loginWithNsec,
   loginWithPubkey,
@@ -129,19 +130,31 @@ function KeyInputScreen({
         setLoading(false)
       }
     } else {
-      let pubkey: string | null = null
-      if (trimmed.startsWith('npub1')) {
-        pubkey = decodeProfileReference(trimmed)?.pubkey ?? null
-      } else if (/^[0-9a-f]{64}$/i.test(trimmed)) {
-        pubkey = trimmed.toLowerCase()
+      setLoading(true)
+      try {
+        let pubkey: string | null = null
+
+        if (trimmed.startsWith('npub1') || trimmed.startsWith('nprofile1')) {
+          pubkey = decodeProfileReference(trimmed)?.pubkey ?? null
+        } else if (/^[0-9a-f]{64}$/i.test(trimmed)) {
+          pubkey = trimmed.toLowerCase()
+        } else if (parseNip05Identifier(trimmed)) {
+          pubkey = (await resolveNip05Identifier(trimmed))?.pubkey ?? null
+        }
+
+        if (!pubkey) {
+          setError('Invalid public identity — use npub1…, nprofile1…, 64-character hex, or name@domain.com.')
+          return
+        }
+
+        loginWithPubkey(pubkey)
+        dispatch({ type: 'SET_USER', payload: { pubkey } })
+        onSuccess(pubkey)
+      } catch {
+        setError('Could not resolve that public identity right now. Try again.')
+      } finally {
+        setLoading(false)
       }
-      if (!pubkey) {
-        setError('Invalid public key — use npub1… or 64-character hex.')
-        return
-      }
-      loginWithPubkey(pubkey)
-      dispatch({ type: 'SET_USER', payload: { pubkey } })
-      onSuccess(pubkey)
     }
   }, [value, mode, dispatch, onSuccess])
 
@@ -163,19 +176,19 @@ function KeyInputScreen({
       </button>
 
       <h2 className="text-[26px] font-bold tracking-tight text-[rgb(var(--color-label))] mb-1">
-        {isNsec ? 'Enter private key' : 'Enter public key'}
+        {isNsec ? 'Enter private key' : 'Enter public identity'}
       </h2>
       <p className="text-[15px] text-[rgb(var(--color-label-secondary))] mb-8 leading-relaxed">
         {isNsec
           ? 'Your key is stored only in this browser and never sent anywhere.'
-          : 'Read-only access — view your profile without signing events.'}
+        : 'Read-only access — use npub, nprofile, hex pubkey, or NIP-05 (name@domain.com).'}
       </p>
 
       {/* Input */}
       <div className="relative mb-2">
         <input
           type={isNsec ? 'password' : 'text'}
-          placeholder={isNsec ? 'nsec1…' : 'npub1… or hex pubkey'}
+          placeholder={isNsec ? 'nsec1…' : 'npub1…, nprofile1…, hex, or name@domain.com'}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') void handleSubmit() }}
@@ -406,7 +419,7 @@ export default function OnboardPage() {
             transition-opacity active:opacity-60
           "
         >
-          Browse read-only with a public key
+          Browse read-only with public identity (NIP-05 supported)
         </button>
 
         <button

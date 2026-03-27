@@ -20,6 +20,7 @@ import type { EventEngagementSummary, NostrEvent } from '@/types'
 import { Kind } from '@/types'
 
 const EMPTY_SUMMARY: EventEngagementSummary = {
+  replyCount: 0,
   repostCount: 0,
   reactionCount: 0,
   likeCount: 0,

@@ -58,7 +58,7 @@ function ProfileEntityCard({
 }) {
   const route = getNip21Route(reference) ?? `/profile/${encodeURIComponent(reference)}`
   const displayName = profile.display_name ?? profile.name ?? 'Unknown profile'
-  const subtitle = profile.nip05 ?? profile.name ?? pubkey.slice(0, 16)
+  const subtitle = profile.nip05 ?? profile.display_name ?? profile.name ?? pubkey.slice(0, 16)
   const summary = profile.about?.trim()
   const banner = profile.banner
   const picture = profile.picture

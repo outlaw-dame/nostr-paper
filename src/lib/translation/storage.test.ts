@@ -1,5 +1,14 @@
 import { normalizeTranslationPreferences } from '@/lib/translation/storage'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+
+const originalNavigator = globalThis.navigator
+
+afterEach(() => {
+  Object.defineProperty(globalThis, 'navigator', {
+    value: originalNavigator,
+    configurable: true,
+  })
+})
 
 describe('normalizeTranslationPreferences', () => {
   it('normalizes DeepL settings and rejects invalid language codes', () => {
@@ -71,6 +80,26 @@ describe('normalizeTranslationPreferences', () => {
       lingvaBaseUrl: 'https://lingva.example.com',
       lingvaTargetLanguage: 'es',
       lingvaSourceLanguage: 'auto',
+    })
+  })
+
+  it('falls back to the browser language for target defaults when unset', () => {
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        language: 'fr-CA',
+        languages: ['fr-CA', 'en-US'],
+      },
+      configurable: true,
+    })
+
+    expect(normalizeTranslationPreferences({
+      provider: 'opusmt',
+    })).toMatchObject({
+      opusMtTargetLanguage: 'fr-ca',
+      libreTargetLanguage: 'fr-ca',
+      lingvaTargetLanguage: 'fr-ca',
+      translangTargetLanguage: 'fr-CA',
+      deeplTargetLanguage: 'FR-CA',
     })
   })
 })

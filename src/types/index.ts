@@ -294,6 +294,7 @@ export interface ReactionAggregate {
 }
 
 export interface EventEngagementSummary {
+  replyCount: number
   repostCount: number
   reactionCount: number
   likeCount: number

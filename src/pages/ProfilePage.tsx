@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState, useTransition, type ReactNod
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ReportSheet } from '@/components/nostr/ReportSheet'
 import { UserStatusBody } from '@/components/nostr/UserStatusBody'
+import { NoteContent } from '@/components/cards/NoteContent'
 import { ProfileMetadataEditor } from '@/components/profile/ProfileMetadataEditor'
-import { TranslateTextPanel } from '@/components/translation/TranslateTextPanel'
 import { TwemojiText } from '@/components/ui/TwemojiText'
 import { ImageLightbox } from '@/components/ui/ImageLightbox'
 import { useApp } from '@/contexts/app-context'
@@ -41,7 +41,7 @@ import {
   type ParsedNip51ListEvent,
 } from '@/lib/nostr/lists'
 import { decodeProfileReference } from '@/lib/nostr/nip21'
-import { formatNip05Identifier } from '@/lib/nostr/nip05'
+import { formatNip05Identifier, parseNip05Identifier, resolveNip05Identifier } from '@/lib/nostr/nip05'
 import { getIdentityUrl, getPlatformDisplayName } from '@/lib/nostr/nip39'
 import type { ContactList, Profile, ProfileBirthday } from '@/types'
 import { Kind } from '@/types'
@@ -350,18 +350,71 @@ export default function ProfilePage() {
   const navigate = useNavigate()
   const { currentUser, logout } = useApp()
   const { pubkey: routePubkey } = useParams<{ pubkey: string }>()
-  
+  const routeIdentity = routePubkey?.trim() ?? null
+  const [resolvedRoutePubkey, setResolvedRoutePubkey] = useState<string | null>(null)
+  const [routeIdentityResolving, setRouteIdentityResolving] = useState(false)
+  const [routeIdentityError, setRouteIdentityError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!routeIdentity) {
+      setResolvedRoutePubkey(null)
+      setRouteIdentityResolving(false)
+      setRouteIdentityError(null)
+      return
+    }
+
+    const decoded = decodeProfileReference(routeIdentity)?.pubkey ?? null
+    if (decoded) {
+      setResolvedRoutePubkey(decoded)
+      setRouteIdentityResolving(false)
+      setRouteIdentityError(null)
+      return
+    }
+
+    if (!parseNip05Identifier(routeIdentity)) {
+      setResolvedRoutePubkey(null)
+      setRouteIdentityResolving(false)
+      setRouteIdentityError('Invalid profile identifier in the route.')
+      return
+    }
+
+    const controller = new AbortController()
+    setResolvedRoutePubkey(null)
+    setRouteIdentityResolving(true)
+    setRouteIdentityError(null)
+
+    resolveNip05Identifier(routeIdentity, controller.signal)
+      .then((resolved) => {
+        if (controller.signal.aborted) return
+        if (!resolved) {
+          setRouteIdentityError('Could not resolve that NIP-05 identifier.')
+          setRouteIdentityResolving(false)
+          return
+        }
+
+        setResolvedRoutePubkey(resolved.pubkey)
+        setRouteIdentityResolving(false)
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return
+        setRouteIdentityError(error instanceof Error ? error.message : 'Could not resolve that NIP-05 identifier.')
+        setRouteIdentityResolving(false)
+      })
+
+    return () => controller.abort()
+  }, [routeIdentity])
+
   const pubkey = useMemo(() => {
-    const decoded = routePubkey ? decodeProfileReference(routePubkey)?.pubkey : null
-    return decoded ?? currentUser?.pubkey ?? null
-  }, [routePubkey, currentUser])
+    if (routeIdentity) return resolvedRoutePubkey
+    return currentUser?.pubkey ?? null
+  }, [routeIdentity, resolvedRoutePubkey, currentUser])
 
   // No route pubkey + no logged-in user → send to onboarding
   useEffect(() => {
-    if (!routePubkey && !currentUser) {
+    if (!routeIdentity && !currentUser) {
       navigate('/onboard', { replace: true })
     }
-  }, [routePubkey, currentUser, navigate])
+  }, [routeIdentity, currentUser, navigate])
 
   const [, startTransition] = useTransition()
   
@@ -800,10 +853,16 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {!pubkey ? (
+      {routeIdentity && routeIdentityResolving ? (
         <div className="px-4 py-6">
           <p className="text-[17px] text-[rgb(var(--color-label-secondary))]">
-            Invalid pubkey in the profile route.
+            Resolving profile identity…
+          </p>
+        </div>
+      ) : !pubkey ? (
+        <div className="px-4 py-6">
+          <p className="text-[17px] text-[rgb(var(--color-label-secondary))]">
+            {routeIdentityError ?? 'Invalid pubkey in the profile route.'}
           </p>
         </div>
       ) : isMutedProfile && !isSelf ? (
@@ -1001,10 +1060,12 @@ export default function ProfilePage() {
 
                 {displayProfile?.about ? (
                   <>
-                    <p className="mt-2 whitespace-pre-wrap text-[15px] leading-7 text-[rgb(var(--color-label))]">
-                      {displayProfile.about}
-                    </p>
-                    <TranslateTextPanel text={displayProfile.about} />
+                    <NoteContent
+                      content={displayProfile.about}
+                      className="mt-2 text-[15px] leading-7"
+                      allowTranslation
+                      showEntityPreviews={false}
+                    />
                   </>
                 ) : (
                   <p className="mt-2 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">

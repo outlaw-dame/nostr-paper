@@ -63,6 +63,7 @@ import { parseReportEvent } from '@/lib/nostr/report'
 import { getQuotePostBody, parseRepostEvent } from '@/lib/nostr/repost'
 import { parseUserStatusEvent } from '@/lib/nostr/status'
 import { parseCommentEvent, parseThreadEvent } from '@/lib/nostr/thread'
+import { getProxyInfo, getProtocolMeta } from '@/lib/nostr/proxyTag'
 import { getVideoPreviewImage, parseVideoEvent } from '@/lib/nostr/video'
 import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { Kind, type NostrEvent, type Profile } from '@/types'
@@ -112,6 +113,7 @@ export function ExpandedNote({ event, profile, onClose }: ExpandedNoteProps) {
   const quoteBody = getQuotePostBody(event)
   const attachments = getEventMediaAttachments(event)
   const hiddenUrls = getImetaHiddenUrls(event)
+    const proxyInfo = getProxyInfo(event)
   const primaryMedia = article?.image ?? (video ? getVideoPreviewImage(video) : undefined) ?? attachments
     .map((attachment) => getMediaAttachmentPreviewUrl(attachment))
     .find((url): url is string => typeof url === 'string')
@@ -247,6 +249,16 @@ export function ExpandedNote({ event, profile, onClose }: ExpandedNoteProps) {
                   timestamp={event.created_at}
                   large
                 />
+
+                  {proxyInfo && (
+                    <div className="mt-2.5">
+                      <span
+                        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] ${getProtocolMeta(proxyInfo.protocol).badgeClass}`}
+                      >
+                        {getProtocolMeta(proxyInfo.protocol).label}
+                      </span>
+                    </div>
+                  )}
 
                 {repost ? (
                   <RepostBody event={event} className="mt-4" />

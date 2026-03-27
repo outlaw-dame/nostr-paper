@@ -1,21 +1,30 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { NDKEvent, NDKUser } from '@nostr-dev-kit/ndk'
+import { NDKEvent } from '@nostr-dev-kit/ndk'
 import { useApp } from '@/contexts/app-context'
+import { useProfile } from '@/hooks/useProfile'
+import { useSavedTagFeeds } from '@/hooks/useSavedTagFeeds'
 import { useUserStatus } from '@/hooks/useUserStatus'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { UserStatusBody } from '@/components/nostr/UserStatusBody'
-import { AppearanceSettingsCard } from '@/components/cards/AppearanceSettingsCard'
 import { getFeedResumeEnabled, setFeedResumeEnabled } from '@/lib/feed/resumeSettings'
 import { getNDK } from '@/lib/nostr/ndk'
 import { withRetry } from '@/lib/retry'
+import { sanitizeName } from '@/lib/security/sanitize'
 
 export default function SettingsPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const { currentUser, logout } = useApp()
+  const tagFeedScopeId = currentUser?.pubkey ?? 'anon'
+  const savedTagFeeds = useSavedTagFeeds(tagFeedScopeId)
   const [clearingStatus, setClearingStatus] = useState(false)
   const [resumeFeedPosition, setResumeFeedPosition] = useState(true)
+  const [displayNameDraft, setDisplayNameDraft] = useState('')
+  const [displayNameSaving, setDisplayNameSaving] = useState(false)
+  const [displayNameError, setDisplayNameError] = useState<string | null>(null)
+  const [displayNameSaved, setDisplayNameSaved] = useState(false)
+  const { profile: currentProfile } = useProfile(currentUser?.pubkey, { background: false })
   
   // Load current music status to show it
   const { status: musicStatus } = useUserStatus(currentUser?.pubkey, {
@@ -36,6 +45,10 @@ export default function SettingsPage() {
       }
     }
   }, [location.hash])
+
+  useEffect(() => {
+    setDisplayNameDraft(currentProfile?.display_name ?? '')
+  }, [currentProfile?.display_name])
 
   const handleLogout = () => {
     if (logout) {
@@ -59,6 +72,41 @@ export default function SettingsPage() {
       alert('Failed to clear status. Please try again.')
     } finally {
       setClearingStatus(false)
+    }
+  }
+
+  const handleSaveDisplayName = async () => {
+    if (!currentUser?.pubkey) return
+
+    const sanitizedDisplayName = sanitizeName(displayNameDraft)
+    setDisplayNameSaving(true)
+    setDisplayNameError(null)
+    setDisplayNameSaved(false)
+
+    try {
+      const ndk = getNDK()
+      const event = new NDKEvent(ndk)
+      event.kind = 0
+
+      const content = {
+        name: currentProfile?.name ?? '',
+        display_name: sanitizedDisplayName,
+        about: currentProfile?.about ?? '',
+        website: currentProfile?.website ?? '',
+        picture: currentProfile?.picture ?? '',
+        banner: currentProfile?.banner ?? '',
+        nip05: currentProfile?.nip05 ?? '',
+        lud16: currentProfile?.lud16 ?? '',
+      }
+
+      event.content = JSON.stringify(content)
+      await withRetry(() => event.publish(), { maxAttempts: 3 })
+      setDisplayNameSaved(true)
+    } catch (error) {
+      console.error('Failed to publish display name', error)
+      setDisplayNameError(error instanceof Error ? error.message : 'Failed to update display name.')
+    } finally {
+      setDisplayNameSaving(false)
     }
   }
 
@@ -103,7 +151,37 @@ export default function SettingsPage() {
             {currentUser ? (
               <div className="space-y-4">
                 <div className="rounded-[16px] bg-[rgb(var(--color-bg-secondary))] p-3">
-                  <AuthorRow pubkey={currentUser.pubkey} profile={null} />
+                  <AuthorRow pubkey={currentUser.pubkey} profile={currentProfile} />
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-[13px] font-medium text-[rgb(var(--color-label-secondary))]">
+                    Display Name
+                  </label>
+                  <input
+                    type="text"
+                    value={displayNameDraft}
+                    onChange={(event) => {
+                      setDisplayNameDraft(event.target.value)
+                      setDisplayNameSaved(false)
+                      setDisplayNameError(null)
+                    }}
+                    placeholder="How your name appears"
+                    className="w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[15px] text-[rgb(var(--color-label))] placeholder:text-[rgb(var(--color-label-tertiary))] outline-none transition-colors focus:border-[rgb(var(--color-accent))]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveDisplayName()}
+                    disabled={displayNameSaving}
+                    className="w-full rounded-[12px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[14px] font-medium text-[rgb(var(--color-label))] disabled:opacity-50"
+                  >
+                    {displayNameSaving ? 'Saving...' : 'Save Display Name'}
+                  </button>
+                  {displayNameError && (
+                    <p className="text-[13px] text-[rgb(var(--color-system-red))]">{displayNameError}</p>
+                  )}
+                  {displayNameSaved && !displayNameError && (
+                    <p className="text-[13px] text-[rgb(var(--color-system-green))]">Display name published.</p>
+                  )}
                 </div>
                 <p className="text-[13px] text-[rgb(var(--color-label-secondary))] px-1">
                   You are signed in via NIP-07 extension. Keys remain secure in your wallet.
@@ -160,12 +238,30 @@ export default function SettingsPage() {
         {/* Appearance Section */}
         <section>
           <h2 className="section-kicker px-1 mb-3">Appearance</h2>
-          <AppearanceSettingsCard />
+          <div className="app-panel rounded-ios-xl p-4 card-elevated">
+            <button
+              type="button"
+              onClick={() => navigate('/settings/appearance')}
+              className="flex w-full items-center justify-between text-left transition-opacity active:opacity-70"
+            >
+              <div>
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
+                  Theme & Zen Controls
+                </p>
+                <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
+                  Manage theme and Zen options including post metrics visibility.
+                </p>
+              </div>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-[rgb(var(--color-label-tertiary))]">
+                <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+          </div>
         </section>
 
         <section>
           <h2 className="section-kicker px-1 mb-3">Feed</h2>
-          <div className="app-panel rounded-ios-xl p-4 card-elevated">
+          <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-4">
             <label className="flex items-start gap-3">
               <div className="mt-0.5 flex-1">
                 <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
@@ -200,6 +296,50 @@ export default function SettingsPage() {
                 />
               </button>
             </label>
+
+            <button
+              type="button"
+              onClick={() => navigate('/settings/tag-feeds')}
+              className="flex w-full items-center justify-between text-left transition-opacity active:opacity-70"
+            >
+              <div>
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
+                  Tag Feeds
+                </p>
+                <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
+                  {savedTagFeeds.length === 0
+                    ? 'Create saved tag feeds that appear in the main Feed rail.'
+                    : `${savedTagFeeds.length} saved ${savedTagFeeds.length === 1 ? 'feed' : 'feeds'} ready for the main Feed rail.`}
+                </p>
+              </div>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-[rgb(var(--color-label-tertiary))]">
+                <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+          </div>
+        </section>
+
+        {/* Relays Section */}
+        <section>
+          <h2 className="section-kicker px-1 mb-3">Network</h2>
+          <div className="app-panel rounded-ios-xl p-4 card-elevated">
+            <button
+              type="button"
+              onClick={() => navigate('/settings/relays')}
+              className="flex w-full items-center justify-between text-left transition-opacity active:opacity-70"
+            >
+              <div>
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
+                  Relays
+                </p>
+                <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
+                  Add, remove, and monitor WebSocket relay connections.
+                </p>
+              </div>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-[rgb(var(--color-label-tertiary))]">
+                <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
           </div>
         </section>
 

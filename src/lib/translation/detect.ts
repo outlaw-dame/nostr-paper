@@ -16,6 +16,14 @@ interface ScriptEntry {
   lang: string
 }
 
+const ENGLISH_STOPWORDS = new Set([
+  'a', 'about', 'all', 'and', 'are', 'as', 'at', 'be', 'but', 'by',
+  'for', 'from', 'have', 'how', 'i', 'in', 'is', 'it', 'just', 'more',
+  'new', 'not', 'of', 'on', 'or', 'our', 'that', 'the', 'their', 'there',
+  'they', 'this', 'to', 'was', 'we', 'what', 'when', 'where', 'who', 'why',
+  'with', 'you', 'your',
+])
+
 // Order matters: Japanese (hiragana/katakana) must come before CJK so a
 // Japanese post is not misclassified as Chinese.
 const SCRIPT_LANGS: ScriptEntry[] = [
@@ -65,4 +73,75 @@ export function detectScriptLanguage(text: string): string | null {
   }
 
   return null
+}
+
+export function normalizeLanguageCode(code: string | null | undefined): string | null {
+  if (typeof code !== 'string') return null
+  const trimmed = code.trim()
+  if (!trimmed) return null
+
+  const [primary] = trimmed.split('-')
+  if (!primary) return null
+  return primary.toLowerCase()
+}
+
+export function getBrowserLanguage(): string | null {
+  if (typeof globalThis.navigator === 'undefined') return null
+
+  const candidates = Array.isArray(globalThis.navigator.languages)
+    ? globalThis.navigator.languages
+    : []
+
+  for (const candidate of [...candidates, globalThis.navigator.language]) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim()
+    }
+  }
+
+  return null
+}
+
+function detectLikelyEnglish(text: string): boolean {
+  const sample = text
+    .slice(0, 400)
+    .toLowerCase()
+    .replace(/[^a-z\s']/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!sample) return false
+
+  const words = sample
+    .split(' ')
+    .map((word) => word.replace(/^'+|'+$/g, ''))
+    .filter(Boolean)
+
+  if (words.length < 5) return false
+
+  const stopwordHits = words.reduce((count, word) => (
+    ENGLISH_STOPWORDS.has(word) ? count + 1 : count
+  ), 0)
+  const asciiLetters = sample.replace(/[^a-z]/g, '').length
+  const asciiDensity = asciiLetters / Math.max(1, sample.replace(/\s+/g, '').length)
+
+  return asciiDensity >= 0.85 && (
+    stopwordHits >= 3 ||
+    stopwordHits / words.length >= 0.18
+  )
+}
+
+export function detectLikelyLanguage(text: string): string | null {
+  const scriptLanguage = detectScriptLanguage(text)
+  if (scriptLanguage) return scriptLanguage
+  if (detectLikelyEnglish(text)) return 'en'
+  return null
+}
+
+export function languagesProbablyMatch(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  const normalizedLeft = normalizeLanguageCode(left)
+  const normalizedRight = normalizeLanguageCode(right)
+  return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight)
 }

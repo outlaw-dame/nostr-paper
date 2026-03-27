@@ -1755,11 +1755,27 @@ export async function getEventEngagementSummary(
   eventId: string,
   currentUserPubkey?: string,
 ): Promise<EventEngagementSummary> {
-  const [kind6Reposts, kind16Reposts, reactionCandidates, zapCandidates] = await Promise.all([
+  const [kind6Reposts, kind16Reposts, reactionCandidates, zapCandidates, replyRows] = await Promise.all([
     listEventsReferencingEvent(Kind.Repost, eventId),
     listEventsReferencingEvent(Kind.GenericRepost, eventId),
     listEventsReferencingEvent(Kind.Reaction, eventId),
     listEventsReferencingEvent(Kind.Zap, eventId),
+    dbQuery<{ reply_count: number }>(
+      `
+        SELECT COUNT(DISTINCT e.id) AS reply_count
+        FROM events e
+        WHERE e.kind IN (?, ?)
+          AND ${getVisibleEventCondition('e')}
+          AND EXISTS (
+            SELECT 1
+            FROM tags t
+            WHERE t.event_id = e.id
+              AND t.name = 'e'
+              AND t.value = ?
+          )
+      `,
+      [Kind.ShortNote, Kind.Comment, eventId],
+    ),
   ])
   const repostCandidates = [...kind6Reposts, ...kind16Reposts]
 
@@ -1817,6 +1833,7 @@ export async function getEventEngagementSummary(
     )
 
   return {
+    replyCount: replyRows[0]?.reply_count ?? 0,
     repostCount: reposts.length,
     reactionCount: reactions.length,
     likeCount,

@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { TwemojiText } from '@/components/ui/TwemojiText'
 import {
+  inspectConfiguredTranslation,
   TranslationServiceError,
   getProviderDisplayName,
   translateConfiguredText,
+  type TranslationPreflight,
   type TranslationResult,
 } from '@/lib/translation/client'
 import { TRANSLATION_SETTINGS_UPDATED_EVENT } from '@/lib/translation/storage'
@@ -32,6 +34,7 @@ export function TranslateTextPanel({
   const [settingsVersion, setSettingsVersion] = useState(0)
   const [autoAttempted, setAutoAttempted] = useState(false)
   const [autoBlockedUntil, setAutoBlockedUntil] = useState(0)
+  const [preflight, setPreflight] = useState<TranslationPreflight | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const trimmedText = text.trim()
   const now = Date.now()
@@ -45,6 +48,7 @@ export function TranslateTextPanel({
     setLoading(false)
     setAutoAttempted(false)
     setAutoBlockedUntil(0)
+    setPreflight(null)
     abortRef.current?.abort()
   }, [text])
 
@@ -76,6 +80,35 @@ export function TranslateTextPanel({
   }, [])
 
   useEffect(() => {
+    if (!trimmedText) {
+      setPreflight(null)
+      return
+    }
+
+    let cancelled = false
+    setPreflight(null)
+
+    inspectConfiguredTranslation(trimmedText)
+      .then((next) => {
+        if (!cancelled) setPreflight(next)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPreflight({
+            targetLanguage: 'en',
+            likelySourceLanguage: null,
+            sameLanguage: false,
+            canAutoTranslate: autoStart,
+          })
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [autoStart, settingsVersion, trimmedText])
+
+  useEffect(() => {
     if (!trimmedText || !requested) return
 
     const controller = new AbortController()
@@ -96,6 +129,13 @@ export function TranslateTextPanel({
         const code = translationError instanceof TranslationServiceError
           ? translationError.code
           : null
+        if (code === 'same-language') {
+          setResult(null)
+          setError(null)
+          setErrorCode(code)
+          setRequested(false)
+          return
+        }
         const message = translationError instanceof TranslationServiceError
           ? (translationError.code === 'config' || translationError.code === 'unavailable'
             ? 'Translation is not available with current settings.'
@@ -124,7 +164,9 @@ export function TranslateTextPanel({
   useEffect(() => {
     if (!autoStart) return
     if (!trimmedText) return
+    if (!preflight) return
     if (trimmedText.length > MAX_AUTO_TRANSLATE_CHARS) return
+    if (!preflight.canAutoTranslate) return
     if (requested || loading || result || error) return
     if (autoAttempted) return
     if (autoBlockedUntil > Date.now()) return
@@ -138,6 +180,7 @@ export function TranslateTextPanel({
     autoStart,
     error,
     loading,
+    preflight,
     requested,
     result,
     trimmedText,
@@ -147,15 +190,16 @@ export function TranslateTextPanel({
   const detectedLanguage = result?.detectedSourceLanguage
   const sourceLabel = detectedLanguage || (result?.sourceLanguage !== 'auto' ? result?.sourceLanguage : null)
 
-  const sameLanguage = useMemo(() => {
+  const sameLanguageResult = useMemo(() => {
     if (!result) return false
     const source = (detectedLanguage ?? result.sourceLanguage).split('-')[0]?.toLowerCase()
     const target = result.targetLanguage.split('-')[0]?.toLowerCase()
     return Boolean(source && target && source === target)
   }, [detectedLanguage, result])
+  const sameLanguage = preflight?.sameLanguage ?? false
 
   if (!trimmedText) return null
-  if (sameLanguage) return null
+  if (sameLanguage || sameLanguageResult || errorCode === 'same-language') return null
 
   const requestTranslation = () => {
     setRequested(true)
@@ -173,13 +217,15 @@ export function TranslateTextPanel({
     <div className={`mt-3 ${className}`} onClick={e => e.stopPropagation()}>
       {!requested && !loading && !result && !error && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <button
-            type="button"
-            onClick={requestTranslation}
-            className="text-[12px] font-semibold tracking-[0.01em] text-[#007AFF]"
-          >
-            🌐 Translate
-          </button>
+          {preflight && (
+            <button
+              type="button"
+              onClick={requestTranslation}
+              className="text-[12px] font-semibold tracking-[0.01em] text-[#007AFF]"
+            >
+              🌐 Translate
+            </button>
+          )}
           {autoLongText && (
             <span className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
               Long post: tap to translate on demand.

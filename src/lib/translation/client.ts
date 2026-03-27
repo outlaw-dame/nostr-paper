@@ -13,9 +13,12 @@ import {
 export { TranslationServiceError } from '@/lib/translation/errors'
 import { TranslationServiceError } from '@/lib/translation/errors'
 import { checkSmall100Health, listSmall100Languages, translateWithSmall100 } from '@/lib/translation/engines/small100'
-import { listOpusMtLanguages, translateWithOpusMt } from '@/lib/translation/engines/opusMt'
 import { listTranslangLanguages, translateWithTranslang } from '@/lib/translation/engines/translang'
-import { detectScriptLanguage } from '@/lib/translation/detect'
+import {
+  detectLikelyLanguage,
+  detectScriptLanguage,
+  languagesProbablyMatch,
+} from '@/lib/translation/detect'
 import { listLingvaLanguages, translateWithLingva } from '@/lib/translation/engines/lingva'
 import { isRecord } from '@/lib/translation/utils'
 
@@ -30,6 +33,13 @@ export interface TranslationResult {
   targetLanguage: string
   sourceLanguage: string
   detectedSourceLanguage?: string
+}
+
+export interface TranslationPreflight {
+  targetLanguage: string
+  likelySourceLanguage: string | null
+  sameLanguage: boolean
+  canAutoTranslate: boolean
 }
 
 type LanguageDirection = 'source' | 'target'
@@ -52,6 +62,7 @@ const LIBRE_MAX_SEGMENTS_PER_REQUEST = 20
 const CACHE_LIMIT = 150
 const translationCache = new Map<string, TranslationResult>()
 const inflightTranslations = new Map<string, Promise<TranslationResult>>()
+let opusMtModulePromise: Promise<typeof import('@/lib/translation/engines/opusMt')> | null = null
 
 function getDeepLProxyUrl(): string | null {
   return import.meta.env.DEV ? DEEPL_DEV_PROXY_URL : (DEEPL_PROD_PROXY_URL ?? null)
@@ -59,6 +70,11 @@ function getDeepLProxyUrl(): string | null {
 
 function getLibreProxyUrl(): string | null {
   return import.meta.env.DEV ? LIBRE_DEV_PROXY_URL : (LIBRE_PROD_PROXY_URL ?? null)
+}
+
+async function loadOpusMtModule(): Promise<typeof import('@/lib/translation/engines/opusMt')> {
+  opusMtModulePromise ??= import('@/lib/translation/engines/opusMt')
+  return opusMtModulePromise
 }
 
 function evictTranslationCacheIfNeeded(): void {
@@ -94,6 +110,58 @@ function buildCacheKey(
     opusMtSourceLanguage: configuration.opusMtSourceLanguage,
     text,
   })
+}
+
+function getConfiguredTargetLanguage(configuration: TranslationConfiguration): string {
+  switch (configuration.provider) {
+    case 'deepl': return configuration.deeplTargetLanguage
+    case 'libretranslate': return configuration.libreTargetLanguage
+    case 'translang': return configuration.translangTargetLanguage
+    case 'lingva': return configuration.lingvaTargetLanguage
+    case 'small100': return configuration.small100TargetLanguage
+    case 'opusmt': return configuration.opusMtTargetLanguage
+  }
+}
+
+function getConfiguredSourceLanguage(configuration: TranslationConfiguration): string {
+  switch (configuration.provider) {
+    case 'deepl': return configuration.deeplSourceLanguage
+    case 'libretranslate': return configuration.libreSourceLanguage
+    case 'translang': return configuration.translangSourceLanguage
+    case 'lingva': return configuration.lingvaSourceLanguage
+    case 'small100': return configuration.small100SourceLanguage
+    case 'opusmt': return configuration.opusMtSourceLanguage
+  }
+}
+
+export function inspectTranslationWithConfiguration(
+  configuration: TranslationConfiguration,
+  text: string,
+): TranslationPreflight {
+  const normalizedText = normalizeTranslationSourceText(text)
+  const targetLanguage = getConfiguredTargetLanguage(configuration)
+  const configuredSourceLanguage = getConfiguredSourceLanguage(configuration)
+  const likelySourceLanguage = configuredSourceLanguage === 'auto'
+    ? detectLikelyLanguage(normalizedText)
+    : configuredSourceLanguage
+  const sameLanguage = languagesProbablyMatch(likelySourceLanguage, targetLanguage)
+  const canAutoTranslate = !sameLanguage && !(
+    configuration.provider === 'opusmt' &&
+    configuredSourceLanguage === 'auto' &&
+    likelySourceLanguage === null
+  )
+
+  return {
+    targetLanguage,
+    likelySourceLanguage,
+    sameLanguage,
+    canAutoTranslate,
+  }
+}
+
+export async function inspectConfiguredTranslation(text: string): Promise<TranslationPreflight> {
+  const configuration = await loadTranslationConfiguration()
+  return inspectTranslationWithConfiguration(configuration, text)
 }
 
 async function readResponsePayload(response: Response): Promise<unknown> {
@@ -643,8 +711,10 @@ export async function listProviderLanguages(
       return listLingvaLanguages(configuration.lingvaBaseUrl, signal)
     case 'small100':
       return listSmall100Languages(configuration.small100BaseUrl, signal)
-    case 'opusmt':
+    case 'opusmt': {
+      const { listOpusMtLanguages } = await loadOpusMtModule()
       return listOpusMtLanguages()
+    }
   }
 }
 
@@ -766,6 +836,8 @@ async function callOpusMt(
   text: string,
   signal?: AbortSignal,
 ): Promise<TranslationResult> {
+  const { translateWithOpusMt } = await loadOpusMtModule()
+
   // Resolve 'auto' source language via script detection before dispatching
   // to the engine, so we can surface the detected language in the result.
   let resolvedSource = configuration.opusMtSourceLanguage
@@ -815,6 +887,13 @@ export async function translateTextWithConfiguration(
   const normalizedText = normalizeTranslationSourceText(text)
   if (!normalizedText) {
     throw new TranslationServiceError('Nothing to translate.', { code: 'config' })
+  }
+
+  const preflight = inspectTranslationWithConfiguration(configuration, normalizedText)
+  if (preflight.sameLanguage) {
+    throw new TranslationServiceError('Text already matches your target language.', {
+      code: 'same-language',
+    })
   }
 
   const cacheKey = buildCacheKey(configuration, normalizedText)

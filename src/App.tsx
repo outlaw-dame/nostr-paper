@@ -34,8 +34,12 @@ const VideoComposePage = lazy(() => import('@/pages/VideoComposePage'))
 const ProfilePage = lazy(() => import('@/pages/ProfilePage'))
 const NotePage    = lazy(() => import('@/pages/NotePage'))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'))
+const AppearancePage = lazy(() => import('@/pages/AppearancePage'))
 const ModerationPage = lazy(() => import('@/pages/ModerationPage'))
+const TagFeedsPage = lazy(() => import('@/pages/TagFeedsPage'))
 const FiltersPage  = lazy(() => import('@/pages/FiltersPage'))
+const RelaysPage   = lazy(() => import('@/pages/RelaysPage'))
+const ActivityPage = lazy(() => import('@/pages/ActivityPage'))
 const OnboardPage  = lazy(() => import('@/pages/OnboardPage'))
 const ExplorePage  = lazy(() => import('@/pages/ExplorePage'))
 
@@ -132,9 +136,13 @@ function InnerApp() {
             <Route path="/note/:id"            element={<NotePage />} />
             <Route path="/profile"             element={<ProfilePage />} />
             <Route path="/profile/:pubkey"     element={<ProfilePage />} />
+            <Route path="/activity"            element={<ActivityPage />} />
             <Route path="/settings"            element={<SettingsPage />} />
+            <Route path="/settings/appearance" element={<AppearancePage />} />
             <Route path="/settings/moderation" element={<ModerationPage />} />
+            <Route path="/settings/tag-feeds"  element={<TagFeedsPage />} />
             <Route path="/settings/moderation/filters" element={<FiltersPage />} />
+            <Route path="/settings/relays"     element={<RelaysPage />} />
             <Route path="/filters"             element={<Navigate to="/settings/moderation/filters" replace />} />
             <Route path="/onboard"             element={<OnboardPage />} />
             <Route path="*"                    element={<Navigate to="/" replace />} />

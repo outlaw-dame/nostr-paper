@@ -9,7 +9,7 @@
  * rather than a blank prompt.
  */
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'motion/react'
 import { SearchBar } from '@/components/search/SearchBar'
@@ -19,19 +19,33 @@ import { NoteContent } from '@/components/cards/NoteContent'
 import { NoteMediaAttachments } from '@/components/nostr/NoteMediaAttachments'
 import { PollPreview } from '@/components/nostr/PollPreview'
 import { ThreadIndexBadge } from '@/components/nostr/ThreadIndexBadge'
+import { EventMetricsRow } from '@/components/nostr/EventMetricsRow'
+import { TwemojiText } from '@/components/ui/TwemojiText'
+import { useApp } from '@/contexts/app-context'
+import { useExploreFollowPacks } from '@/hooks/useExploreFollowPacks'
 import { useModerationDocuments } from '@/hooks/useModeration'
 import { useSearch } from '@/hooks/useSearch'
 import { useProfile } from '@/hooks/useProfile'
 import { useSelfThreadIndex } from '@/hooks/useSelfThreadIndex'
 import { useMuteList } from '@/hooks/useMuteList'
+import { useHideNsfwTaggedPosts } from '@/hooks/useHideNsfwTaggedPosts'
 import { useTrendingTopics } from '@/hooks/useTrendingTopics'
 import { usePopularProfiles } from '@/hooks/usePopularProfiles'
+import {
+  getExploreFollowPackLabel,
+  getExploreFollowPackSummary,
+  rankExploreFollowPacks,
+  type FollowPackProfileEntry,
+  type RankedExploreFollowPack,
+} from '@/lib/explore/followPacks'
 import { getEventMediaAttachments, getImetaHiddenUrls } from '@/lib/nostr/imeta'
+import { getFreshContactList, saveCurrentUserContactEntries } from '@/lib/nostr/contacts'
 import { parseLongFormEvent } from '@/lib/nostr/longForm'
 import {
   buildEventModerationDocument,
   buildProfileModerationDocument,
 } from '@/lib/moderation/content'
+import { filterNsfwTaggedEvents } from '@/lib/moderation/nsfwTags'
 import { formatNip05Identifier } from '@/lib/nostr/nip05'
 import { parsePollEvent } from '@/lib/nostr/polls'
 import { parseSearchQuery, warmSearchRelays } from '@/lib/nostr/search'
@@ -54,10 +68,12 @@ const SEARCHABLE_KINDS = [
 ]
 
 export default function ExplorePage() {
+  const { currentUser } = useApp()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const queryParam = searchParams.get('q') ?? ''
   const previousQueryParamRef = useRef(queryParam)
+  const [followedPubkeys, setFollowedPubkeys] = useState<Set<string>>(new Set())
 
   // Pre-warm relay connections so first search is fast
   useEffect(() => { warmSearchRelays() }, [])
@@ -77,8 +93,31 @@ export default function ExplorePage() {
   } = useSearch({ kinds: SEARCHABLE_KINDS, localLimit: 40, relayLimit: 40 })
 
   const { isMuted, loading: muteListLoading } = useMuteList()
+  const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
   const { topics, loading: topicsLoading } = useTrendingTopics(24)
+  const { packs: followPackCandidates, loading: followPackLoading } = useExploreFollowPacks(18)
   const { profiles: popularProfiles, loading: popularLoading } = usePopularProfiles(8)
+
+  useEffect(() => {
+    if (!currentUser?.pubkey) {
+      setFollowedPubkeys(new Set())
+      return
+    }
+
+    const controller = new AbortController()
+    getFreshContactList(currentUser.pubkey, { signal: controller.signal })
+      .then((contactList) => {
+        if (controller.signal.aborted) return
+        const next = new Set(contactList?.entries.map((entry) => entry.pubkey) ?? [])
+        setFollowedPubkeys(next)
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return
+        setFollowedPubkeys(new Set())
+      })
+
+    return () => controller.abort()
+  }, [currentUser?.pubkey])
 
   const parsedQuery = useMemo(() => parseSearchQuery(query), [query])
   const unsupportedKeys = useMemo(
@@ -106,18 +145,65 @@ export default function ExplorePage() {
     () => new Set(profileModerationDocuments.map(d => d.id)),
     [profileModerationDocuments],
   )
+  const followPackModerationDocuments = useMemo(
+    () => followPackCandidates
+      .map((candidate) => buildEventModerationDocument(candidate.event))
+      .filter((d): d is NonNullable<typeof d> => d !== null),
+    [followPackCandidates],
+  )
+  const followPackModerationIds = useMemo(
+    () => new Set(followPackModerationDocuments.map((document) => document.id)),
+    [followPackModerationDocuments],
+  )
 
   const { allowedIds: allowedEventIds } = useModerationDocuments(eventModerationDocuments)
   const { allowedIds: allowedProfileIds } = useModerationDocuments(profileModerationDocuments)
+  const {
+    allowedIds: allowedFollowPackIds,
+    loading: followPackModerationLoading,
+  } = useModerationDocuments(followPackModerationDocuments)
 
   const visibleEvents = useMemo(
-    () => events.filter(e => !isMuted(e.pubkey) && (!eventModerationIds.has(e.id) || allowedEventIds.has(e.id))),
-    [allowedEventIds, eventModerationIds, events, isMuted],
+    () => filterNsfwTaggedEvents(
+      events.filter(e => !isMuted(e.pubkey) && (!eventModerationIds.has(e.id) || allowedEventIds.has(e.id))),
+      hideNsfwTaggedPosts,
+    ),
+    [allowedEventIds, eventModerationIds, events, hideNsfwTaggedPosts, isMuted],
   )
   const visibleProfiles = useMemo(
     () => profiles.filter(p => !isMuted(p.pubkey) && (!profileModerationIds.has(p.pubkey) || allowedProfileIds.has(p.pubkey))),
     [allowedProfileIds, profileModerationIds, profiles, isMuted],
   )
+  const visibleFollowPacks = useMemo(
+    () => rankExploreFollowPacks(
+      followPackCandidates.filter((candidate) =>
+        !followPackModerationIds.has(candidate.event.id) || allowedFollowPackIds.has(candidate.event.id),
+      ),
+      {
+        currentUserPubkey: currentUser?.pubkey ?? null,
+        followedPubkeys,
+        isMuted,
+        limit: 6,
+      },
+    ),
+    [allowedFollowPackIds, currentUser?.pubkey, followPackCandidates, followPackModerationIds, followedPubkeys, isMuted],
+  )
+
+  const handleFollowPack = useCallback(async (pack: RankedExploreFollowPack) => {
+    if (!currentUser) {
+      throw new Error('Connect a signer to follow pack profiles together.')
+    }
+    if (pack.missingProfiles.length === 0) return
+
+    await saveCurrentUserContactEntries(pack.missingProfiles)
+    setFollowedPubkeys((previous) => {
+      const next = new Set(previous)
+      for (const profile of pack.missingProfiles) {
+        next.add(profile.pubkey)
+      }
+      return next
+    })
+  }, [currentUser])
 
   // Sync URL ↔ search input
   useEffect(() => {
@@ -203,6 +289,10 @@ export default function ExplorePage() {
           <ExploreContent
             topics={topics}
             topicsLoading={topicsLoading}
+            followPacks={visibleFollowPacks}
+            followPacksLoading={followPackLoading || followPackModerationLoading}
+            canBulkFollow={Boolean(currentUser)}
+            onFollowPack={handleFollowPack}
             popularProfiles={popularProfiles}
             popularLoading={popularLoading}
           />
@@ -248,11 +338,19 @@ export default function ExplorePage() {
 function ExploreContent({
   topics,
   topicsLoading,
+  followPacks,
+  followPacksLoading,
+  canBulkFollow,
+  onFollowPack,
   popularProfiles,
   popularLoading,
 }: {
   topics: RecentHashtagStat[]
   topicsLoading: boolean
+  followPacks: RankedExploreFollowPack[]
+  followPacksLoading: boolean
+  canBulkFollow: boolean
+  onFollowPack: (pack: RankedExploreFollowPack) => Promise<void>
   popularProfiles: Profile[]
   popularLoading: boolean
 }) {
@@ -306,6 +404,38 @@ function ExploreContent({
         )}
       </section>
 
+      <section>
+        <h2 className="section-kicker px-1 mb-3">Follow Packs</h2>
+        {followPacksLoading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="h-[228px] rounded-ios-xl bg-[rgb(var(--color-fill)/0.08)] animate-pulse" />
+            ))}
+          </div>
+        ) : followPacks.length > 0 ? (
+          <div className="space-y-3">
+            {followPacks.map((pack, i) => (
+              <motion.div
+                key={pack.parsed.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.18, delay: i * 0.04 }}
+              >
+                <ExploreFollowPackCard
+                  pack={pack}
+                  canBulkFollow={canBulkFollow}
+                  onFollowPack={onFollowPack}
+                />
+              </motion.div>
+            ))}
+          </div>
+        ) : (
+          <p className="px-1 text-[14px] text-[rgb(var(--color-label-tertiary))]">
+            No starter packs cached yet. Explore will surface them here as your relays publish more curated follow lists.
+          </p>
+        )}
+      </section>
+
       {/* Popular accounts */}
       <section>
         <h2 className="section-kicker px-1 mb-3">Popular Accounts</h2>
@@ -340,6 +470,156 @@ function ExploreContent({
 }
 
 // ── Search result cards (shared with SearchPage) ──────────────
+
+function FollowPackPreviewPerson({ entry }: { entry: FollowPackProfileEntry }) {
+  const { profile } = useProfile(entry.pubkey, { background: false })
+
+  return (
+    <Link
+      to={`/profile/${entry.pubkey}`}
+      className="
+        block rounded-[16px] border border-[rgb(var(--color-fill)/0.12)]
+        bg-[rgb(var(--color-bg))] px-3 py-3 transition-opacity active:opacity-80
+      "
+    >
+      <AuthorRow pubkey={entry.pubkey} profile={profile} />
+      {(entry.petname || entry.relayUrl) && (
+        <p className="mt-2 break-all text-[12px] leading-5 text-[rgb(var(--color-label-tertiary))]">
+          {[entry.petname ? `Pack note: ${entry.petname}` : null, entry.relayUrl].filter(Boolean).join(' • ')}
+        </p>
+      )}
+    </Link>
+  )
+}
+
+function ExploreFollowPackCard({
+  pack,
+  canBulkFollow,
+  onFollowPack,
+}: {
+  pack: RankedExploreFollowPack
+  canBulkFollow: boolean
+  onFollowPack: (pack: RankedExploreFollowPack) => Promise<void>
+}) {
+  const { profile: curatorProfile } = useProfile(pack.parsed.pubkey, { background: false })
+  const [following, setFollowing] = useState(false)
+  const [followMessage, setFollowMessage] = useState<string | null>(null)
+  const [followError, setFollowError] = useState<string | null>(null)
+  const hiddenPreviewCount = Math.max(pack.totalProfiles - pack.previewProfiles.length, 0)
+  const followLabel = pack.missingCount > 0
+    ? `Follow ${pack.missingCount}`
+    : 'Already Following'
+
+  const handleFollow = async () => {
+    if (!canBulkFollow || following || pack.missingCount === 0) return
+
+    setFollowing(true)
+    setFollowMessage(null)
+    setFollowError(null)
+
+    try {
+      await onFollowPack(pack)
+      setFollowMessage(
+        `Added ${pack.missingCount} new profile${pack.missingCount === 1 ? '' : 's'} from this pack to your follows.`,
+      )
+    } catch (error) {
+      setFollowError(error instanceof Error ? error.message : 'Failed to follow this pack.')
+    } finally {
+      setFollowing(false)
+    }
+  }
+
+  return (
+    <div className="app-panel rounded-ios-xl p-4 card-elevated">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="rounded-full bg-[rgb(var(--color-fill)/0.1)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+          {getExploreFollowPackLabel(pack.parsed.kind)}
+        </span>
+        <p className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
+          {pack.reason}
+        </p>
+      </div>
+
+      <h3 className="mt-3 text-[20px] leading-tight font-semibold tracking-[-0.02em] text-[rgb(var(--color-label))]">
+        <TwemojiText text={pack.parsed.title ?? getExploreFollowPackLabel(pack.parsed.kind)} />
+      </h3>
+
+      <p className="mt-2 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
+        <TwemojiText text={getExploreFollowPackSummary(pack.parsed)} />
+      </p>
+
+      <div className="mt-3 rounded-[18px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] px-3 py-3">
+        <Link to={`/profile/${pack.parsed.pubkey}`} className="block">
+          <AuthorRow pubkey={pack.parsed.pubkey} profile={curatorProfile} />
+        </Link>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
+          {pack.totalProfiles} profile{pack.totalProfiles === 1 ? '' : 's'}
+        </span>
+        <span className="rounded-full bg-[rgb(var(--color-accent)/0.14)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label))]">
+          {pack.missingCount} new
+        </span>
+        {pack.overlapCount > 0 && (
+          <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
+            {pack.overlapCount} already follow
+          </span>
+        )}
+      </div>
+
+      <div className="mt-4 space-y-2">
+        {pack.previewProfiles.map((entry) => (
+          <FollowPackPreviewPerson key={entry.pubkey} entry={entry} />
+        ))}
+      </div>
+
+      {hiddenPreviewCount > 0 && (
+        <p className="mt-3 text-[13px] text-[rgb(var(--color-label-tertiary))]">
+          +{hiddenPreviewCount} more profile{hiddenPreviewCount === 1 ? '' : 's'} inside this pack
+        </p>
+      )}
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        {canBulkFollow && (
+          <button
+            type="button"
+            onClick={() => void handleFollow()}
+            disabled={following || pack.missingCount === 0}
+            className="rounded-[14px] bg-[rgb(var(--color-label))] px-3 py-2 text-[13px] font-semibold text-white transition-opacity active:opacity-80 disabled:opacity-40"
+          >
+            {following ? 'Following…' : followLabel}
+          </button>
+        )}
+
+        <Link
+          to={pack.parsed.route}
+          className="rounded-[14px] border border-[rgb(var(--color-fill)/0.14)] px-3 py-2 text-[13px] font-semibold text-[rgb(var(--color-label))] transition-opacity active:opacity-80"
+        >
+          Open Pack
+        </Link>
+      </div>
+
+      {!canBulkFollow && (
+        <p className="mt-3 text-[13px] leading-6 text-[rgb(var(--color-label-tertiary))]">
+          Connect a signer to follow the missing profiles from this pack together.
+        </p>
+      )}
+
+      {followMessage && (
+        <p className="mt-3 text-[13px] text-[rgb(var(--color-system-green))]">
+          {followMessage}
+        </p>
+      )}
+
+      {followError && (
+        <p className="mt-3 text-[13px] text-[rgb(var(--color-system-red))]">
+          {followError}
+        </p>
+      )}
+    </div>
+  )
+}
 
 function ProfileResult({ profile }: { profile: Profile }) {
   const about = profile.about ? sanitizeText(profile.about).slice(0, 180) : ''
@@ -420,6 +700,7 @@ function EventResult({ event }: { event: NostrEvent }) {
             )}
           </>
         )}
+        <EventMetricsRow event={event} />
       </Link>
     </motion.div>
   )

@@ -27,7 +27,10 @@ vi.mock('@/lib/translation/engines/translang', () => ({
   translateWithTranslang,
 }))
 
-const { translateTextWithConfiguration } = await import('@/lib/translation/client')
+const {
+  inspectTranslationWithConfiguration,
+  translateTextWithConfiguration,
+} = await import('@/lib/translation/client')
 
 describe('translateTextWithConfiguration', () => {
   beforeEach(() => {
@@ -107,5 +110,61 @@ describe('translateTextWithConfiguration', () => {
       opusMtTargetLanguage: 'en',
       opusMtSourceLanguage: 'hi',
     }, 'नमस्ते दुनिया')).rejects.toThrow('Opus-MT has no model for hi→en')
+  })
+
+  it('skips translation when the text already appears to match the target language', async () => {
+    await expect(translateTextWithConfiguration({
+      provider: 'translang',
+      deeplPlan: 'free',
+      deeplTargetLanguage: 'EN-US',
+      deeplSourceLanguage: 'auto',
+      deeplAuthKey: '',
+      libreBaseUrl: '',
+      libreTargetLanguage: 'en',
+      libreSourceLanguage: 'auto',
+      libreApiKey: '',
+      translangBaseUrl: 'https://translang.example.com',
+      translangTargetLanguage: 'en',
+      translangSourceLanguage: 'auto',
+      lingvaBaseUrl: 'https://lingva.example.com',
+      lingvaTargetLanguage: 'en',
+      lingvaSourceLanguage: 'auto',
+      small100BaseUrl: 'http://localhost:7080',
+      small100TargetLanguage: 'en',
+      small100SourceLanguage: 'auto',
+      opusMtTargetLanguage: 'en',
+      opusMtSourceLanguage: 'auto',
+    }, 'This release note is already written in English for the current audience.')).rejects.toThrow('Text already matches your target language.')
+
+    expect(translateWithTranslang).not.toHaveBeenCalled()
+  })
+
+  it('inspects auto-translate safety for Opus-MT latin text', () => {
+    expect(inspectTranslationWithConfiguration({
+      provider: 'opusmt',
+      deeplPlan: 'free',
+      deeplTargetLanguage: 'EN-US',
+      deeplSourceLanguage: 'auto',
+      deeplAuthKey: '',
+      libreBaseUrl: '',
+      libreTargetLanguage: 'en',
+      libreSourceLanguage: 'auto',
+      libreApiKey: '',
+      translangBaseUrl: 'https://translang.example.com',
+      translangTargetLanguage: 'en',
+      translangSourceLanguage: 'auto',
+      lingvaBaseUrl: 'https://lingva.example.com',
+      lingvaTargetLanguage: 'en',
+      lingvaSourceLanguage: 'auto',
+      small100BaseUrl: 'http://localhost:7080',
+      small100TargetLanguage: 'en',
+      small100SourceLanguage: 'auto',
+      opusMtTargetLanguage: 'es',
+      opusMtSourceLanguage: 'auto',
+    }, 'Release notes and product details for a broad audience')).toMatchObject({
+      likelySourceLanguage: 'en',
+      sameLanguage: false,
+      canAutoTranslate: true,
+    })
   })
 })

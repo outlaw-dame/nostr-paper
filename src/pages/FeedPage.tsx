@@ -16,6 +16,7 @@ import { motion, useMotionValue, useTransform, AnimatePresence } from 'motion/re
 import { useApp } from '@/contexts/app-context'
 import { useNostrFeed } from '@/hooks/useNostrFeed'
 import { HeroCard } from '@/components/cards/HeroCard'
+import { BoostCarousel } from '@/components/feed/BoostCarousel'
 import { StoryRail } from '@/components/feed/StoryRail'
 import { SectionRail } from '@/components/feed/SectionRail'
 import { FeedSkeleton } from '@/components/feed/FeedSkeleton'
@@ -26,6 +27,7 @@ import { PollPreview } from '@/components/nostr/PollPreview'
 import { QuotePreviewList } from '@/components/nostr/QuotePreviewList'
 import { RepostBody } from '@/components/nostr/RepostBody'
 import { ThreadIndexBadge } from '@/components/nostr/ThreadIndexBadge'
+import { EventMetricsRow } from '@/components/nostr/EventMetricsRow'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { TwemojiText } from '@/components/ui/TwemojiText'
 import { TranslateTextPanel } from '@/components/translation/TranslateTextPanel'
@@ -35,16 +37,34 @@ import { useProfile } from '@/hooks/useProfile'
 import { useModerationDocuments } from '@/hooks/useModeration'
 import { useMuteList } from '@/hooks/useMuteList'
 import { useStoryCardPreview } from '@/hooks/useStoryCardPreview'
+import { useTagTimelineSemanticFeed } from '@/hooks/useTagTimelineSemanticFeed'
+import { useHideNsfwTaggedPosts } from '@/hooks/useHideNsfwTaggedPosts'
+import { useSavedTagFeeds } from '@/hooks/useSavedTagFeeds'
+import { useActivityUnread } from '@/hooks/useActivityUnread'
 import { useSelfThreadIndex } from '@/hooks/useSelfThreadIndex'
 import { useVisibilityOnce } from '@/hooks/useVisibilityOnce'
 import { useEventFilterCheck, useSemanticFiltering, mergeResults } from '@/hooks/useKeywordFilters'
 import { buildComposeSearch } from '@/lib/compose'
+import { collectBoostCarouselItems } from '@/lib/feed/boosts'
+import { getFeedHeaderSection } from '@/lib/feed/headerSection'
+import { buildFeedRailSections } from '@/lib/feed/railSections'
+import { type SavedTagFeed } from '@/lib/feed/tagFeeds'
+import {
+  buildTagTimelineHref,
+  describeTagTimeline,
+  getTagTimelineKey,
+  matchesTagTimeline,
+  parseTagTimeline,
+  type TagTimelineSpec,
+} from '@/lib/feed/tagTimeline'
 import { FEED_RESUME_UPDATED_EVENT, getFeedResumeEnabled } from '@/lib/feed/resumeSettings'
+import { getBoostCarouselVisible, ZEN_SETTINGS_UPDATED_EVENT } from '@/lib/ui/zenSettings'
+import { filterNsfwTaggedEvents } from '@/lib/moderation/nsfwTags'
 import { buildEventModerationDocument } from '@/lib/moderation/content'
+import { parseRepostEvent } from '@/lib/nostr/repost'
 import { warmSelfThreadIndexCache } from '@/lib/nostr/threadIndex'
 import { parseCommentEvent } from '@/lib/nostr/thread'
 import { getPeerTubeEmbedUrl, getVimeoVideoId, getYouTubeVideoId } from '@/lib/nostr/imeta'
-import { normalizeHashtag } from '@/lib/security/sanitize'
 import type { ParsedVideoEvent } from '@/lib/nostr/video'
 import type { FilterCheckResult } from '@/lib/filters/types'
 import type { FeedSection, NostrEvent, Profile } from '@/types'
@@ -54,10 +74,28 @@ import { Kind } from '@/types'
 // Declared outside the component so filter objects have stable references
 // and do not trigger useEffect re-runs on every render.
 
-const DEFAULT_SECTIONS: FeedSection[] = [
+type FeedRailSection = FeedSection & {
+  href?: string
+  summary: string
+  tagTimeline?: TagTimelineSpec | null
+}
+
+const TAG_FEED_KINDS = [
+  Kind.ShortNote,
+  Kind.Thread,
+  Kind.Poll,
+  Kind.LongFormContent,
+  Kind.Video,
+  Kind.ShortVideo,
+  Kind.AddressableVideo,
+  Kind.AddressableShortVideo,
+]
+
+const DEFAULT_SECTIONS: FeedRailSection[] = [
   {
     id:     'feed',
     label:  'Feed',
+    summary: 'Latest across your network.',
     filter: {
       kinds: [
         Kind.ShortNote,
@@ -76,16 +114,19 @@ const DEFAULT_SECTIONS: FeedSection[] = [
   {
     id:     'notes',
     label:  'Notes',
+    summary: 'Fast conversation and short-form posts.',
     filter: { kinds: [Kind.ShortNote, Kind.Thread, Kind.Repost, Kind.GenericRepost, Kind.Poll], limit: 30 },
   },
   {
     id:     'articles',
     label:  'Articles',
+    summary: 'Longer reading and analysis.',
     filter: { kinds: [Kind.LongFormContent], limit: 20 },
   },
   {
     id:     'videos',
     label:  'Videos',
+    summary: 'Clips, explainers, and moving images.',
     filter: {
       kinds: [
         Kind.Video,
@@ -99,6 +140,7 @@ const DEFAULT_SECTIONS: FeedSection[] = [
   {
     id:     'bitcoin',
     label:  'Bitcoin',
+    summary: 'Bitcoin discussion and market signal.',
     filter: {
       kinds: [
         Kind.ShortNote,
@@ -116,6 +158,7 @@ const DEFAULT_SECTIONS: FeedSection[] = [
   {
     id:     'nostr',
     label:  'Nostr',
+    summary: 'Builders, releases, and protocol chatter.',
     filter: {
       kinds: [
         Kind.ShortNote,
@@ -133,17 +176,9 @@ const DEFAULT_SECTIONS: FeedSection[] = [
 ]
 
 const COMPOSE_TRIGGER_OFFSET = 85  // px downward pull to open compose sheet
-const SECTION_SUMMARY: Record<string, string> = {
-  feed: 'Latest across your network.',
-  notes: 'Fast conversation and short-form posts.',
-  articles: 'Longer reading and analysis.',
-  videos: 'Clips, explainers, and moving images.',
-  bitcoin: 'Bitcoin discussion and market signal.',
-  nostr: 'Builders, releases, and protocol chatter.',
-}
-
 const FEED_VIEW_STATE_KEY = 'nostr-paper:feed:view-state:v1'
 const FEED_STATE_TTL_MS = 1000 * 60 * 60 * 24 * 7
+const MIN_PRIMARY_FEED_ITEMS = 6
 
 interface FeedViewSnapshot {
   anchorEventId: string | null
@@ -233,16 +268,79 @@ function getVisibleAnchor(container: HTMLElement): { id: string; offset: number 
   return null
 }
 
+function buildSavedTagFeedSection(feed: SavedTagFeed): FeedRailSection {
+  const details = describeTagTimeline(feed)
+
+  return {
+    id: `tag-feed:${feed.id}`,
+    label: feed.title,
+    summary: details?.summary ?? 'Posts, articles, and videos collected from this tag feed.',
+    href: buildTagTimelineHref(feed),
+    tagTimeline: feed,
+    filter: {
+      kinds: TAG_FEED_KINDS,
+      '#t': feed.includeTags,
+      limit: feed.includeTags.length > 1 || feed.excludeTags.length > 0 ? 80 : 50,
+    },
+  }
+}
+
+function buildEphemeralTagFeedSection(spec: TagTimelineSpec): FeedRailSection {
+  const details = describeTagTimeline(spec)
+
+  return {
+    id: `tag-route:${getTagTimelineKey(spec)}`,
+    label: details?.title ?? `#${spec.includeTags[0] ?? 'tag'}`,
+    summary: details?.summary ?? 'Posts, articles, and videos collected from this tag feed.',
+    href: buildTagTimelineHref(spec),
+    tagTimeline: spec,
+    filter: {
+      kinds: TAG_FEED_KINDS,
+      '#t': spec.includeTags,
+      limit: spec.includeTags.length > 1 || spec.excludeTags.length > 0 ? 80 : 50,
+    },
+  }
+}
+
 export default function FeedPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const { currentUser } = useApp()
-  const { tag: routeTag } = useParams<{ tag?: string }>()
-  const normalizedTag = useMemo(
-    () => (routeTag ? normalizeHashtag(routeTag) : null),
-    [routeTag],
+  const tagFeedScopeId = useMemo(
+    () => currentUser?.pubkey ?? 'anon',
+    [currentUser?.pubkey],
   )
+  const { tag: routeTag } = useParams<{ tag?: string }>()
+  const routeTagTimeline = useMemo(
+    () => parseTagTimeline(routeTag, location.search),
+    [location.search, routeTag],
+  )
+  const savedTagFeeds = useSavedTagFeeds(tagFeedScopeId)
+  const savedTagSections = useMemo(
+    () => savedTagFeeds.map((feed) => buildSavedTagFeedSection(feed)),
+    [savedTagFeeds],
+  )
+  const matchedSavedTagSection = useMemo(() => {
+    if (!routeTagTimeline) return null
+    const routeKey = getTagTimelineKey(routeTagTimeline)
+    return savedTagSections.find((section) => (
+      section.tagTimeline && getTagTimelineKey(section.tagTimeline) === routeKey
+    )) ?? null
+  }, [routeTagTimeline, savedTagSections])
+  const routeSection = useMemo<FeedRailSection | null>(() => {
+    if (!routeTagTimeline) return null
+    if (matchedSavedTagSection) return matchedSavedTagSection
+    return buildEphemeralTagFeedSection(routeTagTimeline)
+  }, [matchedSavedTagSection, routeTagTimeline])
+  const railSections = useMemo(() => {
+    return buildFeedRailSections({
+      defaultSections: DEFAULT_SECTIONS,
+      savedTagSections,
+      routeSection,
+    })
+  }, [routeSection, savedTagSections])
   const [activeSectionId, setActiveSectionId] = useState(DEFAULT_SECTIONS[0]!.id)
+  const [boostCarouselVisible, setBoostCarouselVisible] = useState(true)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const restoreCompletedRef = useRef(false)
   const rafSaveRef = useRef<number | null>(null)
@@ -250,31 +348,23 @@ export default function FeedPage() {
 
   const { profile: currentUserProfile } = useProfile(currentUser?.pubkey)
   const { isMuted, loading: muteListLoading } = useMuteList()
-  const activeSection = useMemo<FeedSection>(() => {
-    if (normalizedTag) {
-      return {
-        id: `tag:${normalizedTag}`,
-        label: `#${normalizedTag}`,
-        emoji: '#',
-        filter: {
-          kinds: [
-            Kind.ShortNote,
-            Kind.Thread,
-            Kind.Poll,
-            Kind.LongFormContent,
-            Kind.Video,
-            Kind.ShortVideo,
-            Kind.AddressableVideo,
-            Kind.AddressableShortVideo,
-          ],
-          '#t': [normalizedTag],
-          limit: 50,
-        },
-      }
-    }
-
-    return DEFAULT_SECTIONS.find((section) => section.id === activeSectionId) ?? DEFAULT_SECTIONS[0]!
-  }, [activeSectionId, normalizedTag])
+  const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
+  const { unreadCount: activityUnreadCount, hasUnread: hasUnreadActivity } = useActivityUnread({ enabled: Boolean(currentUser) })
+  const activityUnreadBadgeText = activityUnreadCount > 99 ? '99+' : String(activityUnreadCount)
+  const activeSection = useMemo<FeedRailSection>(() => (
+    routeSection
+      ?? railSections.find((section) => section.id === activeSectionId)
+      ?? DEFAULT_SECTIONS[0]!
+  ), [activeSectionId, railSections, routeSection])
+  const activeTagTimeline = activeSection.tagTimeline ?? null
+  const activeTagTimelineDetails = useMemo(
+    () => describeTagTimeline(activeTagTimeline),
+    [activeTagTimeline],
+  )
+  const headerSection = useMemo(
+    () => getFeedHeaderSection(activeSection, DEFAULT_SECTIONS[0]!),
+    [activeSection],
+  )
 
   const feedScopeKey = useMemo(
     () => `${currentUser?.pubkey ?? 'anon'}::${activeSection.id}`,
@@ -287,11 +377,40 @@ export default function FeedPage() {
   )
 
   const { events, loading, eose } = useNostrFeed({ section: activeSection })
+  const {
+    events: semanticTimelineEvents,
+    scores: semanticTimelineScores,
+    loading: semanticTimelineLoading,
+    error: semanticTimelineError,
+  } = useTagTimelineSemanticFeed(activeTagTimeline, activeSection.filter.kinds)
+  const timelineCandidateEvents = useMemo(() => {
+    if (!activeTagTimeline) return events
+
+    const merged = new Map<string, NostrEvent>()
+    for (const event of [...events, ...semanticTimelineEvents]) {
+      const existing = merged.get(event.id)
+      if (!existing || event.created_at > existing.created_at) {
+        merged.set(event.id, event)
+      }
+    }
+
+    return [...merged.values()].sort((a, b) => b.created_at - a.created_at)
+  }, [activeTagTimeline, events, semanticTimelineEvents])
+  const tagMatchedEvents = useMemo(
+    () => (activeTagTimeline
+      ? timelineCandidateEvents.filter((event) => matchesTagTimeline(event, activeTagTimeline, {
+        semanticScore: semanticTimelineScores.get(event.id) ?? null,
+      }))
+      : events),
+    [activeTagTimeline, events, semanticTimelineScores, timelineCandidateEvents],
+  )
+  // Moderate after exact-tag and semantic candidates are merged so hashtag
+  // timelines follow the same safety path as every other feed surface.
   const moderationDocuments = useMemo(
-    () => events
+    () => tagMatchedEvents
       .map((event) => buildEventModerationDocument(event))
       .filter((document): document is NonNullable<ReturnType<typeof buildEventModerationDocument>> => document !== null),
-    [events],
+    [tagMatchedEvents],
   )
   const moderationDocumentIds = useMemo(
     () => new Set(moderationDocuments.map((document) => document.id)),
@@ -307,15 +426,40 @@ export default function FeedPage() {
   const hintY     = useTransform(pullY, [0, COMPOSE_TRIGGER_OFFSET], [-8, 0])
 
   const visibleEvents = useMemo(
-    () => events.filter((event) => (
-      !isMuted(event.pubkey) &&
-      (!moderationDocumentIds.has(event.id) || allowedModerationIds.has(event.id))
-    )),
-    [allowedModerationIds, events, isMuted, moderationDocumentIds],
+    () => filterNsfwTaggedEvents(
+      tagMatchedEvents.filter((event) => (
+        !isMuted(event.pubkey) &&
+        (!moderationDocumentIds.has(event.id) || allowedModerationIds.has(event.id))
+      )),
+      hideNsfwTaggedPosts,
+    ),
+    [allowedModerationIds, hideNsfwTaggedPosts, isMuted, moderationDocumentIds, tagMatchedEvents],
   )
-  const heroEvent = visibleEvents[0] ?? null
-  const secondaryEvents = visibleEvents.slice(1)
-  const feedLoading = loading || moderationLoading || muteListLoading
+  const boostCarouselItems = useMemo(
+    () => collectBoostCarouselItems(visibleEvents, { minBoosts: 3, maxItems: 12 }),
+    [visibleEvents],
+  )
+  const boostFeatureEnabled = !activeTagTimeline && activeSection.id === 'feed' && boostCarouselVisible
+  const featuredBoostTargetIds = useMemo(
+    () => (boostFeatureEnabled
+      ? new Set(boostCarouselItems.map((item) => item.targetEventId))
+      : new Set<string>()),
+    [boostCarouselItems, boostFeatureEnabled],
+  )
+  const curatedFeedEvents = useMemo(() => {
+    if (!boostFeatureEnabled) return visibleEvents
+
+    const reducedEvents = visibleEvents.filter((event) => {
+      const repost = parseRepostEvent(event)
+      if (!repost) return true
+      return !featuredBoostTargetIds.has(repost.targetEventId)
+    })
+
+    return reducedEvents.length >= MIN_PRIMARY_FEED_ITEMS ? reducedEvents : visibleEvents
+  }, [boostFeatureEnabled, featuredBoostTargetIds, visibleEvents])
+  const heroEvent = curatedFeedEvents[0] ?? null
+  const secondaryEvents = curatedFeedEvents.slice(1)
+  const feedLoading = loading || semanticTimelineLoading || moderationLoading || muteListLoading
 
   useEffect(() => {
     warmSelfThreadIndexCache(visibleEvents)
@@ -502,16 +646,48 @@ export default function FeedPage() {
   )
 
   const handleSectionChange = useCallback((id: string) => {
+    const section = railSections.find((candidate) => candidate.id === id)
+    if (!section) return
+
+    if (section.href) {
+      navigate(section.href, { replace: section.href === `${location.pathname}${location.search}` })
+      return
+    }
+
     setActiveSectionId(id)
-    if (normalizedTag) {
+    if (routeSection) {
       navigate('/', { replace: true })
     }
-  }, [navigate, normalizedTag])
+  }, [location.pathname, location.search, navigate, railSections, routeSection])
 
-  const sectionSummary = normalizedTag
-    ? `Posts, articles, and videos collected around #${normalizedTag}.`
-    : SECTION_SUMMARY[activeSection.id] ?? SECTION_SUMMARY.feed
-  const showStories = !normalizedTag && activeSection.id === 'feed' && currentUser !== null
+  useEffect(() => {
+    const scopeId = currentUser?.pubkey ?? 'anon'
+    setBoostCarouselVisible(getBoostCarouselVisible(scopeId))
+
+    const onUpdated = (event: Event) => {
+      const customEvent = event as CustomEvent<{ scopeId?: string }>
+      if ((customEvent.detail?.scopeId ?? 'anon') !== scopeId) return
+      setBoostCarouselVisible(getBoostCarouselVisible(scopeId))
+    }
+
+    const onStorage = (storageEvent: StorageEvent) => {
+      if (!storageEvent.key) return
+      if (!storageEvent.key.endsWith(`:${scopeId}`)) return
+      setBoostCarouselVisible(getBoostCarouselVisible(scopeId))
+    }
+
+    window.addEventListener(ZEN_SETTINGS_UPDATED_EVENT, onUpdated as EventListener)
+    window.addEventListener('storage', onStorage)
+
+    return () => {
+      window.removeEventListener(ZEN_SETTINGS_UPDATED_EVENT, onUpdated as EventListener)
+      window.removeEventListener('storage', onStorage)
+    }
+  }, [currentUser?.pubkey])
+
+  const sectionSummary = headerSection.summary
+  const showStories = !activeTagTimeline && activeSection.id === 'feed' && currentUser !== null
+  const showBoostCarousel = boostFeatureEnabled && boostCarouselItems.length > 0
 
   return (
     <div className="min-h-dvh bg-[rgb(var(--color-bg))] flex flex-col overflow-hidden">
@@ -557,15 +733,9 @@ export default function FeedPage() {
             <section className="app-chrome rounded-ios-xl px-4 pb-3 pt-2.5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <p className="section-kicker">
-                    {normalizedTag ? 'Tag Feed' : 'Nostr Paper'}
-                  </p>
+                  <p className="section-kicker">Nostr Paper</p>
                   <h1 className="mt-1.5 text-[30px] font-semibold leading-[1.02] tracking-[-0.04em] text-[rgb(var(--color-label))]">
-                    {normalizedTag ? (
-                      <TwemojiText text={`#${normalizedTag}`} />
-                    ) : (
-                      activeSection.label
-                    )}
+                    <TwemojiText text={headerSection.label} />
                   </h1>
                   <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
                     {sectionSummary}
@@ -614,6 +784,33 @@ export default function FeedPage() {
                           <path d="M20 21a8 8 0 1 0-16 0" />
                         </svg>
                       )}
+                    </button>
+                  )}
+
+                  {currentUser && (
+                    <button
+                      type="button"
+                      onClick={() => navigate('/activity')}
+                      className="
+                        app-panel-muted
+                        relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full
+                        text-[rgb(var(--color-label-secondary))]
+                        transition-transform active:scale-[0.98]
+                      "
+                      aria-label="Activity"
+                    >
+                      {hasUnreadActivity && (
+                        <span
+                          className="absolute -right-0.5 -top-0.5 min-w-[16px] rounded-full bg-[rgb(var(--color-system-red))] px-1 py-[1px] text-center text-[10px] font-semibold leading-[1.2] text-white"
+                          aria-label={`${activityUnreadCount} unread notifications`}
+                        >
+                          {activityUnreadBadgeText}
+                        </span>
+                      )}
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8" />
+                        <path d="M10.5 20a1.5 1.5 0 0 0 3 0" />
+                      </svg>
                     </button>
                   )}
 
@@ -674,38 +871,31 @@ export default function FeedPage() {
                 </svg>
                 <span>Search notes, articles, videos, and people</span>
               </button>
-
-              {normalizedTag && (
-                <button
-                  type="button"
-                  onClick={() => navigate('/')}
-                  className="
-                    mt-2 inline-flex items-center gap-2 rounded-full
-                    bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5
-                    text-[13px] font-medium text-[rgb(var(--color-label-secondary))]
-                  "
-                >
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden>
-                    <path d="M6.5 2L3.5 5l3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  <span>All sections</span>
-                </button>
-              )}
             </section>
 
-            {!normalizedTag && (
-              <div className="mt-3">
-                <SectionRail
-                  sections={DEFAULT_SECTIONS}
-                  activeId={activeSection.id}
-                  onSelect={handleSectionChange}
-                />
-              </div>
+            <div className="mt-3">
+              <SectionRail
+                sections={railSections}
+                activeId={activeSection.id}
+                onSelect={handleSectionChange}
+              />
+            </div>
+
+            {activeTagTimeline && semanticTimelineError && (
+              <p className="mt-3 px-1 text-[12px] leading-5 text-[rgb(var(--color-label-tertiary))]">
+                Semantic context is temporarily unavailable. Exact hashtags and plain-text matching are still active.
+              </p>
             )}
 
             {showStories && (
               <div className="mt-3">
                 <StoryRail onComposeStory={handleComposeStory} />
+              </div>
+            )}
+
+            {showBoostCarousel && (
+              <div className="mt-3">
+                <BoostCarousel items={boostCarouselItems} />
               </div>
             )}
 
@@ -724,7 +914,12 @@ export default function FeedPage() {
                   </FilteredGate>
                 </div>
               ) : eose && !moderationLoading ? (
-                <EmptyState tag={normalizedTag} />
+                <EmptyState
+                  isTagMix={Boolean(activeTagTimelineDetails && (activeTagTimelineDetails.includeTags.length > 1 || activeTagTimelineDetails.excludeTags.length > 0))}
+                  tag={activeTagTimelineDetails && activeTagTimelineDetails.includeTags.length === 1
+                    ? activeTagTimelineDetails.includeTags[0] ?? null
+                    : null}
+                />
               ) : null}
             </div>
 
@@ -900,6 +1095,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult }: Seco
             <QuotePreviewList event={event} className="mt-3" compact linked={false} maxItems={1} />
           </>
         ) : null}
+        <EventMetricsRow event={event} />
       </motion.div>
     </FilteredGate>
   )
@@ -1042,7 +1238,13 @@ function RichStoryMedia({
 
 // ── Empty State ──────────────────────────────────────────────
 
-function EmptyState({ tag }: { tag?: string | null }) {
+function EmptyState({
+  tag,
+  isTagMix = false,
+}: {
+  tag?: string | null
+  isTagMix?: boolean
+}) {
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -1056,10 +1258,14 @@ function EmptyState({ tag }: { tag?: string | null }) {
     >
       <div className="mb-5 h-14 w-14 rounded-full bg-[rgb(var(--color-fill)/0.08)]" aria-hidden="true" />
       <p className="text-headline text-[rgb(var(--color-label))] mb-2">
-        {tag ? `No #${tag} posts yet` : 'No posts yet'}
+        {isTagMix ? 'No matching posts yet' : tag ? `No #${tag} posts yet` : 'No posts yet'}
       </p>
       <p className="text-body text-[rgb(var(--color-label-secondary))]">
-        {tag ? 'Try another hashtag or check back after relays sync.' : 'Connecting to relays…'}
+        {isTagMix
+          ? 'Try fewer required hashtags or remove an excluded tag.'
+          : tag
+            ? 'Try another hashtag or check back after relays sync.'
+            : 'Connecting to relays…'}
       </p>
     </motion.div>
   )
