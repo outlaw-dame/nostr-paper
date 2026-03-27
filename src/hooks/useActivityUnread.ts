@@ -10,31 +10,39 @@ export function useActivityUnread(options: { enabled?: boolean } = {}) {
   const { currentUser } = useApp()
   const { seenAt } = useActivitySeen()
 
-  const section = useMemo<FeedSection | null>(() => {
-    if (!enabled || !currentUser?.pubkey) return null
+  // Stable section ID that doesn't change with seenAt
+  const sectionId = useMemo<string>(() => {
+    if (!currentUser?.pubkey) return 'activity-unread-disabled'
+    return `activity-unread:${currentUser.pubkey}`
+  }, [currentUser?.pubkey])
+
+  // Dynamic filter that updates with seenAt, but doesn't trigger re-subscription
+  // because section.id is stable
+  const filter = useMemo(() => {
+    if (!currentUser?.pubkey || !enabled) {
+      return { kinds: [] as const, limit: 1 }
+    }
 
     const now = Math.floor(Date.now() / 1000)
     const windowStart = now - (ACTIVITY_WINDOW_DAYS * 24 * 60 * 60)
 
     return {
-      id: `activity-unread:${currentUser.pubkey}:${seenAt}`,
-      label: 'Activity Unread',
-      filter: {
-        kinds: ACTIVITY_KINDS,
-        '#p': [currentUser.pubkey],
-        since: Math.max(windowStart, seenAt + 1),
-        limit: 120,
-      },
-    }
+      kinds: ACTIVITY_KINDS,
+      '#p': [currentUser.pubkey],
+      since: Math.max(windowStart, seenAt + 1),
+      limit: 120,
+    } as const
   }, [currentUser?.pubkey, enabled, seenAt])
 
+  const section = useMemo<FeedSection>(() => ({
+    id: sectionId,
+    label: 'Activity Unread',
+    filter,
+  }), [sectionId, filter])
+
   const { events, loading } = useNostrFeed({
-    section: section ?? {
-      id: 'activity-unread-disabled',
-      label: 'Activity Unread',
-      filter: { kinds: [], limit: 1 },
-    },
-    enabled: section !== null,
+    section,
+    enabled: section.id !== 'activity-unread-disabled',
   })
 
   const unreadCount = useMemo(() => {
