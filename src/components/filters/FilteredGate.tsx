@@ -13,8 +13,9 @@
  * whether it was a semantic or text match, and which field was matched.
  */
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
+import { useFilterOverride } from '@/hooks/useFilterOverride'
 import { useSemanticFilterSettings } from '@/hooks/useSemanticFilterSettings'
 import type { FilterCheckResult } from '@/lib/filters/types'
 
@@ -40,13 +41,23 @@ function fieldLabel(field: FilterCheckResult['matches'][number]['field']): strin
 interface FilteredGateProps {
   result:    FilterCheckResult
   children:  React.ReactNode
+  eventId?: string
   /** Extra class applied to the warn pill wrapper. */
   className?: string
 }
 
-export function FilteredGate({ result, children, className = '' }: FilteredGateProps) {
-  const [expanded, setExpanded] = useState(false)
+export function FilteredGate({ result, children, eventId, className = '' }: FilteredGateProps) {
+  const { overridden, setOverridden } = useFilterOverride(eventId)
+  const [expanded, setExpanded] = useState(overridden)
   const { settings } = useSemanticFilterSettings()
+  const persistentOverride = useMemo(
+    () => overridden && result.action === 'warn',
+    [overridden, result.action],
+  )
+
+  useEffect(() => {
+    setExpanded(persistentOverride)
+  }, [persistentOverride])
 
   // Pass-through — no filter matched
   if (!result.action) return <>{children}</>
@@ -66,7 +77,11 @@ export function FilteredGate({ result, children, className = '' }: FilteredGateP
       {/* Warning pill — always visible */}
       <button
         type="button"
-        onClick={() => setExpanded(prev => !prev)}
+        onClick={() => {
+          const next = !expanded
+          setExpanded(next)
+          if (eventId) setOverridden(next)
+        }}
         className="
           w-full flex items-center gap-2.5
           bg-[rgb(var(--color-bg-secondary))]

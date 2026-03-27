@@ -19,6 +19,40 @@ function emit(): void {
   }
 }
 
+function fallbackId(): string {
+  const partA = Date.now().toString(36)
+  const partB = Math.random().toString(36).slice(2, 10)
+  return `kf-${partA}-${partB}`
+}
+
+function generateFilterId(): string {
+  const maybeCrypto = globalThis.crypto
+  if (!maybeCrypto) return fallbackId()
+
+  if (typeof maybeCrypto.randomUUID === 'function') {
+    try {
+      return maybeCrypto.randomUUID()
+    } catch {
+      // Fall through to alternate generation below.
+    }
+  }
+
+  if (typeof maybeCrypto.getRandomValues === 'function' && typeof Uint8Array !== 'undefined') {
+    try {
+      const bytes = new Uint8Array(16)
+      maybeCrypto.getRandomValues(bytes)
+      bytes[6] = (bytes[6]! & 0x0f) | 0x40
+      bytes[8] = (bytes[8]! & 0x3f) | 0x80
+      const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+    } catch {
+      return fallbackId()
+    }
+  }
+
+  return fallbackId()
+}
+
 // ── CRUD ────────────────────────────────────────────────────────────────────
 
 export async function loadFilters(): Promise<KeywordFilter[]> {
@@ -44,7 +78,7 @@ export async function getFilter(id: string): Promise<KeywordFilter | undefined> 
 export async function createFilter(input: CreateFilterInput): Promise<KeywordFilter> {
   const filter: KeywordFilter = {
     ...input,
-    id:        crypto.randomUUID(),
+    id:        generateFilterId(),
     createdAt: Date.now(),
   }
   await set(filter.id, filter, STORE)

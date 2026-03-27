@@ -126,6 +126,41 @@ export function useSearch(opts: SearchOptions = {}): SearchState & {
     const exactNip05Query = parseNip05Identifier(query) ? query : null
     let nip05ProfilePromise: Promise<Profile | null> | null = null
 
+    const runHybridRerank = async (relaySnapshot: NostrEvent[] = []) => {
+      try {
+        const [rerankedEventResult, rerankedProfileResult] = await Promise.all([
+          hybridSearchEvents(query, localSearchOptions),
+          hybridSearchProfiles(query, profileLimit, ctrl.signal),
+        ])
+        if (ctrl.signal.aborted) return
+
+        let nextProfiles = rerankedProfileResult.items
+        if (nextProfiles.length === 0) {
+          const resolvedProfile = await resolveExactNip05Profile()
+          if (resolvedProfile && !ctrl.signal.aborted) {
+            nextProfiles = [resolvedProfile]
+          }
+        }
+        if (ctrl.signal.aborted) return
+
+        setLocalEvents(rerankedEventResult.items)
+        setProfiles(nextProfiles)
+        setSemanticError(rerankedEventResult.semanticError ?? rerankedProfileResult.semanticError)
+
+        // Remove anything now covered by local reranked results.
+        const seen = new Set(rerankedEventResult.items.map(event => event.id))
+        setRelayEvents(currentRelayEvents => {
+          const source = relaySnapshot.length > 0 ? relaySnapshot : currentRelayEvents
+          return source.filter(event => !seen.has(event.id))
+        })
+      } catch (error) {
+        if (ctrl.signal.aborted) return
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          console.warn('[useSearch] Hybrid rerank degraded:', error)
+        }
+      }
+    }
+
     const resolveExactNip05Profile = () => {
       if (!exactNip05Query) return Promise.resolve<Profile | null>(null)
       if (!nip05ProfilePromise) {
@@ -158,6 +193,9 @@ export function useSearch(opts: SearchOptions = {}): SearchState & {
       setLocalEvents(eventResult.items)
       setProfiles(nextProfiles)
       setLocalLoading(false)
+
+      // Semantic reranking should run regardless of relay availability.
+      void runHybridRerank()
     }).catch((err: unknown) => {
       if (ctrl.signal.aborted) return
       console.error('[useSearch] Local search error:', err)
@@ -181,28 +219,8 @@ export function useSearch(opts: SearchOptions = {}): SearchState & {
         setRelayEvents(events)
         setRelayLoading(false)
 
-        // Background: full hybrid re-rank now that relay events are cached locally
-        const [rerankedEventResult, rerankedProfileResult] = await Promise.all([
-          hybridSearchEvents(query, localSearchOptions),
-          hybridSearchProfiles(query, profileLimit, ctrl.signal),
-        ])
-        if (ctrl.signal.aborted) return
-
-        let nextProfiles = rerankedProfileResult.items
-        if (nextProfiles.length === 0) {
-          const resolvedProfile = await resolveExactNip05Profile()
-          if (resolvedProfile && !ctrl.signal.aborted) {
-            nextProfiles = [resolvedProfile]
-          }
-        }
-
-        setLocalEvents(rerankedEventResult.items)
-        setProfiles(nextProfiles)
-        setSemanticError(rerankedEventResult.semanticError ?? rerankedProfileResult.semanticError)
-
-        // Remove from relay bucket anything now covered by local re-ranked results
-        const seen = new Set(rerankedEventResult.items.map(event => event.id))
-        setRelayEvents(events.filter(event => !seen.has(event.id)))
+        // Run a second rerank pass after relay results arrive.
+        void runHybridRerank(events)
       }).catch((err: unknown) => {
         if (ctrl.signal.aborted) return
         const msg = err instanceof Error ? err.message : String(err)

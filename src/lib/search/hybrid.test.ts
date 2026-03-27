@@ -39,4 +39,28 @@ describe('mergeHybridRankings', () => {
 
     expect(ranked.map(match => match.item.id)).toEqual(['newer', 'older'])
   })
+
+  it('preserves lexical matches for hashtag-style keyword intent', () => {
+    const lexicalItems = [
+      { id: 'apple-post', created_at: 10 },
+    ]
+    const semanticItems = [
+      { id: 'apple-post', created_at: 10 },
+      { id: 'iphone-semantic', created_at: 120 },
+      { id: 'cupertino-semantic', created_at: 110 },
+      { id: 'macbook-semantic', created_at: 100 },
+    ]
+    const semanticMatches = [
+      { id: 'iphone-semantic', score: 0.99 },
+      { id: 'cupertino-semantic', score: 0.98 },
+      { id: 'macbook-semantic', score: 0.97 },
+      { id: 'apple-post', score: 0.2 },
+    ]
+
+    const ranked = mergeHybridRankings(lexicalItems, semanticItems, semanticMatches, 3)
+    const ids = ranked.map(match => match.item.id)
+
+    expect(ids).toContain('apple-post')
+    expect(ids).toContain('iphone-semantic')
+  })
 })

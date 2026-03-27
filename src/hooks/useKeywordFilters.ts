@@ -43,6 +43,11 @@ import {
 } from '@/lib/filters/storage'
 import { extractEventFields, buildSemanticText } from '@/lib/filters/extract'
 import { checkEventText, mergeResults } from '@/lib/filters/matcher'
+import {
+  getSemanticFilterSettings,
+  SEMANTIC_FILTER_SETTINGS_UPDATED_EVENT,
+} from '@/lib/filters/semanticSettings'
+import { STORAGE_KEY_PUBKEY } from '@/lib/nostr/ndk'
 import { rankSemanticDocuments } from '@/lib/semantic/client'
 import type { CreateFilterInput, FilterCheckResult, KeywordFilter } from '@/lib/filters/types'
 
@@ -53,7 +58,13 @@ let _loading = true
 const _listeners = new Set<() => void>()
 
 async function _refresh(): Promise<void> {
-  _filters = await loadFilters()
+  let loaded: unknown = []
+  try {
+    loaded = await Promise.resolve(loadFilters())
+  } catch {
+    loaded = []
+  }
+  _filters = Array.isArray(loaded) ? loaded : []
   _loading  = false
   _listeners.forEach(fn => fn())
 }
@@ -148,7 +159,13 @@ export function useEventFilterCheck() {
  * chosen: low enough to catch strong synonyms ("assault" for "violence",
  * "elections" for "politics") while avoiding false positives.
  */
-const SEMANTIC_THRESHOLD = 0.42
+const DEFAULT_SEMANTIC_THRESHOLD = 0.42
+
+function getSemanticScopeId(): string {
+  if (typeof window === 'undefined') return 'anon'
+  const pubkey = window.localStorage.getItem(STORAGE_KEY_PUBKEY)
+  return pubkey && pubkey.trim().length > 0 ? pubkey.trim() : 'anon'
+}
 
 /**
  * Async Tier-2 semantic filter layer.
@@ -163,7 +180,9 @@ const SEMANTIC_THRESHOLD = 0.42
  * result using mergeResults() before rendering.
  */
 export function useSemanticFiltering(events: NostrEvent[]): Map<string, FilterCheckResult> {
+  const scopeId = getSemanticScopeId()
   const [results, setResults] = useState<Map<string, FilterCheckResult>>(new Map())
+  const [settingsVersion, setSettingsVersion] = useState(0)
   const abortRef = useRef<AbortController | null>(null)
   const [, tick] = useState(0)
 
@@ -177,6 +196,28 @@ export function useSemanticFiltering(events: NostrEvent[]): Map<string, FilterCh
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [_filters])
+
+  useEffect(() => {
+    const onSemanticSettingsUpdated = (event: Event) => {
+      const customEvent = event as CustomEvent<{ scopeId?: string }>
+      if (customEvent.detail?.scopeId !== scopeId) return
+      setSettingsVersion((value) => value + 1)
+    }
+
+    const onStorage = (event: StorageEvent) => {
+      if (!event.key) return
+      if (!event.key.endsWith(`:${scopeId}`)) return
+      setSettingsVersion((value) => value + 1)
+    }
+
+    window.addEventListener(SEMANTIC_FILTER_SETTINGS_UPDATED_EVENT, onSemanticSettingsUpdated as EventListener)
+    window.addEventListener('storage', onStorage)
+
+    return () => {
+      window.removeEventListener(SEMANTIC_FILTER_SETTINGS_UPDATED_EVENT, onSemanticSettingsUpdated as EventListener)
+      window.removeEventListener('storage', onStorage)
+    }
+  }, [scopeId])
 
   useEffect(() => {
     if (semanticFilters.length === 0 || events.length === 0) {
@@ -199,9 +240,13 @@ export function useSemanticFiltering(events: NostrEvent[]): Map<string, FilterCh
         }))
         .filter(d => d.text.trim().length > 0)
 
-      if (docs.length === 0) return
+      if (docs.length === 0) {
+        if (!controller.signal.aborted) setResults(new Map())
+        return
+      }
 
       const next = new Map<string, FilterCheckResult>()
+      const semanticThreshold = getSemanticFilterSettings(scopeId).threshold || DEFAULT_SEMANTIC_THRESHOLD
 
       for (const filter of semanticFilters) {
         if (controller.signal.aborted) break
@@ -215,7 +260,7 @@ export function useSemanticFiltering(events: NostrEvent[]): Map<string, FilterCh
           )
 
           for (const match of matches) {
-            if (match.score < SEMANTIC_THRESHOLD) continue
+            if (match.score < semanticThreshold) continue
             if (controller.signal.aborted) break
 
             const prev = next.get(match.id) ?? { action: null as FilterCheckResult['action'], matches: [] }
@@ -242,7 +287,7 @@ export function useSemanticFiltering(events: NostrEvent[]): Map<string, FilterCh
     })()
 
     return () => controller.abort()
-  }, [events, semanticFilters])
+  }, [events, scopeId, semanticFilters, settingsVersion])
 
   return results
 }

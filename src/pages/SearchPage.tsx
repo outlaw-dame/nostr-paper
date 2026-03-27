@@ -9,15 +9,19 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'motion/react'
+import { FilteredGate } from '@/components/filters/FilteredGate'
 import { SearchBar } from '@/components/search/SearchBar'
 import { FeedSkeleton } from '@/components/feed/FeedSkeleton'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { NoteContent } from '@/components/cards/NoteContent'
 import { NoteMediaAttachments } from '@/components/nostr/NoteMediaAttachments'
 import { PollPreview } from '@/components/nostr/PollPreview'
+import { ThreadIndexBadge } from '@/components/nostr/ThreadIndexBadge'
+import { mergeResults, useEventFilterCheck, useSemanticFiltering } from '@/hooks/useKeywordFilters'
 import { useModerationDocuments } from '@/hooks/useModeration'
 import { useSearch } from '@/hooks/useSearch'
 import { useProfile } from '@/hooks/useProfile'
+import { useSelfThreadIndex } from '@/hooks/useSelfThreadIndex'
 import { useMuteList } from '@/hooks/useMuteList'
 import { getEventMediaAttachments, getImetaHiddenUrls } from '@/lib/nostr/imeta'
 import { parseLongFormEvent } from '@/lib/nostr/longForm'
@@ -28,9 +32,11 @@ import {
 import { formatNip05Identifier } from '@/lib/nostr/nip05'
 import { parsePollEvent } from '@/lib/nostr/polls'
 import { parseSearchQuery, warmSearchRelays } from '@/lib/nostr/search'
+import { initSemanticSearch } from '@/lib/semantic/client'
 import { parseCommentEvent, parseThreadEvent } from '@/lib/nostr/thread'
 import { sanitizeText } from '@/lib/security/sanitize'
 import { parseVideoEvent } from '@/lib/nostr/video'
+import type { FilterCheckResult } from '@/lib/filters/types'
 import type { NostrEvent, Profile } from '@/types'
 import { Kind } from '@/types'
 
@@ -53,7 +59,12 @@ export default function SearchPage() {
 
   // Pre-warm NIP-50 relay connections as soon as the search page mounts so
   // the first actual search doesn't pay the full WebSocket setup cost.
-  useEffect(() => { warmSearchRelays() }, [])
+  useEffect(() => {
+    warmSearchRelays()
+    void initSemanticSearch().catch((error: unknown) => {
+      console.warn('[SearchPage] Semantic prewarm degraded:', error)
+    })
+  }, [])
 
   const {
     input,
@@ -74,6 +85,7 @@ export default function SearchPage() {
   })
 
   const { isMuted, loading: muteListLoading } = useMuteList()
+  const checkEvent = useEventFilterCheck()
 
   const parsedQuery = useMemo(() => parseSearchQuery(query), [query])
   const unsupportedKeys = useMemo(
@@ -112,6 +124,7 @@ export default function SearchPage() {
     () => events.filter((event) => !isMuted(event.pubkey) && (!eventModerationIds.has(event.id) || allowedEventIds.has(event.id))),
     [allowedEventIds, eventModerationIds, events, isMuted],
   )
+  const semanticFilterResults = useSemanticFiltering(visibleEvents)
   const visibleProfiles = useMemo(
     () => profiles.filter((profile) => !isMuted(profile.pubkey) && (!profileModerationIds.has(profile.pubkey) || allowedProfileIds.has(profile.pubkey))),
     [allowedProfileIds, profileModerationIds, profiles, isMuted],
@@ -247,7 +260,12 @@ export default function SearchPage() {
                 </h2>
                 <div className="space-y-3">
                   {visibleEvents.map(event => (
-                    <EventResult key={event.id} event={event} />
+                    <EventResult
+                      key={event.id}
+                      event={event}
+                      checkEvent={checkEvent}
+                      semanticResult={semanticFilterResults.get(event.id) ?? { action: null, matches: [] }}
+                    />
                   ))}
                 </div>
               </section>
@@ -293,8 +311,21 @@ function ProfileResult({ profile }: { profile: Profile }) {
   )
 }
 
-function EventResult({ event }: { event: NostrEvent }) {
+function EventResult({
+  event,
+  checkEvent,
+  semanticResult,
+}: {
+  event: NostrEvent
+  checkEvent: (event: NostrEvent, profile?: Profile) => FilterCheckResult
+  semanticResult: FilterCheckResult
+}) {
   const { profile } = useProfile(event.pubkey, { background: false })
+  const threadIndex = useSelfThreadIndex(event)
+  const filterResult = useMemo(
+    () => mergeResults(checkEvent(event, profile ?? undefined), semanticResult),
+    [checkEvent, event, profile, semanticResult],
+  )
   const article = parseLongFormEvent(event)
   const poll = parsePollEvent(event)
   const video = parseVideoEvent(event)
@@ -316,67 +347,71 @@ function EventResult({ event }: { event: NostrEvent }) {
   const href = article?.route ?? video?.route ?? `/note/${event.id}`
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.18 }}
-    >
-      <Link
-        to={href}
-        className="
-          app-panel block rounded-ios-xl p-4
-          card-elevated
-        "
+    <FilteredGate result={filterResult} eventId={event.id}>
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.18 }}
       >
-        <div className="flex items-start justify-between gap-3">
-          <AuthorRow
-            pubkey={event.pubkey}
-            profile={profile}
-            timestamp={event.created_at}
-          />
-
-          <span className="
-            px-2 py-1 rounded-full
-            text-[11px] font-semibold uppercase tracking-[0.08em]
-            bg-[rgb(var(--color-fill)/0.1)]
-            text-[rgb(var(--color-label-secondary))]
-          ">
-            {kindLabel}
-          </span>
-        </div>
-
-        {!poll && (article?.title || video?.title || thread?.title) && (
-          <h3 className="mt-3 text-[20px] leading-tight font-semibold tracking-[-0.02em] text-[rgb(var(--color-label))]">
-            {article?.title ?? video?.title ?? thread?.title}
-          </h3>
-        )}
-
-        {poll ? (
-          <PollPreview poll={poll} className="mt-3" />
-        ) : (article?.summary || video?.summary || thread?.content || comment?.content) ? (
-          <p className="mt-3 text-[15px] leading-7 text-[rgb(var(--color-label-secondary))]">
-            {article?.summary ?? video?.summary ?? thread?.content ?? comment?.content}
-          </p>
-        ) : (
-          <>
-            <NoteContent
-              content={event.content}
-              className="mt-3"
-              hiddenUrls={hiddenUrls}
-              interactive={false}
+        <Link
+          to={href}
+          className="
+            app-panel block rounded-ios-xl p-4
+            card-elevated
+          "
+        >
+          <div className="flex items-start justify-between gap-3">
+            <AuthorRow
+              pubkey={event.pubkey}
+              profile={profile}
+              timestamp={event.created_at}
             />
-            {attachments.length > 0 && (
-              <NoteMediaAttachments
-                attachments={attachments}
+
+            <span className="
+              px-2 py-1 rounded-full
+              text-[11px] font-semibold uppercase tracking-[0.08em]
+              bg-[rgb(var(--color-fill)/0.1)]
+              text-[rgb(var(--color-label-secondary))]
+            ">
+              {kindLabel}
+            </span>
+          </div>
+
+          {!poll && (article?.title || video?.title || thread?.title) && (
+            <h3 className="mt-3 text-[20px] leading-tight font-semibold tracking-[-0.02em] text-[rgb(var(--color-label))]">
+              {article?.title ?? video?.title ?? thread?.title}
+            </h3>
+          )}
+
+          <ThreadIndexBadge threadIndex={threadIndex} className="mt-3" />
+
+          {poll ? (
+            <PollPreview poll={poll} className="mt-3" />
+          ) : (article?.summary || video?.summary || thread?.content || comment?.content) ? (
+            <p className="mt-3 text-[15px] leading-7 text-[rgb(var(--color-label-secondary))]">
+              {article?.summary ?? video?.summary ?? thread?.content ?? comment?.content}
+            </p>
+          ) : (
+            <>
+              <NoteContent
+                content={event.content}
                 className="mt-3"
-                compact
+                hiddenUrls={hiddenUrls}
                 interactive={false}
               />
-            )}
-          </>
-        )}
-      </Link>
-    </motion.div>
+              {attachments.length > 0 && (
+                <NoteMediaAttachments
+                  attachments={attachments}
+                  className="mt-3"
+                  compact
+                  interactive={false}
+                />
+              )}
+            </>
+          )}
+        </Link>
+      </motion.div>
+    </FilteredGate>
   )
 }
 

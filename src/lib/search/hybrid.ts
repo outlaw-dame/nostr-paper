@@ -33,6 +33,7 @@ const SEMANTIC_EXPANSION_THRESHOLD = 15
 // Semantic-only items (zero lexical score) must clear this normalized score
 // to appear in results. Prevents low-similarity noise from the candidate pool.
 const MIN_SEMANTIC_ONLY_SCORE = 0.45
+const MIN_LEXICAL_SHARE = 0.5
 
 type Timestamped = {
   created_at?: number
@@ -131,12 +132,55 @@ export function mergeHybridRankings<T extends { id: string } & Timestamped>(
     })
   }
 
-  return ranked
+  const sorted = ranked
     .sort((a, b) => {
       if (b.hybridScore !== a.hybridScore) return b.hybridScore - a.hybridScore
       return getTimestamp(b.item) - getTimestamp(a.item)
     })
-    .slice(0, Math.max(1, limit))
+
+  const cappedLimit = Math.max(1, limit)
+  const initial = sorted.slice(0, cappedLimit)
+
+  // Preserve lexical intent for hashtag/keyword queries.
+  // We still blend in semantic results, but ensure a minimum lexical presence.
+  const lexicalIds = new Set(lexicalItems.map(item => item.id))
+  const minLexicalCount = Math.min(
+    lexicalItems.length,
+    Math.max(1, Math.ceil(cappedLimit * MIN_LEXICAL_SHARE)),
+  )
+  let lexicalInResult = initial.reduce((count, match) => (
+    lexicalIds.has(match.item.id) ? count + 1 : count
+  ), 0)
+
+  if (lexicalInResult >= minLexicalCount) {
+    return initial
+  }
+
+  const remainingLexical = sorted.filter(
+    match => lexicalIds.has(match.item.id) && !initial.some(existing => existing.item.id === match.item.id),
+  )
+  if (remainingLexical.length === 0) {
+    return initial
+  }
+
+  const adjusted = [...initial]
+  for (const lexicalMatch of remainingLexical) {
+    if (lexicalInResult >= minLexicalCount) break
+
+    let replaceIndex = -1
+    for (let index = adjusted.length - 1; index >= 0; index -= 1) {
+      if (!lexicalIds.has(adjusted[index]!.item.id)) {
+        replaceIndex = index
+        break
+      }
+    }
+    if (replaceIndex === -1) break
+
+    adjusted[replaceIndex] = lexicalMatch
+    lexicalInResult += 1
+  }
+
+  return adjusted
 }
 
 function getSemanticQuery(query: string): string | null {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { moderateContentDocuments } from '@/lib/moderation/client'
+import { resolveTagrModerationDecisions } from '@/lib/moderation/tagr'
 import {
   buildEventModerationDocument,
   buildProfileModerationDocument,
@@ -80,15 +81,15 @@ export function useModerationDocuments(
     setDecisions(nextDecisions)
     setError(null)
 
-    if (missing.length === 0) {
-      setLoading(false)
-      return () => controller.abort()
-    }
-
     setLoading(true)
 
-    moderateContentDocuments(missing, controller.signal)
-      .then((results) => {
+    Promise.all([
+      missing.length > 0
+        ? moderateContentDocuments(missing, controller.signal)
+        : Promise.resolve([]),
+      resolveTagrModerationDecisions(documents, controller.signal).catch(() => new Map<string, ModerationDecision>()),
+    ])
+      .then(([results, tagrDecisions]) => {
         if (controller.signal.aborted) return
 
         const merged = new Map(nextDecisions)
@@ -99,6 +100,13 @@ export function useModerationDocuments(
           const cacheKey = getModerationDocumentCacheKey(document)
           inMemoryModerationCache.set(cacheKey, decision)
           merged.set(decision.id, decision)
+        }
+
+        for (const [id, tagrDecision] of tagrDecisions) {
+          const existing = merged.get(id)
+          if (!existing || existing.action !== 'block') {
+            merged.set(id, tagrDecision)
+          }
         }
 
         setDecisions(merged)

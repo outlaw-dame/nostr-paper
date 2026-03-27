@@ -2,30 +2,20 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { NDKEvent, NDKUser } from '@nostr-dev-kit/ndk'
 import { useApp } from '@/contexts/app-context'
-import { useMuteList } from '@/hooks/useMuteList'
-import { useProfile } from '@/hooks/useProfile'
 import { useUserStatus } from '@/hooks/useUserStatus'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { UserStatusBody } from '@/components/nostr/UserStatusBody'
 import { AppearanceSettingsCard } from '@/components/cards/AppearanceSettingsCard'
+import { getFeedResumeEnabled, setFeedResumeEnabled } from '@/lib/feed/resumeSettings'
 import { getNDK } from '@/lib/nostr/ndk'
 import { withRetry } from '@/lib/retry'
-
-function MutedUserRow({ pubkey }: { pubkey: string }) {
-  const { profile } = useProfile(pubkey)
-  return (
-    <div className="rounded-[16px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] p-3">
-      <AuthorRow pubkey={pubkey} profile={profile} actions />
-    </div>
-  )
-}
 
 export default function SettingsPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const { currentUser, logout } = useApp()
-  const { mutedPubkeys, loading: muteListLoading } = useMuteList()
   const [clearingStatus, setClearingStatus] = useState(false)
+  const [resumeFeedPosition, setResumeFeedPosition] = useState(true)
   
   // Load current music status to show it
   const { status: musicStatus } = useUserStatus(currentUser?.pubkey, {
@@ -34,6 +24,10 @@ export default function SettingsPage() {
   })
 
   // Handle hash navigation (e.g. from ProfilePage "Music Status" link)
+  useEffect(() => {
+    setResumeFeedPosition(getFeedResumeEnabled(currentUser?.pubkey ?? 'anon'))
+  }, [currentUser?.pubkey])
+
   useEffect(() => {
     if (location.hash) {
       const element = document.getElementById(location.hash.slice(1))
@@ -67,8 +61,6 @@ export default function SettingsPage() {
       setClearingStatus(false)
     }
   }
-
-  const mutedList = Array.from(mutedPubkeys)
 
   return (
     <div className="min-h-dvh bg-[rgb(var(--color-bg))] px-4 pb-safe">
@@ -171,45 +163,67 @@ export default function SettingsPage() {
           <AppearanceSettingsCard />
         </section>
 
-        {/* Content Filters Section */}
         <section>
-          <h2 className="section-kicker px-1 mb-3">Content Filters</h2>
+          <h2 className="section-kicker px-1 mb-3">Feed</h2>
+          <div className="app-panel rounded-ios-xl p-4 card-elevated">
+            <label className="flex items-start gap-3">
+              <div className="mt-0.5 flex-1">
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
+                  Resume where I left off
+                </p>
+                <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
+                  Return to your last read position in each feed section after refresh or reopening.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={resumeFeedPosition}
+                onClick={() => {
+                  const next = !resumeFeedPosition
+                  setResumeFeedPosition(next)
+                  setFeedResumeEnabled(next, currentUser?.pubkey ?? 'anon')
+                }}
+                className="
+                  shrink-0 mt-0.5 w-11 h-6 rounded-full
+                  transition-colors duration-200
+                "
+                style={{
+                  backgroundColor: resumeFeedPosition
+                    ? 'rgb(var(--color-system-green))'
+                    : 'rgb(var(--color-fill-secondary) / 0.3)',
+                }}
+              >
+                <span
+                  className="block w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200"
+                  style={{ transform: `translateX(${resumeFeedPosition ? 22 : 2}px)` }}
+                />
+              </button>
+            </label>
+          </div>
+        </section>
+
+        {/* Moderation Section */}
+        <section>
+          <h2 className="section-kicker px-1 mb-3">Moderation</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated">
             <button
               type="button"
-              onClick={() => navigate('/filters')}
+              onClick={() => navigate('/settings/moderation')}
               className="flex w-full items-center justify-between text-left transition-opacity active:opacity-70"
             >
               <div>
                 <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
-                  Keyword & Semantic Filters
+                  Content Filters & Muted Users
                 </p>
                 <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
-                  Manage hidden words, hashtags, and AI-based safety filters.
+                  Open Settings / Moderation to manage filters, semantic controls, and muted users.
                 </p>
               </div>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-[rgb(var(--color-label-tertiary))]">
                 <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </button>
-          </div>
-        </section>
-
-        {/* Muted Users Section */}
-        <section>
-          <h2 className="section-kicker px-1 mb-3">Muted Users</h2>
-          <div className="app-panel rounded-ios-xl p-4 card-elevated">
-            {muteListLoading ? (
-              <p className="text-[14px] text-[rgb(var(--color-label-secondary))]">Loading muted users...</p>
-            ) : mutedList.length === 0 ? (
-              <p className="text-[14px] text-[rgb(var(--color-label-secondary))]">You haven't muted anyone yet.</p>
-            ) : (
-              <div className="space-y-3">
-                {mutedList.map((pubkey) => (
-                  <MutedUserRow key={pubkey} pubkey={pubkey} />
-                ))}
-              </div>
-            )}
           </div>
         </section>
 

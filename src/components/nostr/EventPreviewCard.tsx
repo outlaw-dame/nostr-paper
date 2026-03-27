@@ -2,8 +2,10 @@ import { Link } from 'react-router-dom'
 import { NoteContent } from '@/components/cards/NoteContent'
 import { NoteMediaAttachments } from '@/components/nostr/NoteMediaAttachments'
 import { PollPreview } from '@/components/nostr/PollPreview'
+import { ThreadIndexBadge } from '@/components/nostr/ThreadIndexBadge'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { TwemojiText } from '@/components/ui/TwemojiText'
+import { useSelfThreadIndex } from '@/hooks/useSelfThreadIndex'
 import { useEventModeration } from '@/hooks/useModeration'
 import { useProfile } from '@/hooks/useProfile'
 import {
@@ -343,12 +345,30 @@ export function EventPreviewCard({
   compact = false,
   linked = true,
 }: EventPreviewCardProps) {
-  const { blocked, loading } = useEventModeration(event)
+  const threadIndex = useSelfThreadIndex(event)
+  const { blocked, loading, decision } = useEventModeration(event)
   const { profile } = useProfile(event.pubkey, { background: false })
+  const blockedByTagr = blocked && (decision?.reason?.startsWith('tagr:') ?? false)
+
+  if (loading) return null
+
+  if (blockedByTagr) {
+    return (
+      <div className={`rounded-[18px] border border-[rgb(var(--color-system-red)/0.22)] bg-[rgb(var(--color-system-red)/0.06)] p-3 ${className}`}>
+        <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-system-red))]">
+          Content hidden
+        </p>
+        <p className="mt-1 text-[14px] text-[rgb(var(--color-label-secondary))]">
+          Blocked by Tagr.
+        </p>
+      </div>
+    )
+  }
+
+  if (blocked) return null
+
   const kindLabel = getKindLabel(event)
   const href = getHref(event)
-
-  if (loading || blocked) return null
 
   const content = (
     <div className={`rounded-[18px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg-secondary))] p-3 ${className}`}>
@@ -363,6 +383,8 @@ export function EventPreviewCard({
           {kindLabel}
         </p>
       )}
+
+      <ThreadIndexBadge threadIndex={threadIndex} className="mt-3" />
 
       <PreviewBody event={event} compact={compact} interactive={!linked} />
     </div>

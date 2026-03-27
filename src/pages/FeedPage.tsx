@@ -10,7 +10,7 @@
  * All data is sourced from SQLite via useNostrFeed (local-first).
  */
 
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'motion/react'
 import { useApp } from '@/contexts/app-context'
@@ -25,6 +25,7 @@ import { NoteMediaAttachments } from '@/components/nostr/NoteMediaAttachments'
 import { PollPreview } from '@/components/nostr/PollPreview'
 import { QuotePreviewList } from '@/components/nostr/QuotePreviewList'
 import { RepostBody } from '@/components/nostr/RepostBody'
+import { ThreadIndexBadge } from '@/components/nostr/ThreadIndexBadge'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { TwemojiText } from '@/components/ui/TwemojiText'
 import { TranslateTextPanel } from '@/components/translation/TranslateTextPanel'
@@ -34,10 +35,13 @@ import { useProfile } from '@/hooks/useProfile'
 import { useModerationDocuments } from '@/hooks/useModeration'
 import { useMuteList } from '@/hooks/useMuteList'
 import { useStoryCardPreview } from '@/hooks/useStoryCardPreview'
+import { useSelfThreadIndex } from '@/hooks/useSelfThreadIndex'
 import { useVisibilityOnce } from '@/hooks/useVisibilityOnce'
 import { useEventFilterCheck, useSemanticFiltering, mergeResults } from '@/hooks/useKeywordFilters'
 import { buildComposeSearch } from '@/lib/compose'
+import { FEED_RESUME_UPDATED_EVENT, getFeedResumeEnabled } from '@/lib/feed/resumeSettings'
 import { buildEventModerationDocument } from '@/lib/moderation/content'
+import { warmSelfThreadIndexCache } from '@/lib/nostr/threadIndex'
 import { parseCommentEvent } from '@/lib/nostr/thread'
 import { getPeerTubeEmbedUrl, getVimeoVideoId, getYouTubeVideoId } from '@/lib/nostr/imeta'
 import { normalizeHashtag } from '@/lib/security/sanitize'
@@ -138,6 +142,97 @@ const SECTION_SUMMARY: Record<string, string> = {
   nostr: 'Builders, releases, and protocol chatter.',
 }
 
+const FEED_VIEW_STATE_KEY = 'nostr-paper:feed:view-state:v1'
+const FEED_STATE_TTL_MS = 1000 * 60 * 60 * 24 * 7
+
+interface FeedViewSnapshot {
+  anchorEventId: string | null
+  anchorOffset: number
+  scrollTop: number
+  savedAt: number
+}
+
+type FeedViewStateMap = Record<string, FeedViewSnapshot>
+
+function readFeedViewStateMap(): FeedViewStateMap {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = localStorage.getItem(FEED_VIEW_STATE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object') return {}
+    return parsed as FeedViewStateMap
+  } catch {
+    return {}
+  }
+}
+
+function writeFeedViewStateMap(next: FeedViewStateMap): void {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(FEED_VIEW_STATE_KEY, JSON.stringify(next))
+  } catch {
+    // Silently fail if localStorage is unavailable.
+  }
+}
+
+function getFeedViewSnapshot(scopeKey: string): FeedViewSnapshot | null {
+  const stateMap = readFeedViewStateMap()
+  const snapshot = stateMap[scopeKey]
+  if (!snapshot) return null
+  if (Date.now() - snapshot.savedAt > FEED_STATE_TTL_MS) {
+    delete stateMap[scopeKey]
+    writeFeedViewStateMap(stateMap)
+    return null
+  }
+  return snapshot
+}
+
+function saveFeedViewSnapshot(scopeKey: string, snapshot: FeedViewSnapshot): void {
+  const stateMap = readFeedViewStateMap()
+  stateMap[scopeKey] = snapshot
+
+  // Keep only the most recent 32 scopes so local state does not grow unbounded.
+  const entries = Object.entries(stateMap)
+  if (entries.length > 32) {
+    entries
+      .sort((a, b) => b[1].savedAt - a[1].savedAt)
+      .slice(32)
+      .forEach(([key]) => {
+        delete stateMap[key]
+      })
+  }
+
+  writeFeedViewStateMap(stateMap)
+}
+
+function clearFeedViewSnapshot(scopeKey: string): void {
+  const stateMap = readFeedViewStateMap()
+  if (!stateMap[scopeKey]) return
+  delete stateMap[scopeKey]
+  writeFeedViewStateMap(stateMap)
+}
+
+function getVisibleAnchor(container: HTMLElement): { id: string; offset: number } | null {
+  const containerRect = container.getBoundingClientRect()
+  const candidates = container.querySelectorAll<HTMLElement>('[data-feed-event-id]')
+
+  for (const element of candidates) {
+    const rect = element.getBoundingClientRect()
+    if (rect.bottom > containerRect.top + 8 && rect.top < containerRect.bottom - 8) {
+      const id = element.dataset.feedEventId
+      if (id) {
+        return {
+          id,
+          offset: rect.top - containerRect.top,
+        }
+      }
+    }
+  }
+
+  return null
+}
+
 export default function FeedPage() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -148,6 +243,10 @@ export default function FeedPage() {
     [routeTag],
   )
   const [activeSectionId, setActiveSectionId] = useState(DEFAULT_SECTIONS[0]!.id)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const restoreCompletedRef = useRef(false)
+  const rafSaveRef = useRef<number | null>(null)
+  const [resumeFeedPosition, setResumeFeedPosition] = useState(true)
 
   const { profile: currentUserProfile } = useProfile(currentUser?.pubkey)
   const { isMuted, loading: muteListLoading } = useMuteList()
@@ -176,6 +275,16 @@ export default function FeedPage() {
 
     return DEFAULT_SECTIONS.find((section) => section.id === activeSectionId) ?? DEFAULT_SECTIONS[0]!
   }, [activeSectionId, normalizedTag])
+
+  const feedScopeKey = useMemo(
+    () => `${currentUser?.pubkey ?? 'anon'}::${activeSection.id}`,
+    [activeSection.id, currentUser?.pubkey],
+  )
+
+  const resumeScopeId = useMemo(
+    () => currentUser?.pubkey ?? 'anon',
+    [currentUser?.pubkey],
+  )
 
   const { events, loading, eose } = useNostrFeed({ section: activeSection })
   const moderationDocuments = useMemo(
@@ -207,6 +316,163 @@ export default function FeedPage() {
   const heroEvent = visibleEvents[0] ?? null
   const secondaryEvents = visibleEvents.slice(1)
   const feedLoading = loading || moderationLoading || muteListLoading
+
+  useEffect(() => {
+    warmSelfThreadIndexCache(visibleEvents)
+  }, [visibleEvents])
+
+  const persistFeedPosition = useCallback(() => {
+    if (!resumeFeedPosition) return
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    const anchor = getVisibleAnchor(container)
+    saveFeedViewSnapshot(feedScopeKey, {
+      anchorEventId: anchor?.id ?? null,
+      anchorOffset: anchor?.offset ?? 0,
+      scrollTop: container.scrollTop,
+      savedAt: Date.now(),
+    })
+  }, [feedScopeKey, resumeFeedPosition])
+
+  useEffect(() => {
+    setResumeFeedPosition(getFeedResumeEnabled(resumeScopeId))
+
+    const onUpdated = (event: Event) => {
+      const customEvent = event as CustomEvent<{ scopeId?: string }>
+      if (customEvent.detail?.scopeId !== resumeScopeId) return
+      setResumeFeedPosition(getFeedResumeEnabled(resumeScopeId))
+    }
+
+    const onStorage = (event: StorageEvent) => {
+      if (!event.key) return
+      if (!event.key.endsWith(`:${resumeScopeId}`)) return
+      setResumeFeedPosition(getFeedResumeEnabled(resumeScopeId))
+    }
+
+    window.addEventListener(FEED_RESUME_UPDATED_EVENT, onUpdated as EventListener)
+    window.addEventListener('storage', onStorage)
+
+    return () => {
+      window.removeEventListener(FEED_RESUME_UPDATED_EVENT, onUpdated as EventListener)
+      window.removeEventListener('storage', onStorage)
+    }
+  }, [resumeScopeId])
+
+  useEffect(() => {
+    if (!resumeFeedPosition) {
+      clearFeedViewSnapshot(feedScopeKey)
+      restoreCompletedRef.current = true
+    } else {
+      restoreCompletedRef.current = false
+    }
+  }, [feedScopeKey, resumeFeedPosition])
+
+  useEffect(() => {
+    if (resumeFeedPosition) {
+      restoreCompletedRef.current = false
+    }
+  }, [feedScopeKey, resumeFeedPosition])
+
+  useEffect(() => {
+    if (!resumeFeedPosition) return
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    const onScroll = () => {
+      if (rafSaveRef.current !== null) {
+        cancelAnimationFrame(rafSaveRef.current)
+      }
+      rafSaveRef.current = requestAnimationFrame(() => {
+        persistFeedPosition()
+        rafSaveRef.current = null
+      })
+    }
+
+    container.addEventListener('scroll', onScroll, { passive: true })
+
+    return () => {
+      container.removeEventListener('scroll', onScroll)
+      if (rafSaveRef.current !== null) {
+        cancelAnimationFrame(rafSaveRef.current)
+        rafSaveRef.current = null
+      }
+    }
+  }, [persistFeedPosition, resumeFeedPosition])
+
+  useEffect(() => {
+    if (!resumeFeedPosition) return
+    const onPageHide = () => persistFeedPosition()
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        persistFeedPosition()
+      }
+    }
+    const onFreeze = () => persistFeedPosition()
+
+    window.addEventListener('pagehide', onPageHide)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('freeze', onFreeze)
+
+    return () => {
+      window.removeEventListener('pagehide', onPageHide)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('freeze', onFreeze)
+      persistFeedPosition()
+    }
+  }, [persistFeedPosition, resumeFeedPosition])
+
+  useEffect(() => {
+    if (!resumeFeedPosition) return
+    if (restoreCompletedRef.current) return
+    if (feedLoading) return
+    if (visibleEvents.length === 0 && !eose) return
+
+    const container = scrollContainerRef.current
+    const snapshot = getFeedViewSnapshot(feedScopeKey)
+    if (!container || !snapshot) {
+      restoreCompletedRef.current = true
+      return
+    }
+
+    const restore = () => {
+      let restored = false
+
+      if (snapshot.anchorEventId) {
+        const selector = `[data-feed-event-id="${snapshot.anchorEventId}"]`
+        const anchorElement = container.querySelector<HTMLElement>(selector)
+        if (anchorElement) {
+          const nextTop = Math.max(0, anchorElement.offsetTop - snapshot.anchorOffset)
+          container.scrollTop = nextTop
+          restored = true
+        }
+      }
+
+      // If we have an anchor but it is not loaded yet, wait for more feed items
+      // instead of falling back early and causing a visible jump later.
+      if (!restored && snapshot.anchorEventId && !eose) {
+        return false
+      }
+
+      if (!restored && Number.isFinite(snapshot.scrollTop) && snapshot.scrollTop > 0) {
+        container.scrollTop = snapshot.scrollTop
+        restored = true
+      }
+
+      return restored || eose
+    }
+
+    // Let layout settle before applying the anchor offset.
+    requestAnimationFrame(() => {
+      const firstPassDone = restore()
+      requestAnimationFrame(() => {
+        const secondPassDone = restore()
+        if (firstPassDone || secondPassDone) {
+          restoreCompletedRef.current = true
+        }
+      })
+    })
+  }, [eose, feedLoading, feedScopeKey, resumeFeedPosition, visibleEvents])
 
   const checkEvent      = useEventFilterCheck()
   const semanticResults = useSemanticFiltering(visibleEvents)
@@ -279,6 +545,7 @@ export default function FeedPage() {
         className="flex min-h-0 flex-col flex-1"
       >
         <div
+          ref={scrollContainerRef}
           id={`feed-section-${activeSection.id}`}
           role="tabpanel"
           className="
@@ -446,14 +713,16 @@ export default function FeedPage() {
               {feedLoading && !heroEvent ? (
                 <FeedSkeleton type="hero" />
               ) : heroEvent ? (
-                <FilteredGate
-                  result={mergeResults(
-                    checkEvent(heroEvent),
-                    semanticResults.get(heroEvent.id) ?? { action: null, matches: [] },
-                  )}
-                >
-                  <HeroCard event={heroEvent} index={0} />
-                </FilteredGate>
+                <div data-feed-event-id={heroEvent.id}>
+                  <FilteredGate
+                    result={mergeResults(
+                      checkEvent(heroEvent),
+                      semanticResults.get(heroEvent.id) ?? { action: null, matches: [] },
+                    )}
+                  >
+                    <HeroCard event={heroEvent} index={0} />
+                  </FilteredGate>
+                </div>
               ) : eose && !moderationLoading ? (
                 <EmptyState tag={normalizedTag} />
               ) : null}
@@ -497,6 +766,7 @@ interface SecondaryCardProps {
 export function SecondaryCard({ event, index, checkEvent, semanticResult }: SecondaryCardProps) {
   const navigate = useNavigate()
   const { profile } = useProfile(event.pubkey, { background: false })
+  const threadIndex = useSelfThreadIndex(event)
   const followStatus = useFollowStatus(event.pubkey)
   const { ref: visibilityRef, visible: storyPreviewVisible } = useVisibilityOnce<HTMLDivElement>()
   const filterResult = mergeResults(checkEvent(event, profile ?? undefined), semanticResult)
@@ -527,6 +797,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult }: Seco
     <FilteredGate result={filterResult}>
       <motion.div
         ref={visibilityRef}
+        data-feed-event-id={event.id}
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.97 }}
@@ -579,6 +850,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult }: Seco
             {thread ? 'Thread' : comment ? 'Comment' : 'Repost'}
           </p>
         )}
+        <ThreadIndexBadge threadIndex={threadIndex} className="mt-3" />
         {poll ? (
           <PollPreview poll={poll} className="mt-3" compact />
         ) : storyTitle && (

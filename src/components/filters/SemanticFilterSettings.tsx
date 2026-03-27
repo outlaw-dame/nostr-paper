@@ -500,7 +500,7 @@ export function SemanticFilterSettings() {
           </p>
           <button
             type="button"
-            onClick={() => navigate('/filters')}
+            onClick={() => navigate('/settings/moderation/filters')}
             className="text-[12px] font-medium text-[#007AFF] active:opacity-70"
           >
             Manage All →

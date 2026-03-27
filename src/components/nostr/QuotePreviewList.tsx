@@ -1,5 +1,6 @@
 import { useAddressableEvent } from '@/hooks/useAddressableEvent'
 import { useEvent } from '@/hooks/useEvent'
+import { useEventModeration } from '@/hooks/useModeration'
 import { EventPreviewCard } from '@/components/nostr/EventPreviewCard'
 import { parseAddressCoordinate } from '@/lib/nostr/addressable'
 import { decodeAddressReference, decodeEventReference } from '@/lib/nostr/nip21'
@@ -33,7 +34,36 @@ function QuoteReferenceCard({
   })
 
   const targetEvent = eventState.event ?? addressState.event
+  const {
+    blocked,
+    loading: moderationLoading,
+    decision,
+  } = useEventModeration(targetEvent)
   const loading = eventState.loading || addressState.loading
+  const blockedByTagr = blocked && (decision?.reason?.startsWith('tagr:') ?? false)
+
+  if (targetEvent && blockedByTagr) {
+    return (
+      <div className="rounded-[18px] border border-[rgb(var(--color-system-red)/0.22)] bg-[rgb(var(--color-system-red)/0.06)] p-3">
+        <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-system-red))]">
+          Content hidden
+        </p>
+        <p className="mt-1 text-[14px] text-[rgb(var(--color-label-secondary))]">
+          Blocked by Tagr.
+        </p>
+      </div>
+    )
+  }
+
+  if (targetEvent && !moderationLoading && blocked) {
+    return (
+      <div className="rounded-[18px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg-secondary))] p-3">
+        <p className="text-[14px] text-[rgb(var(--color-label-secondary))]">
+          Quoted event unavailable.
+        </p>
+      </div>
+    )
+  }
 
   if (targetEvent) {
     return <EventPreviewCard event={targetEvent} compact={compact} linked={linked} />
@@ -42,7 +72,7 @@ function QuoteReferenceCard({
   return (
     <div className="rounded-[18px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg-secondary))] p-3">
       <p className="text-[14px] text-[rgb(var(--color-label-secondary))]">
-        {loading ? 'Loading quoted event…' : 'Quoted event unavailable.'}
+        {loading || moderationLoading ? 'Loading quoted event…' : 'Quoted event unavailable.'}
       </p>
     </div>
   )

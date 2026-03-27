@@ -34,6 +34,7 @@ const VideoComposePage = lazy(() => import('@/pages/VideoComposePage'))
 const ProfilePage = lazy(() => import('@/pages/ProfilePage'))
 const NotePage    = lazy(() => import('@/pages/NotePage'))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'))
+const ModerationPage = lazy(() => import('@/pages/ModerationPage'))
 const FiltersPage  = lazy(() => import('@/pages/FiltersPage'))
 const OnboardPage  = lazy(() => import('@/pages/OnboardPage'))
 const ExplorePage  = lazy(() => import('@/pages/ExplorePage'))
@@ -132,7 +133,9 @@ function InnerApp() {
             <Route path="/profile"             element={<ProfilePage />} />
             <Route path="/profile/:pubkey"     element={<ProfilePage />} />
             <Route path="/settings"            element={<SettingsPage />} />
-            <Route path="/filters"             element={<FiltersPage />} />
+            <Route path="/settings/moderation" element={<ModerationPage />} />
+            <Route path="/settings/moderation/filters" element={<FiltersPage />} />
+            <Route path="/filters"             element={<Navigate to="/settings/moderation/filters" replace />} />
             <Route path="/onboard"             element={<OnboardPage />} />
             <Route path="*"                    element={<Navigate to="/" replace />} />
           </Routes>

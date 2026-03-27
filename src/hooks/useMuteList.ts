@@ -13,6 +13,34 @@ import { withRetry } from '@/lib/retry'
 import { isValidHex32 } from '@/lib/security/sanitize'
 
 const MUTE_LIST_KIND = 10000
+const LOCAL_MUTE_CACHE_KEY_PREFIX = 'nostr-paper:mute-list:v1:'
+
+function getMuteCacheKey(pubkey: string): string {
+  return `${LOCAL_MUTE_CACHE_KEY_PREFIX}${pubkey}`
+}
+
+function loadCachedMuteList(pubkey: string): Set<string> {
+  if (typeof window === 'undefined') return new Set<string>()
+  try {
+    const raw = window.localStorage.getItem(getMuteCacheKey(pubkey))
+    if (!raw) return new Set<string>()
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return new Set<string>()
+    const valid = parsed.filter((value): value is string => typeof value === 'string' && isValidHex32(value))
+    return new Set(valid)
+  } catch {
+    return new Set<string>()
+  }
+}
+
+function saveCachedMuteList(pubkey: string, mutedPubkeys: Set<string>): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(getMuteCacheKey(pubkey), JSON.stringify(Array.from(mutedPubkeys)))
+  } catch {
+    // Best-effort cache only.
+  }
+}
 
 export interface UseMuteListResult {
   mutedPubkeys: Set<string>
@@ -37,6 +65,11 @@ export function useMuteList(): UseMuteListResult {
       return
     }
 
+    const cached = loadCachedMuteList(currentUser.pubkey)
+    if (cached.size > 0) {
+      setMutedPubkeys(cached)
+    }
+
     try {
       const ndk = getNDK()
       
@@ -51,9 +84,12 @@ export function useMuteList(): UseMuteListResult {
             .filter((t) => t[0] === 'p' && t[1])
             .map((t) => t[1] as string)
             .filter((pubkey) => isValidHex32(pubkey))
-          setMutedPubkeys(new Set(pTags))
+          const next = new Set(pTags)
+          setMutedPubkeys(next)
+          saveCachedMuteList(currentUser.pubkey, next)
         } else {
           setMutedPubkeys(new Set())
+          saveCachedMuteList(currentUser.pubkey, new Set())
         }
       }, {
         maxAttempts: 3,
@@ -97,6 +133,7 @@ export function useMuteList(): UseMuteListResult {
       })
       
       setMutedPubkeys(newSet)
+      saveCachedMuteList(currentUser.pubkey, newSet)
     },
     [currentUser?.pubkey],
   )

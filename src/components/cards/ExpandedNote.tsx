@@ -194,7 +194,7 @@ export function ExpandedNote({ event, profile, onClose }: ExpandedNoteProps) {
         )}
 
         {/* Sticky top chrome */}
-        <div className="app-chrome sticky top-0 z-10 pt-safe">
+        <div className="app-chrome sticky top-0 z-30 pt-safe">
           <Navbar
             left={
               <button
@@ -316,7 +316,7 @@ export function ExpandedNote({ event, profile, onClose }: ExpandedNoteProps) {
             )}
           </Block>
 
-          <div className="h-8 pb-safe" />
+          <div className="h-[max(32px,_env(safe-area-inset-bottom))]" />
         </div>
       </motion.div>
     </motion.div>

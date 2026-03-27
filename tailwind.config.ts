@@ -73,7 +73,7 @@ const config: Config = {
       },
     },
   },
-  darkMode: 'media',
+  darkMode: ['selector', '[data-theme="dark"]'],
 }
 
 export default config

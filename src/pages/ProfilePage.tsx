@@ -370,6 +370,7 @@ export default function ProfilePage() {
   const {
     blocked: profileTextBlocked,
     loading: profileModerationLoading,
+    decision: profileModerationDecision,
   } = useProfileModeration(profile)
   const { status: musicStatus, loading: musicStatusLoading } = useUserStatus(pubkey, {
     identifier: 'music',
@@ -401,6 +402,7 @@ export default function ProfilePage() {
   const [error, setError] = useState<string | null>(null)
   const [muting, setMuting] = useState(false)
   const [expandedImage, setExpandedImage] = useState<ExpandedProfileImage | null>(null)
+  const profileBlockedByTagr = profileTextBlocked && (profileModerationDecision?.reason?.startsWith('tagr:') ?? false)
   const displayProfile = useMemo<Profile | null>(() => {
     if (!profile || !profileTextBlocked) return profile
     const {
@@ -825,7 +827,7 @@ export default function ProfilePage() {
           </button>
         </div>
       ) : (
-        <div className="px-4 pb-10 pb-safe">
+        <div className="px-4 pb-[max(40px,_env(safe-area-inset-bottom))]">
 
           <div className="space-y-6 py-4">
             <div className="rounded-[24px] bg-[rgb(var(--color-bg-secondary))] p-4 card-elevated">
@@ -990,6 +992,12 @@ export default function ProfilePage() {
                 <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
                   Bio
                 </p>
+
+                {profileBlockedByTagr ? (
+                  <p className="mt-2 text-[13px] font-medium text-[rgb(var(--color-system-red))]">
+                    Blocked by Tagr.
+                  </p>
+                ) : null}
 
                 {displayProfile?.about ? (
                   <>

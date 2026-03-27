@@ -538,20 +538,27 @@ export default function FiltersPage() {
   const [showForm, setShowForm]       = useState(false)
   const [editTarget, setEditTarget]   = useState<KeywordFilter | null>(null)
   const [saving, setSaving]           = useState(false)
+  const [saveError, setSaveError]     = useState<string | null>(null)
+  const [flashMessage, setFlashMessage] = useState<string | null>(null)
 
   const handleSave = useCallback(async (
     data: CreateFilterInput,
     id?:  string,
   ) => {
     setSaving(true)
+    setSaveError(null)
     try {
       if (id) {
         await update(id, data)
+        setFlashMessage('Filter updated.')
       } else {
         await add(data)
+        setFlashMessage('Filter added.')
       }
       setShowForm(false)
       setEditTarget(null)
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Failed to save filter.')
     } finally {
       setSaving(false)
     }
@@ -569,11 +576,19 @@ export default function FiltersPage() {
 
   const handleDelete = useCallback(async (id: string) => {
     await remove(id)
+    setFlashMessage('Filter deleted.')
   }, [remove])
 
   const handleToggle = useCallback(async (id: string) => {
     await toggle(id)
+    setFlashMessage('Filter updated.')
   }, [toggle])
+
+  useEffect(() => {
+    if (!flashMessage) return
+    const timer = window.setTimeout(() => setFlashMessage(null), 2200)
+    return () => window.clearTimeout(timer)
+  }, [flashMessage])
 
   const activeCount  = filters.filter(f => f.enabled && (f.expiresAt === null || f.expiresAt > Date.now())).length
   const expiredCount = filters.filter(f => f.expiresAt !== null && f.expiresAt < Date.now()).length
@@ -601,7 +616,7 @@ export default function FiltersPage() {
             <svg width="8" height="14" viewBox="0 0 8 14" fill="none" aria-hidden="true">
               <path d="M7 1L1 7l6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            <span className="text-[17px]">Settings</span>
+            <span className="text-[17px]">Moderation</span>
           </button>
 
           <h1 className="text-[17px] font-semibold text-[rgb(var(--color-label))] absolute left-1/2 -translate-x-1/2">
@@ -618,9 +633,20 @@ export default function FiltersPage() {
             </button>
           )}
         </div>
+        <p className="px-4 mt-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-tertiary))]">
+          Settings / Moderation / Filters
+        </p>
       </div>
 
-      <div className="px-0 pb-10 pb-safe">
+      <div className="px-0 pb-[max(40px,_env(safe-area-inset-bottom))]">
+
+        {flashMessage && (
+          <div className="mx-4 mb-3 rounded-[12px] border border-[rgb(var(--color-system-green)/0.2)] bg-[rgb(var(--color-system-green)/0.1)] px-3 py-2">
+            <p className="text-[12px] font-medium text-[rgb(var(--color-system-green))]">
+              {flashMessage}
+            </p>
+          </div>
+        )}
 
         {/* Summary strip */}
         {!loading && filters.length > 0 && (
@@ -668,6 +694,11 @@ export default function FiltersPage() {
                 onCancel={handleCancel}
                 saving={saving}
               />
+              {saveError && (
+                <p className="px-4 pb-4 text-[12px] text-[rgb(var(--color-system-red))]">
+                  {saveError}
+                </p>
+              )}
             </motion.div>
           )}
         </AnimatePresence>

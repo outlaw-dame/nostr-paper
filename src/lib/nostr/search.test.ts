@@ -40,6 +40,14 @@ describe('parseSearchQuery', () => {
 
     expect(parsed.relayQuery?.length).toBe(512)
   })
+
+  it('normalizes hashtag queries into local keyword terms', () => {
+    const parsed = parseSearchQuery('#Apple')
+
+    expect(parsed.relayQuery).toBe('#Apple')
+    expect(parsed.localQuery).toBe('Apple')
+    expect(parsed.domains).toEqual([])
+  })
 })
 
 describe('sanitizeFts5Query', () => {

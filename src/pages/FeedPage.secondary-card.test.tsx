@@ -147,6 +147,17 @@ vi.mock('@/components/translation/TranslateTextPanel', () => ({
   TranslateTextPanel: () => null,
 }))
 
+vi.mock('@/hooks/useVisibilityOnce', () => ({
+  useVisibilityOnce: () => ({
+    ref: { current: null },
+    visible: true,
+  }),
+}))
+
+vi.mock('@/hooks/useSelfThreadIndex', () => ({
+  useSelfThreadIndex: () => null,
+}))
+
 function baseEvent(overrides: Partial<NostrEvent> = {}): NostrEvent {
   return {
     id: 'a'.repeat(64),
@@ -190,7 +201,7 @@ describe('SecondaryCard', () => {
     expect(html).toContain('src="https://techcrunch.com/hero.jpg"')
   })
 
-  it('renders playable video previews and external bylines for video cards', () => {
+  it('renders embeddable video previews and external bylines for video cards', () => {
     const event = baseEvent({
       kind: Kind.Video,
       content: '',
@@ -218,9 +229,8 @@ describe('SecondaryCard', () => {
       </MemoryRouter>,
     )
 
-    expect(html).toContain('<video')
-    expect(html).toContain('src="https://video.example.com/demo.mp4"')
-    expect(html).toContain('poster="https://video.example.com/poster.jpg"')
+    expect(html).toContain('<iframe')
+    expect(html).toContain('youtube-nocookie.com/embed/launch-demo')
     expect(html).toContain('By Studio Channel • youtube.com')
   })
 })

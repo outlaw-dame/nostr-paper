@@ -18,9 +18,11 @@ import { AuthorRow } from '@/components/profile/AuthorRow'
 import { NoteContent } from '@/components/cards/NoteContent'
 import { NoteMediaAttachments } from '@/components/nostr/NoteMediaAttachments'
 import { PollPreview } from '@/components/nostr/PollPreview'
+import { ThreadIndexBadge } from '@/components/nostr/ThreadIndexBadge'
 import { useModerationDocuments } from '@/hooks/useModeration'
 import { useSearch } from '@/hooks/useSearch'
 import { useProfile } from '@/hooks/useProfile'
+import { useSelfThreadIndex } from '@/hooks/useSelfThreadIndex'
 import { useMuteList } from '@/hooks/useMuteList'
 import { useTrendingTopics } from '@/hooks/useTrendingTopics'
 import { usePopularProfiles } from '@/hooks/usePopularProfiles'
@@ -366,6 +368,7 @@ function ProfileResult({ profile }: { profile: Profile }) {
 
 function EventResult({ event }: { event: NostrEvent }) {
   const { profile } = useProfile(event.pubkey, { background: false })
+  const threadIndex = useSelfThreadIndex(event)
   const article = parseLongFormEvent(event)
   const poll = parsePollEvent(event)
   const video = parseVideoEvent(event)
@@ -400,6 +403,8 @@ function EventResult({ event }: { event: NostrEvent }) {
             {article?.title ?? video?.title ?? thread?.title}
           </h3>
         )}
+
+        <ThreadIndexBadge threadIndex={threadIndex} className="mt-3" />
 
         {poll ? (
           <PollPreview poll={poll} className="mt-3" />

@@ -546,7 +546,7 @@ export function getMediaAttachmentPreviewUrl(attachment: Nip92MediaAttachment): 
   // and prevents images from degrading to generic file cards.
   if (kind === 'image') {
     const sourceUrl = getMediaAttachmentSourceUrl(attachment)
-    if (sourceUrl && isSafeMediaURL(sourceUrl)) {
+    if (sourceUrl && isLikelyRenderableImageUrl(sourceUrl)) {
       return sourceUrl
     }
   }

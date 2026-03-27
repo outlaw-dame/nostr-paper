@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { VideoBody } from '@/components/video/VideoBody'
+import { useFilterOverride } from '@/hooks/useFilterOverride'
+import { mergeResults, useEventFilterCheck, useSemanticFiltering } from '@/hooks/useKeywordFilters'
 import { useEventModeration, useModerationDocuments } from '@/hooks/useModeration'
 import { useMuteList } from '@/hooks/useMuteList'
 import { usePageHead } from '@/hooks/usePageHead'
@@ -78,8 +80,15 @@ export default function VideoPage() {
   const [error, setError] = useState<string | null>(null)
   const [override, setOverride] = useState(false)
   const { profile } = useProfile(event?.pubkey)
+  const checkEvent = useEventFilterCheck()
+  const semanticFilterResults = useSemanticFiltering(event ? [event] : [])
+  const { overridden: filterOverride, setOverridden: setFilterOverride } = useFilterOverride(event?.id)
   const video = useMemo(() => (event ? parseVideoEvent(event) : null), [event])
-  const { blocked: eventBlocked, loading: moderationLoading } = useEventModeration(event)
+  const {
+    blocked: eventBlocked,
+    loading: moderationLoading,
+    decision: moderationDecision,
+  } = useEventModeration(event)
 
   const videoMetaDocuments = useMemo(() => {
     if (!video) return []
@@ -94,13 +103,25 @@ export default function VideoPage() {
   }, [video, event])
   const { allowedIds: allowedMetaIds, loading: metaModerationLoading } = useModerationDocuments(videoMetaDocuments)
   const metaBlocked = videoMetaDocuments.length > 0 && !allowedMetaIds.has(videoMetaDocuments[0]?.id ?? '')
+  const keywordFilterResult = useMemo(
+    () => event
+      ? mergeResults(
+          checkEvent(event, profile ?? undefined),
+          semanticFilterResults.get(event.id) ?? { action: null, matches: [] },
+        )
+      : { action: null, matches: [] },
+    [checkEvent, event, profile, semanticFilterResults],
+  )
 
   const { isMuted, loading: muteListLoading } = useMuteList()
   const isMutedAuthor = event ? isMuted(event.pubkey) : false
   const isBlocked = eventBlocked || metaBlocked || isMutedAuthor
+  const keywordGated = keywordFilterResult.action !== null && !filterOverride
+  const keywordHidden = keywordFilterResult.action === 'hide'
+  const blockedByTagr = eventBlocked && (moderationDecision?.reason?.startsWith('tagr:') ?? false)
 
   usePageHead(
-    video && !moderationLoading && !metaModerationLoading && (!isBlocked || override)
+    video && !moderationLoading && !metaModerationLoading && (!isBlocked || override) && !keywordGated
       ? {
           title: buildVideoTitle(video),
           tags: buildVideoMetaTags({ video, profile }),
@@ -258,7 +279,7 @@ export default function VideoPage() {
     )
   }
 
-  if (!event || !video || (isBlocked && !override)) {
+  if (!event || !video || ((isBlocked && !override) || keywordGated)) {
     return (
       <div className="min-h-dvh bg-[rgb(var(--color-bg))] px-4 pt-safe pb-safe">
         <div className="sticky top-0 z-10 bg-[rgb(var(--color-bg)/0.88)] py-4 backdrop-blur-xl">
@@ -272,16 +293,31 @@ export default function VideoPage() {
         </div>
         <div className="pt-6">
           <h1 className="text-[28px] font-semibold tracking-[-0.03em] text-[rgb(var(--color-label))]">
-            {isBlocked ? 'Content hidden' : 'Video unavailable'}
+            {isBlocked || keywordHidden ? 'Content hidden' : keywordGated ? 'Content warning' : 'Video unavailable'}
           </h1>
-          {isBlocked ? (
+          {isBlocked || keywordGated ? (
             <>
               <p className="mt-3 text-[16px] leading-7 text-[rgb(var(--color-label-secondary))]">
-                This video was hidden by your content filters or mute list.
+                {isBlocked
+                  ? 'This video was hidden by your content filters or mute list.'
+                  : 'This video matched your keyword filters.'}
               </p>
+              {!isBlocked && keywordFilterResult.matches[0]?.term ? (
+                <p className="mt-2 text-[14px] text-[rgb(var(--color-label-secondary))]">
+                  Matched filter: &ldquo;{keywordFilterResult.matches[0].term}&rdquo;.
+                </p>
+              ) : null}
+              {blockedByTagr ? (
+                <p className="mt-2 text-[14px] font-medium text-[rgb(var(--color-system-red))]">
+                  Blocked by Tagr.
+                </p>
+              ) : null}
               <button
                 type="button"
-                onClick={() => setOverride(true)}
+                onClick={() => {
+                  if (isBlocked) setOverride(true)
+                  if (keywordGated) setFilterOverride(true)
+                }}
                 className="mt-4 rounded-full bg-[rgb(var(--color-fill)/0.12)] px-4 py-2 text-[15px] font-medium text-[rgb(var(--color-label))]"
               >
                 Show Anyway
