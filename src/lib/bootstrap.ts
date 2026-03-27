@@ -2,10 +2,13 @@
  * App Bootstrap
  *
  * Initializes the full application stack in correct order:
- * 1. COI Service Worker (COOP/COEP headers for OPFS)
- * 2. Storage persistence request
- * 3. SQLite DB (WASM + OPFS)
- * 4. NDK (relay connections)
+ * 1. Storage persistence request
+ * 2. SQLite DB (WASM + OPFS)
+ * 3. NDK (relay connections)
+ *
+ * Cross-origin isolation comes from host headers or the root PWA service
+ * worker on a subsequent navigation. On the very first visit without those
+ * headers already present, the app falls back gracefully until the next load.
  *
  * Returns a typed Result so callers can handle partial failures.
  */

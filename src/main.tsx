@@ -2,9 +2,8 @@
  * Application Entry Point
  *
  * Boot order:
- * 1. coi-serviceworker activates via <script> in index.html (COOP/COEP for OPFS)
- * 2. PWA service worker registered here (offline caching, update prompts)
- * 3. React app rendered
+ * 1. PWA service worker registered here (offline caching, update prompts)
+ * 2. React app rendered
  *
  * All heavy initialization (DB, NDK) happens inside AppProvider.
  */
@@ -16,7 +15,6 @@ import { isLocalDevelopmentHost } from '@/lib/runtime/localhost'
 import App from './App'
 import './styles/global.css'
 
-const LOCAL_SW_RESET_KEY = 'nostr-paper:local-sw-reset'
 const shouldRegisterServiceWorker = !isLocalDevelopmentHost(window.location.hostname)
 
 document.documentElement.dataset.theme = 'light'
@@ -25,26 +23,14 @@ async function disableLocalServiceWorkers(): Promise<void> {
   if (!('serviceWorker' in navigator)) return
 
   const registrations = await navigator.serviceWorker.getRegistrations()
-  if (registrations.length === 0) {
-    sessionStorage.removeItem(LOCAL_SW_RESET_KEY)
-    return
-  }
+  if (registrations.length === 0) return
 
   await Promise.all(
     registrations.map((registration) => registration.unregister().catch(() => false)),
   )
 
-  if (
-    navigator.serviceWorker.controller &&
-    sessionStorage.getItem(LOCAL_SW_RESET_KEY) !== '1'
-  ) {
-    sessionStorage.setItem(LOCAL_SW_RESET_KEY, '1')
-    window.location.reload()
-    return
-  }
-
-  if (!navigator.serviceWorker.controller) {
-    sessionStorage.removeItem(LOCAL_SW_RESET_KEY)
+  if (navigator.serviceWorker.controller) {
+    console.info('[PWA] Local service workers unregistered; active controller will detach on next navigation.')
   }
 }
 
