@@ -14,6 +14,7 @@
  */
 
 import type { OGData } from './types'
+import { checkSafeBrowsingURL } from '@/lib/security/safeBrowsing'
 
 // ── Configuration ─────────────────────────────────────────────
 
@@ -94,7 +95,11 @@ export async function fetchOGData(url: string): Promise<OGData | null> {
   const existing = inflight.get(url)
   if (existing) return existing
 
-  const promise = doFetch(url).then(result => {
+  const promise = (async () => {
+    const safe = await checkSafeBrowsingURL(url)
+    if (!safe) return null
+    return doFetch(url)
+  })().then(result => {
     evictIfNeeded()
     cache.set(url, result)
     inflight.delete(url)

@@ -85,6 +85,25 @@ npm run dev
 
 Open `http://localhost:5173`. The app requires HTTPS in production for full PWA features; `localhost` is treated as a secure context by all modern browsers.
 
+### Google Safe Browsing (URL threat checks)
+
+This project supports Google Safe Browsing checks before fetching Open Graph previews.
+
+1. Copy [.env.example](.env.example) to `.env.local`.
+2. Set `GOOGLE_SAFE_BROWSING_API_KEY` for local dev proxy checks.
+3. Frontend defaults to same-origin `POST /api/safe-browsing/check`.
+4. In Vite dev, that path proxies to `http://127.0.0.1:7080/safe-browsing/check` by default.
+5. Optional: set `SAFE_BROWSING_BACKEND_ORIGIN` to change the dev proxy backend origin.
+6. Optional: set `VITE_SAFE_BROWSING_PROXY_URL` to fully override the frontend endpoint.
+
+If you use the bundled Python server, the endpoint is:
+
+```text
+POST /safe-browsing/check
+```
+
+and it reads `GOOGLE_SAFE_BROWSING_API_KEY` from environment variables.
+
 ### Build
 
 ```bash

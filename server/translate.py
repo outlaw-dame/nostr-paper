@@ -23,20 +23,35 @@ Environment variables:
 """
 
 import argparse
+import ipaddress
+import json
 import logging
 import os
+import urllib.error
+import urllib.parse
+import urllib.request
 from contextlib import asynccontextmanager
 
-import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+
+try:
+    import torch
+    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+    _HAS_TRANSLATION_DEPS = True
+except Exception:  # noqa: BLE001
+    torch = None
+    AutoTokenizer = None
+    AutoModelForSeq2SeqLM = None
+    _HAS_TRANSLATION_DEPS = False
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
 MODEL_ID = "alirezamsh/small100"
+SAFE_BROWSING_ENDPOINT = "https://safebrowsing.googleapis.com/v4/threatMatches:find"
+SAFE_BROWSING_TIMEOUT_SECONDS = 8
 
 # ISO 639-1 subset supported by SMaLL-100 (FLORES-200 superset).
 # Clients send 2-letter codes; the tokenizer handles the mapping internally.
@@ -68,9 +83,48 @@ _model = None
 _device = "cpu"
 
 
+def _is_public_http_url(value: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(value)
+    except Exception:  # noqa: BLE001
+        return False
+
+    if parsed.scheme not in ("http", "https"):
+        return False
+
+    hostname = (parsed.hostname or "").strip().lower()
+    if not hostname:
+        return False
+
+    if hostname in ("localhost", "127.0.0.1", "::1"):
+        return False
+
+    try:
+        ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        return True
+
+    return not (
+        ip.is_private or
+        ip.is_loopback or
+        ip.is_link_local or
+        ip.is_multicast or
+        ip.is_reserved or
+        ip.is_unspecified
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
     global _tokenizer, _model, _device
+    if not _HAS_TRANSLATION_DEPS:
+        log.warning("Translation dependencies are not installed; /translate endpoints will return 503.")
+        _device = "unavailable"
+        _tokenizer = None
+        _model = None
+        yield
+        return
+
     _device = os.environ.get("TRANSLATE_DEVICE") or (
         "cuda" if torch.cuda.is_available() else
         "mps" if torch.backends.mps.is_available() else
@@ -122,6 +176,22 @@ class TranslateRequest(BaseModel):
         return code
 
 
+class SafeBrowsingCheckRequest(BaseModel):
+    url: str
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, v: str) -> str:
+        value = v.strip()
+        if not value:
+            raise ValueError("url must not be empty")
+        if len(value) > 2_048:
+            raise ValueError("url exceeds 2048 character limit")
+        if not _is_public_http_url(value):
+            raise ValueError("url must be a public http(s) URL")
+        return value
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "model": "small100", "device": _device}
@@ -170,6 +240,71 @@ def translate(req: TranslateRequest):
     return {
         "translation": translation.strip(),
         "detected_source_lang": None if src == "auto" else src,
+    }
+
+
+@app.post("/safe-browsing/check")
+def safe_browsing_check(req: SafeBrowsingCheckRequest):
+    api_key = os.environ.get("GOOGLE_SAFE_BROWSING_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(503, "Safe Browsing API key is not configured")
+
+    upstream_url = f"{SAFE_BROWSING_ENDPOINT}?key={urllib.parse.quote_plus(api_key)}"
+    payload = {
+        "client": {
+            "clientId": "nostr-paper",
+            "clientVersion": "0.1.0",
+        },
+        "threatInfo": {
+            "threatTypes": [
+                "MALWARE",
+                "SOCIAL_ENGINEERING",
+                "UNWANTED_SOFTWARE",
+                "POTENTIALLY_HARMFUL_APPLICATION",
+            ],
+            "platformTypes": ["ANY_PLATFORM"],
+            "threatEntryTypes": ["URL"],
+            "threatEntries": [{"url": req.url}],
+        },
+    }
+
+    request = urllib.request.Request(
+        upstream_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=SAFE_BROWSING_TIMEOUT_SECONDS) as response:
+            body = response.read(256_000)
+            parsed = json.loads(body.decode("utf-8")) if body else {}
+    except urllib.error.HTTPError as exc:
+        details = exc.read(4_096).decode("utf-8", errors="ignore")
+        log.warning("Safe Browsing upstream HTTP error: %s %s", exc.code, details[:200])
+        raise HTTPException(502, "Safe Browsing upstream HTTP error") from exc
+    except urllib.error.URLError as exc:
+        log.warning("Safe Browsing upstream request failed: %s", exc.reason)
+        raise HTTPException(502, "Safe Browsing upstream request failed") from exc
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Safe Browsing check failed")
+        raise HTTPException(500, "Safe Browsing check failed") from exc
+
+    matches = parsed.get("matches") if isinstance(parsed, dict) else None
+    threat_types = []
+    if isinstance(matches, list):
+        for item in matches[:8]:
+            if isinstance(item, dict) and isinstance(item.get("threatType"), str):
+                threat_types.append(item["threatType"])
+            else:
+                threat_types.append("UNKNOWN")
+
+    return {
+        "safe": len(threat_types) == 0,
+        "threat_types": threat_types,
     }
 
 

@@ -1,6 +1,14 @@
 /// <reference types="vite/client" />
 /// <reference types="vite-plugin-pwa/client" />
 
+interface ImportMetaEnv {
+  readonly VITE_SAFE_BROWSING_PROXY_URL?: string
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv
+}
+
 interface NostrNip04Api {
   encrypt(pubkey: string, plaintext: string): Promise<string>
   decrypt(pubkey: string, ciphertext: string): Promise<string>

@@ -26,6 +26,11 @@ const DEV_OG_TIMEOUT_MS    = 10_000
 const DEV_OG_MAX_BYTES     = 512_000   // Only need <head>, stop early
 const DEV_OG_MAX_REDIRECTS = 3
 
+// ── Safe Browsing Proxy ───────────────────────────────────────
+const DEV_SAFE_BROWSING_PROXY_PATH = '/__dev/safe-browsing'
+const DEV_SAFE_BROWSING_TIMEOUT_MS = 8_000
+const GOOGLE_SAFE_BROWSING_ENDPOINT = 'https://safebrowsing.googleapis.com/v4/threatMatches:find'
+
 // ── Media Fetch Proxy ────────────────────────────────────────
 const DEV_MEDIA_PROXY_PATH = '/__dev/media-fetch'
 const DEV_MEDIA_PROXY_TIMEOUT_MS = 12_000
@@ -38,6 +43,7 @@ const DEV_FEED_PROXY_TIMEOUT_MS = 12_000
 const DEV_FEED_PROXY_MAX_BYTES = 1 * 1024 * 1024
 const DEV_FEED_PROXY_MAX_REDIRECTS = 3
 const ENABLE_LOCAL_CROSS_ORIGIN_ISOLATION = process.env.VITE_ENABLE_LOCAL_COI === 'true'
+const SAFE_BROWSING_BACKEND_ORIGIN = (process.env.SAFE_BROWSING_BACKEND_ORIGIN ?? 'http://127.0.0.1:7080').trim()
 const LOCAL_CROSS_ORIGIN_ISOLATION_HEADERS = ENABLE_LOCAL_CROSS_ORIGIN_ISOLATION
   ? {
       'Cross-Origin-Opener-Policy': 'same-origin',
@@ -360,6 +366,132 @@ function ogDevProxyPlugin() {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')
           res.setHeader('Cache-Control', 'no-store')
           res.end(JSON.stringify({ error: isTimeout ? 'OG proxy timeout' : 'OG proxy request failed' }))
+        }
+      })
+    },
+  }
+}
+
+function safeBrowsingDevProxyPlugin() {
+  return {
+    name: 'safe-browsing-dev-proxy',
+    configureServer(server: import('vite').ViteDevServer) {
+      server.middlewares.use(async (req, res, next) => {
+        if (!req.url?.startsWith(DEV_SAFE_BROWSING_PROXY_PATH)) {
+          next()
+          return
+        }
+
+        if (req.method === 'OPTIONS') {
+          res.statusCode = 204
+          res.setHeader('Access-Control-Allow-Origin', req.headers.origin ?? '*')
+          res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+          res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept')
+          res.end()
+          return
+        }
+
+        if (req.method !== 'POST') {
+          jsonResponse(res, 405, { error: 'Method Not Allowed' }, req.headers.origin)
+          return
+        }
+
+        const apiKey = (process.env.GOOGLE_SAFE_BROWSING_API_KEY ?? '').trim()
+        if (!apiKey) {
+          jsonResponse(res, 503, { error: 'Safe Browsing API key not configured' }, req.headers.origin)
+          return
+        }
+
+        const body = await readJsonRequestBody(req).catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : 'Invalid JSON request body'
+          jsonResponse(res, 400, { error: message }, req.headers.origin)
+          return null
+        })
+
+        if (!body) return
+        if (typeof body !== 'object' || Array.isArray(body) || body === null) {
+          jsonResponse(res, 400, { error: 'Invalid Safe Browsing payload' }, req.headers.origin)
+          return
+        }
+
+        const rawUrl = typeof (body as Record<string, unknown>).url === 'string'
+          ? (body as Record<string, string>).url.trim()
+          : ''
+
+        let targetUrl: URL
+        try {
+          targetUrl = new URL(rawUrl)
+        } catch {
+          jsonResponse(res, 400, { error: 'Invalid URL parameter' }, req.headers.origin)
+          return
+        }
+
+        if (!isAllowedOGTarget(targetUrl)) {
+          jsonResponse(res, 403, { error: 'Target URL not allowed' }, req.headers.origin)
+          return
+        }
+
+        const payload = {
+          client: {
+            clientId: 'nostr-paper',
+            clientVersion: '0.1.0',
+          },
+          threatInfo: {
+            threatTypes: [
+              'MALWARE',
+              'SOCIAL_ENGINEERING',
+              'UNWANTED_SOFTWARE',
+              'POTENTIALLY_HARMFUL_APPLICATION',
+            ],
+            platformTypes: ['ANY_PLATFORM'],
+            threatEntryTypes: ['URL'],
+            threatEntries: [{ url: targetUrl.href }],
+          },
+        }
+
+        const endpoint = `${GOOGLE_SAFE_BROWSING_ENDPOINT}?key=${encodeURIComponent(apiKey)}`
+
+        try {
+          const upstream = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+            redirect: 'error',
+            signal: AbortSignal.timeout(DEV_SAFE_BROWSING_TIMEOUT_MS),
+          })
+
+          const responseJson = await upstream.json().catch(() => ({})) as { matches?: Array<{ threatType?: string }> }
+          if (!upstream.ok) {
+            jsonResponse(res, 502, { error: 'Safe Browsing upstream request failed' }, req.headers.origin)
+            return
+          }
+
+          const matches = Array.isArray(responseJson.matches) ? responseJson.matches : []
+          const threatTypes = matches
+            .map((match) => (typeof match?.threatType === 'string' ? match.threatType : 'UNKNOWN'))
+            .slice(0, 8)
+
+          jsonResponse(
+            res,
+            200,
+            {
+              safe: threatTypes.length === 0,
+              threatTypes,
+            },
+            req.headers.origin,
+            'no-store',
+          )
+        } catch (error) {
+          const isTimeout = error instanceof DOMException && error.name === 'TimeoutError'
+          jsonResponse(
+            res,
+            isTimeout ? 504 : 502,
+            { error: isTimeout ? 'Safe Browsing timeout' : 'Safe Browsing proxy request failed' },
+            req.headers.origin,
+          )
         }
       })
     },
@@ -1077,6 +1209,7 @@ export default defineConfig(({ mode }) => {
       translationDevProxyPlugin(),
       lingvaDevProxyPlugin(),
       nip05DevProxyPlugin(),
+      safeBrowsingDevProxyPlugin(),
       ogDevProxyPlugin(),
       mediaFetchDevProxyPlugin(),
       feedDevProxyPlugin(),
@@ -1146,9 +1279,17 @@ export default defineConfig(({ mode }) => {
     assetsInclude: ['**/*.wasm'],
 
     server: {
+      host: '0.0.0.0',
       port: 5173,
       strictPort: false,
       headers: LOCAL_CROSS_ORIGIN_ISOLATION_HEADERS,
+      proxy: {
+        '/api/safe-browsing/check': {
+          target: SAFE_BROWSING_BACKEND_ORIGIN,
+          changeOrigin: true,
+          rewrite: (path) => path.replace('/api/safe-browsing/check', '/safe-browsing/check'),
+        },
+      },
       fs: {
         allow: ['..'],
       },

@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:host": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "precompress": "node scripts/precompress.mjs",
     "precompress:zstd": "node scripts/precompress.mjs --zstd",
@@ -18,7 +19,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "analyze": "vite build --mode analyze"
+    "analyze": "vite build --mode analyze",
+    "api:safe": "set -a && source .env.local && set +a && .venv/bin/python server/translate.py --host 0.0.0.0 --port 7080"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
