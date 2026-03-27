@@ -9,6 +9,7 @@ import { SyndicationExportBar } from '@/components/syndication/SyndicationExport
 import { TwemojiText } from '@/components/ui/TwemojiText'
 import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
+import { recordMediaUrlFailure, recordMediaUrlSuccess, shouldAttemptMediaUrl } from '@/lib/media/failureBackoff'
 import { getMediaPlaybackProfileLabel, rankVideoPlaybackCandidates } from '@/lib/media/playback'
 import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import { parseContentWarning } from '@/lib/nostr/contentWarning'
@@ -82,10 +83,10 @@ export function VideoBody({ event, profile, className = '' }: VideoBodyProps) {
     () => (video ? rankVideoPlaybackCandidates(video.variants) : []),
     [video],
   )
-  const previewImage = useMemo(
-    () => (video ? getVideoPreviewImage(video) : undefined),
-    [video],
-  )
+  const previewImage = useMemo(() => {
+    const url = video ? getVideoPreviewImage(video) : undefined
+    return url && shouldAttemptMediaUrl(url) ? url : undefined
+  }, [video])
   const mediaModerationDocument = useMemo(
     () => buildMediaModerationDocument({
       id: `${event.id}:video`,
@@ -134,7 +135,10 @@ export function VideoBody({ event, profile, className = '' }: VideoBodyProps) {
 
   const selectedPlan = variantPlans.find((plan) => plan.candidate.url === selectedUrl) ?? variantPlans[0] ?? null
   const selectedVariant = selectedPlan?.candidate ?? null
-  const selectedSources = selectedPlan?.sources ?? []
+  const selectedSources = useMemo(
+    () => (selectedPlan?.sources ?? []).filter((source) => shouldAttemptMediaUrl(source.url)),
+    [selectedPlan],
+  )
   const requiresReveal = contentWarning !== null || followStatus === false
   const isAudioVariant = (selectedVariant?.mimeType ?? '').startsWith('audio/')
   const trackSources = video.textTracks.filter(track => isSafeURL(track.reference))
@@ -228,6 +232,12 @@ export function VideoBody({ event, profile, className = '' }: VideoBodyProps) {
                 loading="lazy"
                 decoding="async"
                 referrerPolicy="no-referrer"
+                onLoad={() => {
+                  recordMediaUrlSuccess(previewImage)
+                }}
+                onError={() => {
+                  recordMediaUrlFailure(previewImage)
+                }}
                 className="aspect-video h-full w-full object-cover blur-2xl brightness-[0.55]"
               />
             ) : (
@@ -259,6 +269,12 @@ export function VideoBody({ event, profile, className = '' }: VideoBodyProps) {
                 loading="lazy"
                 decoding="async"
                 referrerPolicy="no-referrer"
+                onLoad={() => {
+                  recordMediaUrlSuccess(previewImage)
+                }}
+                onError={() => {
+                  recordMediaUrlFailure(previewImage)
+                }}
                 className="aspect-video w-full rounded-[18px] object-cover"
               />
             )}
@@ -267,6 +283,12 @@ export function VideoBody({ event, profile, className = '' }: VideoBodyProps) {
               ref={mediaRef as MutableRefObject<HTMLAudioElement | null>}
               controls
               preload="metadata"
+              onLoadedData={() => {
+                selectedSources.forEach((source) => recordMediaUrlSuccess(source.url))
+              }}
+              onError={() => {
+                selectedSources.forEach((source) => recordMediaUrlFailure(source.url))
+              }}
               className="w-full"
             >
               {selectedSources.map((source) => (
@@ -282,6 +304,12 @@ export function VideoBody({ event, profile, className = '' }: VideoBodyProps) {
             playsInline
             preload="metadata"
             poster={previewImage}
+            onLoadedData={() => {
+              selectedSources.forEach((source) => recordMediaUrlSuccess(source.url))
+            }}
+            onError={() => {
+              selectedSources.forEach((source) => recordMediaUrlFailure(source.url))
+            }}
             className="aspect-video w-full bg-black object-contain"
           >
             {selectedSources.map((source) => (
@@ -347,14 +375,26 @@ export function VideoBody({ event, profile, className = '' }: VideoBodyProps) {
                 "
               >
                 {segment.thumbnail ? (
-                  <img
-                    src={segment.thumbnail}
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                    referrerPolicy="no-referrer"
-                    className="h-14 w-24 shrink-0 rounded-[12px] object-cover"
-                  />
+                  shouldAttemptMediaUrl(segment.thumbnail) ? (
+                    <img
+                      src={segment.thumbnail}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                      referrerPolicy="no-referrer"
+                      onLoad={() => {
+                        recordMediaUrlSuccess(segment.thumbnail)
+                      }}
+                      onError={() => {
+                        recordMediaUrlFailure(segment.thumbnail)
+                      }}
+                      className="h-14 w-24 shrink-0 rounded-[12px] object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-14 w-24 shrink-0 items-center justify-center rounded-[12px] bg-[rgb(var(--color-fill)/0.08)] text-[12px] text-[rgb(var(--color-label-tertiary))]">
+                      {segment.start}
+                    </div>
+                  )
                 ) : (
                   <div className="flex h-14 w-24 shrink-0 items-center justify-center rounded-[12px] bg-[rgb(var(--color-fill)/0.08)] text-[12px] text-[rgb(var(--color-label-tertiary))]">
                     {segment.start}

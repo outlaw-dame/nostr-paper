@@ -44,6 +44,7 @@ import { useActivityUnread } from '@/hooks/useActivityUnread'
 import { useSelfThreadIndex } from '@/hooks/useSelfThreadIndex'
 import { useVisibilityOnce } from '@/hooks/useVisibilityOnce'
 import { useEventFilterCheck, useSemanticFiltering, mergeResults } from '@/hooks/useKeywordFilters'
+import { recordMediaUrlFailure, recordMediaUrlSuccess, shouldAttemptMediaUrl } from '@/lib/media/failureBackoff'
 import { buildComposeSearch } from '@/lib/compose'
 import { collectRepostCarouselItems } from '@/lib/feed/reposts'
 import { getFeedHeaderSection } from '@/lib/feed/headerSection'
@@ -58,7 +59,7 @@ import {
   type TagTimelineSpec,
 } from '@/lib/feed/tagTimeline'
 import { FEED_RESUME_UPDATED_EVENT, getFeedResumeEnabled } from '@/lib/feed/resumeSettings'
-import { getRepostCarouselVisible, ZEN_SETTINGS_UPDATED_EVENT } from '@/lib/ui/zenSettings'
+import { getFeedInlineMediaAutoplayEnabled, getRepostCarouselVisible, ZEN_SETTINGS_UPDATED_EVENT } from '@/lib/ui/zenSettings'
 import { filterNsfwTaggedEvents } from '@/lib/moderation/nsfwTags'
 import { buildEventModerationDocument } from '@/lib/moderation/content'
 import { parseRepostEvent } from '@/lib/nostr/repost'
@@ -350,6 +351,7 @@ export default function FeedPage() {
   }, [routeSection, savedTagSections])
   const [activeSectionId, setActiveSectionId] = useState(DEFAULT_SECTIONS[0]!.id)
   const [repostCarouselVisible, setRepostCarouselVisible] = useState(true)
+  const [feedInlineAutoplayEnabled, setFeedInlineAutoplayEnabled] = useState(true)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const restoreCompletedRef = useRef(false)
   const rafSaveRef = useRef<number | null>(null)
@@ -672,17 +674,20 @@ export default function FeedPage() {
   useEffect(() => {
     const scopeId = currentUser?.pubkey ?? 'anon'
     setRepostCarouselVisible(getRepostCarouselVisible(scopeId))
+    setFeedInlineAutoplayEnabled(getFeedInlineMediaAutoplayEnabled(scopeId))
 
     const onUpdated = (event: Event) => {
       const customEvent = event as CustomEvent<{ scopeId?: string }>
       if ((customEvent.detail?.scopeId ?? 'anon') !== scopeId) return
       setRepostCarouselVisible(getRepostCarouselVisible(scopeId))
+      setFeedInlineAutoplayEnabled(getFeedInlineMediaAutoplayEnabled(scopeId))
     }
 
     const onStorage = (storageEvent: StorageEvent) => {
       if (!storageEvent.key) return
       if (!storageEvent.key.endsWith(`:${scopeId}`)) return
       setRepostCarouselVisible(getRepostCarouselVisible(scopeId))
+      setFeedInlineAutoplayEnabled(getFeedInlineMediaAutoplayEnabled(scopeId))
     }
 
     window.addEventListener(ZEN_SETTINGS_UPDATED_EVENT, onUpdated as EventListener)
@@ -920,6 +925,7 @@ export default function FeedPage() {
                       index={i}
                       checkEvent={checkEvent}
                       semanticResult={semanticResults.get(event.id) ?? { action: null, matches: [] }}
+                      feedInlineAutoplayEnabled={feedInlineAutoplayEnabled}
                     />
                   ))}
                 </AnimatePresence>
@@ -939,9 +945,10 @@ interface SecondaryCardProps {
   index: number
   checkEvent: (event: NostrEvent, profile?: Profile) => FilterCheckResult
   semanticResult: FilterCheckResult
+  feedInlineAutoplayEnabled: boolean
 }
 
-export function SecondaryCard({ event, index, checkEvent, semanticResult }: SecondaryCardProps) {
+export function SecondaryCard({ event, index, checkEvent, semanticResult, feedInlineAutoplayEnabled }: SecondaryCardProps) {
   const navigate = useNavigate()
   const { profile } = useProfile(event.pubkey, { background: false })
   const threadIndex = useSelfThreadIndex(event)
@@ -1014,6 +1021,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult }: Seco
             isSensitive={contentWarning !== null}
             sensitiveReason={contentWarning?.reason}
             isUnfollowed={followStatus === false}
+            feedInlineAutoplayEnabled={feedInlineAutoplayEnabled}
           />
         )}
 
@@ -1078,7 +1086,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult }: Seco
             <QuotePreviewList event={event} className="mt-3" compact linked={false} maxItems={1} />
           </>
         ) : null}
-        <EventMetricsRow event={event} />
+        <EventMetricsRow event={event} interactive />
       </motion.div>
     </FilteredGate>
   )
@@ -1093,6 +1101,37 @@ interface RichStoryMediaProps {
   isSensitive: boolean
   sensitiveReason: string | null | undefined
   isUnfollowed: boolean
+  feedInlineAutoplayEnabled: boolean
+}
+
+const FEED_INLINE_MEDIA_CIRCUIT_OPEN_EVENT = 'paper:feed-inline-media-circuit-open'
+const FEED_INLINE_MEDIA_FAILURE_THRESHOLD = 3
+let feedInlineMediaAutoplayFailures = 0
+let feedInlineMediaAutoplayCircuitOpen = false
+
+function recordFeedInlineMediaAutoplayFailure(): void {
+  if (feedInlineMediaAutoplayCircuitOpen) return
+
+  feedInlineMediaAutoplayFailures += 1
+  if (feedInlineMediaAutoplayFailures < FEED_INLINE_MEDIA_FAILURE_THRESHOLD) return
+
+  feedInlineMediaAutoplayCircuitOpen = true
+  window.dispatchEvent(new Event(FEED_INLINE_MEDIA_CIRCUIT_OPEN_EVENT))
+}
+
+function markInlineAutoplaySourcesFailed(
+  currentSrc: string,
+  sources: Array<{ url: string }>,
+) {
+  if (currentSrc) {
+    recordMediaUrlFailure(currentSrc)
+  }
+
+  sources.forEach((source) => {
+    if (source.url !== currentSrc) {
+      recordMediaUrlFailure(source.url)
+    }
+  })
 }
 
 function RichStoryMedia({
@@ -1104,13 +1143,39 @@ function RichStoryMedia({
   isSensitive,
   sensitiveReason,
   isUnfollowed,
+  feedInlineAutoplayEnabled,
 }: RichStoryMediaProps) {
+  const enableFeedInlineMedia = import.meta.env.VITE_ENABLE_FEED_INLINE_MEDIA === 'true' && feedInlineAutoplayEnabled
+  const [autoplayFailed, setAutoplayFailed] = useState(false)
+  const filteredPlaybackSources = useMemo(
+    () => (playbackSources ?? []).filter((source) => shouldAttemptMediaUrl(source.url)),
+    [playbackSources],
+  )
+
+  useEffect(() => {
+    setAutoplayFailed(false)
+  }, [video?.id])
+
+  useEffect(() => {
+    if (feedInlineMediaAutoplayCircuitOpen) {
+      setAutoplayFailed(true)
+      return undefined
+    }
+
+    const handleCircuitOpen = () => {
+      setAutoplayFailed(true)
+    }
+
+    window.addEventListener(FEED_INLINE_MEDIA_CIRCUIT_OPEN_EVENT, handleCircuitOpen)
+    return () => window.removeEventListener(FEED_INLINE_MEDIA_CIRCUIT_OPEN_EVENT, handleCircuitOpen)
+  }, [])
+
   const sourceCandidates = useMemo(
     () => [
       ...(video?.references ?? []),
-      ...((playbackSources ?? []).map((source) => source.url)),
+      ...(filteredPlaybackSources.map((source) => source.url)),
     ],
-    [playbackSources, video?.references],
+    [filteredPlaybackSources, video?.references],
   )
 
   const youTubeId = useMemo(() => {
@@ -1137,14 +1202,28 @@ function RichStoryMedia({
     return null
   }, [sourceCandidates])
 
-  const canAutoplayVideo = Boolean(video && (playbackSources?.length ?? 0) > 0 && !isSensitive && !isUnfollowed && !youTubeId && !vimeoId && !peertubeEmbed)
+  const canAutoplayVideo = Boolean(
+    enableFeedInlineMedia &&
+    video &&
+    filteredPlaybackSources.length > 0 &&
+    !isSensitive &&
+    !isUnfollowed &&
+    !youTubeId &&
+    !vimeoId &&
+    !peertubeEmbed &&
+    !feedInlineMediaAutoplayCircuitOpen &&
+    !autoplayFailed,
+  )
+  const { ref: mediaRef, visible: mediaVisible } = useVisibilityOnce<HTMLDivElement>({
+    rootMargin: '320px 0px',
+  })
   const imageSrc = articleImage ?? videoPoster
   const aspectClassName = video?.isShort ? 'aspect-[4/5]' : 'aspect-[16/9]'
   const label = isArticle ? 'Article' : video?.isShort ? 'Short video' : 'Video'
 
   return (
-    <div className={`relative mb-4 overflow-hidden rounded-[18px] bg-[rgb(var(--color-surface-secondary))] ${aspectClassName}`}>
-      {youTubeId ? (
+    <div ref={mediaRef} className={`relative mb-4 overflow-hidden rounded-[18px] bg-[rgb(var(--color-surface-secondary))] ${aspectClassName}`}>
+      {enableFeedInlineMedia && mediaVisible && youTubeId ? (
         <iframe
           src={`https://www.youtube-nocookie.com/embed/${youTubeId}?modestbranding=1&playsinline=1&rel=0`}
           className="h-full w-full"
@@ -1152,7 +1231,7 @@ function RichStoryMedia({
           allowFullScreen
           title="YouTube video"
         />
-      ) : vimeoId ? (
+      ) : enableFeedInlineMedia && mediaVisible && vimeoId ? (
         <iframe
           src={`https://player.vimeo.com/video/${vimeoId}?title=0&byline=0&portrait=0`}
           className="h-full w-full"
@@ -1160,7 +1239,7 @@ function RichStoryMedia({
           allowFullScreen
           title="Vimeo video"
         />
-      ) : peertubeEmbed ? (
+      ) : enableFeedInlineMedia && mediaVisible && peertubeEmbed ? (
         <iframe
           src={peertubeEmbed}
           className="h-full w-full"
@@ -1168,18 +1247,33 @@ function RichStoryMedia({
           allowFullScreen
           title="PeerTube video"
         />
-      ) : canAutoplayVideo ? (
+      ) : mediaVisible && canAutoplayVideo ? (
         <video
-          poster={videoPoster}
+          poster={videoPoster ?? undefined}
           muted
           playsInline
           autoPlay
           loop
-          preload="metadata"
+          preload="none"
+          onLoadedData={() => {
+            filteredPlaybackSources.forEach((source) => recordMediaUrlSuccess(source.url))
+          }}
+          onError={(mediaEvent) => {
+            const currentSrc = mediaEvent.currentTarget.currentSrc
+            markInlineAutoplaySourcesFailed(currentSrc, filteredPlaybackSources)
+            recordFeedInlineMediaAutoplayFailure()
+            setAutoplayFailed(true)
+          }}
+          onAbort={(mediaEvent) => {
+            const currentSrc = mediaEvent.currentTarget.currentSrc
+            markInlineAutoplaySourcesFailed(currentSrc, filteredPlaybackSources)
+            recordFeedInlineMediaAutoplayFailure()
+            setAutoplayFailed(true)
+          }}
           className="h-full w-full object-cover"
           aria-label={label}
         >
-          {playbackSources?.map((source) => (
+          {filteredPlaybackSources.map((source) => (
             <source
               key={`${source.url}:${source.type ?? 'unknown'}`}
               src={source.url}

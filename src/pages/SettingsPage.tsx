@@ -8,6 +8,7 @@ import { useUserStatus } from '@/hooks/useUserStatus'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { UserStatusBody } from '@/components/nostr/UserStatusBody'
 import { getFeedResumeEnabled, setFeedResumeEnabled } from '@/lib/feed/resumeSettings'
+import { getFeedInlineMediaAutoplayEnabled, setFeedInlineMediaAutoplayEnabled } from '@/lib/ui/zenSettings'
 import { getNDK } from '@/lib/nostr/ndk'
 import { withRetry } from '@/lib/retry'
 import { sanitizeName } from '@/lib/security/sanitize'
@@ -20,6 +21,7 @@ export default function SettingsPage() {
   const savedTagFeeds = useSavedTagFeeds(tagFeedScopeId)
   const [clearingStatus, setClearingStatus] = useState(false)
   const [resumeFeedPosition, setResumeFeedPosition] = useState(true)
+  const [feedInlineAutoplayEnabled, setFeedInlineAutoplayEnabledState] = useState(true)
   const [displayNameDraft, setDisplayNameDraft] = useState('')
   const [displayNameSaving, setDisplayNameSaving] = useState(false)
   const [displayNameError, setDisplayNameError] = useState<string | null>(null)
@@ -35,6 +37,7 @@ export default function SettingsPage() {
   // Handle hash navigation (e.g. from ProfilePage "Music Status" link)
   useEffect(() => {
     setResumeFeedPosition(getFeedResumeEnabled(currentUser?.pubkey ?? 'anon'))
+    setFeedInlineAutoplayEnabledState(getFeedInlineMediaAutoplayEnabled(currentUser?.pubkey ?? 'anon'))
   }, [currentUser?.pubkey])
 
   useEffect(() => {
@@ -293,6 +296,41 @@ export default function SettingsPage() {
                 <span
                   className="block w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200"
                   style={{ transform: `translateX(${resumeFeedPosition ? 22 : 2}px)` }}
+                />
+              </button>
+            </label>
+
+            <label className="flex items-start gap-3">
+              <div className="mt-0.5 flex-1">
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
+                  Inline video autoplay in feed
+                </p>
+                <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
+                  Automatically play inline videos while scrolling the main feed. Disable this for better stability on unreliable networks.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={feedInlineAutoplayEnabled}
+                onClick={() => {
+                  const next = !feedInlineAutoplayEnabled
+                  setFeedInlineAutoplayEnabledState(next)
+                  setFeedInlineMediaAutoplayEnabled(next, currentUser?.pubkey ?? 'anon')
+                }}
+                className="
+                  shrink-0 mt-0.5 w-11 h-6 rounded-full
+                  transition-colors duration-200
+                "
+                style={{
+                  backgroundColor: feedInlineAutoplayEnabled
+                    ? 'rgb(var(--color-system-green))'
+                    : 'rgb(var(--color-fill-secondary) / 0.3)',
+                }}
+              >
+                <span
+                  className="block w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200"
+                  style={{ transform: `translateX(${feedInlineAutoplayEnabled ? 22 : 2}px)` }}
                 />
               </button>
             </label>

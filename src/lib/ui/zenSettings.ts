@@ -5,6 +5,7 @@ export const ZEN_SETTINGS_UPDATED_EVENT = 'nostr-paper:zen-settings-updated'
 interface ZenSettings {
   metricsVisible?: boolean
   repostCarouselVisible?: boolean
+  feedInlineMediaAutoplayEnabled?: boolean
 }
 
 function getStorageKey(scopeId?: string | null): string {
@@ -65,5 +66,18 @@ export function setRepostCarouselVisible(visible: boolean, scopeId?: string | nu
   writeZenSettings({
     ...previous,
     repostCarouselVisible: Boolean(visible),
+  }, scopeId)
+}
+
+export function getFeedInlineMediaAutoplayEnabled(scopeId?: string | null): boolean {
+  const enabled = readZenSettings(scopeId).feedInlineMediaAutoplayEnabled
+  return enabled === false ? false : true
+}
+
+export function setFeedInlineMediaAutoplayEnabled(enabled: boolean, scopeId?: string | null): void {
+  const previous = readZenSettings(scopeId)
+  writeZenSettings({
+    ...previous,
+    feedInlineMediaAutoplayEnabled: Boolean(enabled),
   }, scopeId)
 }

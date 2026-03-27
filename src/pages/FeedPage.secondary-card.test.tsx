@@ -191,6 +191,7 @@ describe('SecondaryCard', () => {
           index={0}
           checkEvent={() => allowResult}
           semanticResult={allowResult}
+          feedInlineAutoplayEnabled
         />
       </MemoryRouter>,
     )
@@ -225,6 +226,7 @@ describe('SecondaryCard', () => {
           index={0}
           checkEvent={() => allowResult}
           semanticResult={allowResult}
+          feedInlineAutoplayEnabled
         />
       </MemoryRouter>,
     )

@@ -1,5 +1,7 @@
+import { useMemo, useState } from 'react'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
+import { recordMediaUrlFailure, recordMediaUrlSuccess, shouldAttemptMediaUrl } from '@/lib/media/failureBackoff'
 import { buildAttachmentPlaybackPlan } from '@/lib/media/playback'
 import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import type { Nip94FileMetadata, NostrEvent, Profile } from '@/types'
@@ -27,7 +29,10 @@ function previewKind(mimeType: string): 'image' | 'video' | 'audio' | 'other' {
 
 export function FileMetadataView({ event, metadata, profile }: FileMetadataViewProps) {
   const kind = previewKind(metadata.metadata.mimeType)
-  const previewUrl = metadata.metadata.image ?? metadata.metadata.thumb ?? metadata.metadata.url
+  const previewUrlCandidate = metadata.metadata.image ?? metadata.metadata.thumb ?? metadata.metadata.url
+  const previewUrl = previewUrlCandidate && shouldAttemptMediaUrl(previewUrlCandidate)
+    ? previewUrlCandidate
+    : null
   const moderationDocument = buildMediaModerationDocument({
     id: `${event.id}:file`,
     kind: kind === 'video' ? 'video_preview' : 'image',
@@ -47,9 +52,13 @@ export function FileMetadataView({ event, metadata, profile }: FileMetadataViewP
         kind,
       )
     : null
-  const playbackSources = playbackPlan?.sources ?? []
+  const playbackSources = useMemo(
+    () => (playbackPlan?.sources ?? []).filter((source) => shouldAttemptMediaUrl(source.url)),
+    [playbackPlan],
+  )
   const canRenderInlinePlayback = playbackPlan?.playability !== 'unsupported' && playbackSources.length > 0
   const sizeLabel = formatByteSize(metadata.metadata.size)
+  const [previewFailed, setPreviewFailed] = useState(false)
 
   return (
     <article className="space-y-5">
@@ -67,21 +76,40 @@ export function FileMetadataView({ event, metadata, profile }: FileMetadataViewP
               {mediaModerationLoading ? 'Loading media…' : 'Media unavailable'}
             </p>
           </div>
-        ) : kind === 'image' ? (
+        ) : kind === 'image' && previewUrl && !previewFailed ? (
           <img
             src={previewUrl}
             alt={metadata.metadata.alt ?? ''}
             loading="lazy"
             decoding="async"
             referrerPolicy="no-referrer"
+            onLoad={() => {
+              recordMediaUrlSuccess(previewUrl)
+            }}
+            onError={() => {
+              recordMediaUrlFailure(previewUrl)
+              setPreviewFailed(true)
+            }}
             className="w-full h-auto object-cover"
           />
+        ) : kind === 'image' ? (
+          <div className="p-6">
+            <p className="text-[16px] font-medium text-[rgb(var(--color-label))]">
+              Image unavailable
+            </p>
+          </div>
         ) : kind === 'video' ? (
           canRenderInlinePlayback ? (
             <video
               controls
               preload="metadata"
-              poster={previewUrl}
+              poster={previewUrl ?? undefined}
+              onLoadedData={() => {
+                playbackSources.forEach((source) => recordMediaUrlSuccess(source.url))
+              }}
+              onError={() => {
+                playbackSources.forEach((source) => recordMediaUrlFailure(source.url))
+              }}
               className="w-full h-auto"
             >
               {playbackSources.map((source) => (
@@ -101,6 +129,12 @@ export function FileMetadataView({ event, metadata, profile }: FileMetadataViewP
               <audio
                 controls
                 preload="metadata"
+                onLoadedData={() => {
+                  playbackSources.forEach((source) => recordMediaUrlSuccess(source.url))
+                }}
+                onError={() => {
+                  playbackSources.forEach((source) => recordMediaUrlFailure(source.url))
+                }}
                 className="w-full"
               >
                 {playbackSources.map((source) => (

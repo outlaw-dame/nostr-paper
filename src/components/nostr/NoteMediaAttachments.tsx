@@ -1,5 +1,6 @@
-import { useMemo, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useState, type MouseEvent } from 'react'
 import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
+import { recordMediaUrlFailure, recordMediaUrlSuccess, shouldAttemptMediaUrl } from '@/lib/media/failureBackoff'
 import { buildAttachmentPlaybackPlan } from '@/lib/media/playback'
 import { buildAttachmentMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import { canRenderMediaAttachmentInline, getMediaAttachmentKind, getMediaAttachmentPreviewUrl, getMediaAttachmentSourceUrl } from '@/lib/nostr/imeta'
@@ -31,11 +32,13 @@ function buildPreviewCandidates(attachment: Nip92MediaAttachment): string[] {
   ]
 
   return [...new Set(candidates.filter((value): value is string => typeof value === 'string' && value.length > 0))]
+    .filter((candidate) => shouldAttemptMediaUrl(candidate))
 }
 
 function buildSourceCandidates(attachment: Nip92MediaAttachment): string[] {
   const primary = getMediaAttachmentSourceUrl(attachment)
-  return primary ? [primary] : []
+  if (!primary || !shouldAttemptMediaUrl(primary)) return []
+  return [primary]
 }
 
 // ── ALT badge + overlay ───────────────────────────────────────
@@ -98,10 +101,13 @@ function AttachmentTile({
     () => (kind === 'video' || kind === 'audio' ? buildAttachmentPlaybackPlan(attachment, kind) : null),
     [attachment, kind],
   )
-  const playbackSources = playbackPlan?.sources ?? []
+  const playbackSources = useMemo(
+    () => (playbackPlan?.sources ?? []).filter((source) => shouldAttemptMediaUrl(source.url)),
+    [playbackPlan],
+  )
   const canRenderInlinePlayback = playbackPlan?.playability !== 'unsupported' && playbackSources.length > 0
   const [previewIndex, setPreviewIndex] = useState(0)
-  const [previewFailed, setPreviewFailed] = useState(false)
+  const [previewFailed, setPreviewFailed] = useState(previewCandidates.length === 0)
   const [playbackFailed, setPlaybackFailed] = useState(false)
   const [showAlt, setShowAlt] = useState(false)
 
@@ -109,6 +115,11 @@ function AttachmentTile({
   const sourceUrl = playbackPlan?.sources[0]?.url ?? buildSourceCandidates(attachment)[0] ?? null
   const sizeLabel = formatByteSize(attachment.size)
   const summary = attachment.alt ?? attachment.summary ?? attachment.mimeType ?? 'Attached file'
+
+  useEffect(() => {
+    setPreviewIndex(0)
+    setPreviewFailed(previewCandidates.length === 0)
+  }, [attachment.url, previewCandidates.length])
 
   if (moderationDocument && (loading || blocked)) {
     return null
@@ -129,7 +140,11 @@ function AttachmentTile({
             loading="lazy"
             decoding="async"
             referrerPolicy="no-referrer"
+            onLoad={() => {
+              recordMediaUrlSuccess(previewUrl)
+            }}
             onError={() => {
+              recordMediaUrlFailure(previewUrl)
               if (previewIndex < previewCandidates.length - 1) {
                 setPreviewIndex(previewIndex + 1)
               } else {
@@ -186,7 +201,11 @@ function AttachmentTile({
                 loading="lazy"
                 decoding="async"
                 referrerPolicy="no-referrer"
+                onLoad={() => {
+                  recordMediaUrlSuccess(previewUrl)
+                }}
                 onError={() => {
+                  recordMediaUrlFailure(previewUrl)
                   if (previewIndex < previewCandidates.length - 1) {
                     setPreviewIndex(previewIndex + 1)
                   } else {
@@ -210,7 +229,13 @@ function AttachmentTile({
               muted
               playsInline
               preload="metadata"
-              onError={() => setPlaybackFailed(true)}
+              onLoadedData={() => {
+                playbackSources.forEach((source) => recordMediaUrlSuccess(source.url))
+              }}
+              onError={() => {
+                playbackSources.forEach((source) => recordMediaUrlFailure(source.url))
+                setPlaybackFailed(true)
+              }}
               className="aspect-[4/3] h-full w-full object-cover"
             >
               {playbackSources.map((source) => (
@@ -233,7 +258,11 @@ function AttachmentTile({
               controls
               playsInline
               preload="metadata"
+              onLoadedData={() => {
+                playbackSources.forEach((source) => recordMediaUrlSuccess(source.url))
+              }}
               onError={() => {
+                playbackSources.forEach((source) => recordMediaUrlFailure(source.url))
                 setPlaybackFailed(true)
               }}
               className="max-h-[70vh] w-full bg-black object-contain"
@@ -289,7 +318,11 @@ function AttachmentTile({
         <audio
           controls
           preload="metadata"
+          onLoadedData={() => {
+            playbackSources.forEach((source) => recordMediaUrlSuccess(source.url))
+          }}
           onError={() => {
+            playbackSources.forEach((source) => recordMediaUrlFailure(source.url))
             setPlaybackFailed(true)
           }}
           className="w-full"
@@ -337,7 +370,8 @@ function GenericFileCard({
 }) {
   const sizeLabel = formatByteSize(attachment.size)
   const sourceUrl = getMediaAttachmentSourceUrl(attachment)
-  const previewUrl = getMediaAttachmentPreviewUrl(attachment)
+  const previewUrlCandidate = getMediaAttachmentPreviewUrl(attachment)
+  const previewUrl = previewUrlCandidate && shouldAttemptMediaUrl(previewUrlCandidate) ? previewUrlCandidate : null
   const kind = getMediaAttachmentKind(attachment)
   const openLabel = kind === 'image'
     ? 'Open image'
@@ -356,6 +390,12 @@ function GenericFileCard({
           loading="lazy"
           decoding="async"
           referrerPolicy="no-referrer"
+          onLoad={() => {
+            recordMediaUrlSuccess(previewUrl)
+          }}
+          onError={() => {
+            recordMediaUrlFailure(previewUrl)
+          }}
           className="max-h-[18rem] w-full object-cover"
         />
       )}

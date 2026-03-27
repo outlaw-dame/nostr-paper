@@ -11,7 +11,7 @@
  * Layout ID ties this to ExpandedNote for shared layout morph.
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import {
   motion,
   useMotionValue,
@@ -29,8 +29,24 @@ import { ExpandedNote } from './ExpandedNote'
 import { NoteContent } from './NoteContent'
 import { getQuotePostBody, getRepostPreviewText, parseQuoteTags } from '@/lib/nostr/repost'
 import { getProxyInfo, getProtocolMeta } from '@/lib/nostr/proxyTag'
+import { recordMediaUrlFailure, recordMediaUrlSuccess, shouldAttemptMediaUrl } from '@/lib/media/failureBackoff'
 import { sanitizeText } from '@/lib/security/sanitize'
 import type { NostrEvent } from '@/types'
+
+function markAutoplaySourcesFailed(
+  currentSrc: string,
+  sources: Array<{ url: string }>,
+) {
+  if (currentSrc) {
+    recordMediaUrlFailure(currentSrc)
+  }
+
+  sources.forEach((source) => {
+    if (source.url !== currentSrc) {
+      recordMediaUrlFailure(source.url)
+    }
+  })
+}
 
 interface HeroCardProps {
   event: NostrEvent
@@ -47,6 +63,7 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
   const { profile } = useProfile(event.pubkey, { background: false })
   const followStatus = useFollowStatus(event.pubkey)
   const [expanded, setExpanded] = useState(false)
+  const [autoplayFailed, setAutoplayFailed] = useState(false)
   const {
     article,
     poll,
@@ -91,8 +108,21 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
 
   const proxyInfo = isArticleStory ? null : getProxyInfo(event)
 
-  const videoAutoplaySources = videoPlaybackPlan?.sources ?? []
-  const canAutoplayVideo = Boolean(video && videoAutoplaySources.length > 0 && !contentWarning && followStatus !== false)
+  useEffect(() => {
+    setAutoplayFailed(false)
+  }, [event.id])
+
+  const videoAutoplaySources = useMemo(
+    () => (videoPlaybackPlan?.sources ?? []).filter((source) => shouldAttemptMediaUrl(source.url)),
+    [videoPlaybackPlan],
+  )
+  const canAutoplayVideo = Boolean(
+    video &&
+    videoAutoplaySources.length > 0 &&
+    !contentWarning &&
+    followStatus !== false &&
+    !autoplayFailed,
+  )
   const heroPoster = videoPoster ?? primaryMedia
 
   const dragY        = useMotionValue(0)
@@ -151,12 +181,25 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
         {/* Full-bleed media */}
         {canAutoplayVideo ? (
           <video
-            poster={heroPoster}
+            poster={heroPoster ?? undefined}
             muted
             playsInline
             autoPlay
             loop
             preload="metadata"
+            onLoadedData={() => {
+              videoAutoplaySources.forEach((source) => recordMediaUrlSuccess(source.url))
+            }}
+            onError={(mediaEvent) => {
+              const currentSrc = mediaEvent.currentTarget.currentSrc
+              markAutoplaySourcesFailed(currentSrc, videoAutoplaySources)
+              setAutoplayFailed(true)
+            }}
+            onAbort={(mediaEvent) => {
+              const currentSrc = mediaEvent.currentTarget.currentSrc
+              markAutoplaySourcesFailed(currentSrc, videoAutoplaySources)
+              setAutoplayFailed(true)
+            }}
             className="absolute inset-0 w-full h-full object-cover"
             aria-label={heroLabel}
           >
@@ -260,7 +303,7 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
             />
           )}
 
-          <EventMetricsRow event={event} tone="inverse" className="[text-shadow:0_1px_3px_rgba(0,0,0,0.45)]" />
+          <EventMetricsRow event={event} tone="inverse" interactive className="[text-shadow:0_1px_3px_rgba(0,0,0,0.45)]" />
         </motion.div>
       </motion.article>
 
