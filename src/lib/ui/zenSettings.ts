@@ -71,7 +71,8 @@ export function setRepostCarouselVisible(visible: boolean, scopeId?: string | nu
 
 export function getFeedInlineMediaAutoplayEnabled(scopeId?: string | null): boolean {
   const enabled = readZenSettings(scopeId).feedInlineMediaAutoplayEnabled
-  return enabled === false ? false : true
+  // Default to disabled to avoid aggressive inline video churn on dense feeds.
+  return enabled === true
 }
 
 export function setFeedInlineMediaAutoplayEnabled(enabled: boolean, scopeId?: string | null): void {

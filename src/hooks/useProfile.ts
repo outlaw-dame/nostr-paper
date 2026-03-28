@@ -205,7 +205,7 @@ export function useProfileWithOptions(
 
         if (fresh && !signal.aborted) {
           dispatch({ type: 'UPDATE', payload: fresh })
-          if (fresh.nip05) {
+          if (background && fresh.nip05) {
             await refreshNip05(pk, signal)
           }
         }
@@ -221,7 +221,7 @@ export function useProfileWithOptions(
 
     inflightRelayProfileFetches.set(pk, promise)
     await promise
-  }, [refreshNip05])
+  }, [background, refreshNip05])
 
   useEffect(() => {
     if (!pubkey || !isValidHex32(pubkey)) {

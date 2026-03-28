@@ -1,6 +1,7 @@
 import type { Atom, Json, Rss } from 'feedsmith/types'
 import { parseLongFormEvent } from '@/lib/nostr/longForm'
 import { getVideoPreviewImage, parseVideoEvent } from '@/lib/nostr/video'
+import { resolveAppBaseUrl } from '@/lib/runtime/baseUrl'
 import { markdownToPlainText } from '@/lib/translation/text'
 import type { NostrEvent, Profile } from '@/types'
 import type {
@@ -39,33 +40,9 @@ function summarizeText(value: string, maxLength = 280): string {
   return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`
 }
 
-function getPublicOrigin(): string | undefined {
-  const fromEnv = typeof import.meta !== 'undefined'
-    ? (import.meta.env.VITE_PUBLIC_APP_ORIGIN as string | undefined)
-    : undefined
-
-  for (const candidate of [
-    fromEnv,
-    typeof window !== 'undefined' ? window.location.origin : undefined,
-  ]) {
-    if (!candidate) continue
-
-    try {
-      const parsed = new URL(candidate)
-      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-        return parsed.origin
-      }
-    } catch {
-      // Ignore invalid candidates.
-    }
-  }
-
-  return undefined
-}
-
 function buildAbsoluteUrl(route: string | undefined): string | undefined {
   if (!route) return undefined
-  const origin = getPublicOrigin()
+  const origin = resolveAppBaseUrl()
   if (!origin) return undefined
 
   try {

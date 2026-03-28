@@ -50,6 +50,7 @@ const PREFERENCES_KEY = 'translation-preferences'
 const SECRET_KEY_KEY = 'translation-crypto-key'
 const ENCRYPTED_SECRETS_KEY = 'translation-encrypted-secrets'
 const MAX_SECRET_CHARS = 256
+const DEV_QUEUE_METRICS_PREF_KEY = 'translation-dev-queue-metrics-enabled'
 
 export const TRANSLATION_SETTINGS_UPDATED_EVENT = 'nostr-paper:translation-settings-updated'
 
@@ -99,6 +100,31 @@ function canUsePersistentStorage(): boolean {
 function emitTranslationSettingsUpdated(): void {
   if (typeof globalThis.window === 'undefined') return
   globalThis.window.dispatchEvent(new CustomEvent(TRANSLATION_SETTINGS_UPDATED_EVENT))
+}
+
+export function loadTranslationDevQueueMetricsEnabled(): boolean {
+  if (!import.meta.env.DEV) return false
+  if (typeof globalThis.localStorage === 'undefined') return true
+
+  try {
+    const rawValue = globalThis.localStorage.getItem(DEV_QUEUE_METRICS_PREF_KEY)
+    return rawValue !== 'false'
+  } catch {
+    return true
+  }
+}
+
+export function saveTranslationDevQueueMetricsEnabled(enabled: boolean): void {
+  if (!import.meta.env.DEV) return
+  if (typeof globalThis.localStorage === 'undefined') return
+
+  try {
+    globalThis.localStorage.setItem(DEV_QUEUE_METRICS_PREF_KEY, enabled ? 'true' : 'false')
+  } catch {
+    return
+  }
+
+  emitTranslationSettingsUpdated()
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -217,7 +243,10 @@ function normalizeLibreLanguage(value: string | undefined, allowAuto = false, fa
   if (allowAuto && normalized === 'auto') return 'auto'
   if (!normalized) return allowAuto ? 'auto' : fallback
   if (isStructuredLanguageCode(normalized, { primaryMin: 2, primaryMax: 3, primaryCase: 'lower', allowAuto: false })) {
-    return normalized
+    // Most non-DeepL engines use ISO-639 base codes for routing/model selection.
+    // Normalize region variants like "en-us" to "en" for broad compatibility.
+    const [primary] = normalized.split('-')
+    return primary ?? normalized
   }
   return allowAuto ? 'auto' : fallback
 }

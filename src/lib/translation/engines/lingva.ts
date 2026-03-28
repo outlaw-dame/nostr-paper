@@ -1,4 +1,5 @@
 import { withRetry } from '@/lib/retry'
+import { resolveAppUrl } from '@/lib/runtime/baseUrl'
 import { TranslationServiceError } from '@/lib/translation/errors'
 import { buildAbortController, cleanBaseUrl, isRecord } from '@/lib/translation/utils'
 
@@ -33,7 +34,10 @@ async function lingvaRequest<T>(
 
   let requestUrl = url
   if (import.meta.env.DEV) {
-    const proxyUrl = new URL(DEV_PROXY_ENDPOINT, globalThis.location.origin)
+    const proxyUrl = resolveAppUrl(DEV_PROXY_ENDPOINT, { preferPublicOrigin: false })
+    if (!proxyUrl) {
+      throw new TranslationServiceError('Lingva proxy URL is not available in this runtime.', { code: 'unavailable' })
+    }
     proxyUrl.searchParams.set('url', url)
     requestUrl = proxyUrl.toString()
   }

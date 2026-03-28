@@ -13,6 +13,7 @@ import { isDvmEventKind } from '@/lib/nostr/dvm'
 import { parseNip21Reference } from '@/lib/nostr/nip21'
 import { getCurrentUser, getNDK } from '@/lib/nostr/ndk'
 import { withRetry } from '@/lib/retry'
+import { resolveAppBaseUrl } from '@/lib/runtime/baseUrl'
 import {
   isSafeMediaURL,
   isSafeURL,
@@ -576,12 +577,12 @@ export function getNostrPaperHandlerOrigin(): NostrPaperHandlerOrigin {
     }
   }
 
-  if (typeof window !== 'undefined') {
-    const windowOrigin = getPublicOriginCandidate(window.location.origin)
+  const runtimeOrigin = getPublicOriginCandidate(resolveAppBaseUrl({ preferPublicOrigin: false }) ?? undefined)
+  if (runtimeOrigin) {
     return {
-      origin: windowOrigin,
-      publishable: isPublishablePublicOrigin(windowOrigin),
-      source: windowOrigin ? 'window' : null,
+      origin: runtimeOrigin,
+      publishable: isPublishablePublicOrigin(runtimeOrigin),
+      source: 'window',
     }
   }
 

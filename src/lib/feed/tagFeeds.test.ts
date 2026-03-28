@@ -9,6 +9,10 @@ describe('tagFeeds storage', () => {
   it('creates normalized saved tag feeds', () => {
     const saved = saveTagFeed({
       title: ' Apple ',
+      description: ' <b>Curated chatter</b> ',
+      avatar: 'https://cdn.example.com/avatar.jpg',
+      banner: 'https://cdn.example.com/banner.jpg',
+      profilePubkeys: ['A'.repeat(64), 'a'.repeat(64), 'not-a-pubkey'],
       includeTags: ['Apple', 'iPhone'],
       excludeTags: ['SPAM', 'apple'],
       mode: 'all',
@@ -16,6 +20,10 @@ describe('tagFeeds storage', () => {
 
     expect(saved).toMatchObject({
       title: 'Apple',
+      description: 'Curated chatter',
+      avatar: 'https://cdn.example.com/avatar.jpg',
+      banner: 'https://cdn.example.com/banner.jpg',
+      profilePubkeys: ['a'.repeat(64)],
       includeTags: ['apple', 'iphone'],
       excludeTags: ['spam'],
       mode: 'all',
@@ -43,6 +51,10 @@ describe('tagFeeds storage', () => {
   it('updates and deletes saved feeds', () => {
     const created = saveTagFeed({
       title: 'Apple',
+      description: 'All the Apple chatter in one place.',
+      avatar: 'https://cdn.example.com/apple-avatar.jpg',
+      banner: 'https://cdn.example.com/apple-banner.jpg',
+      profilePubkeys: ['1'.repeat(64)],
       includeTags: ['apple', 'iphone'],
       excludeTags: [],
       mode: 'any',
@@ -51,6 +63,10 @@ describe('tagFeeds storage', () => {
     const updated = saveTagFeed({
       id: created?.id,
       title: 'Apple Ecosystem',
+      description: 'Hardware, software, and creators around Apple.',
+      avatar: 'https://cdn.example.com/apple-avatar-2.jpg',
+      banner: 'https://cdn.example.com/apple-banner-2.jpg',
+      profilePubkeys: ['1'.repeat(64), '2'.repeat(64)],
       includeTags: ['apple', 'iphone', 'macbook'],
       excludeTags: ['spam'],
       mode: 'all',
@@ -60,6 +76,10 @@ describe('tagFeeds storage', () => {
     expect(getSavedTagFeeds('alice')).toHaveLength(1)
     expect(getSavedTagFeeds('alice')[0]).toMatchObject({
       title: 'Apple Ecosystem',
+      description: 'Hardware, software, and creators around Apple.',
+      avatar: 'https://cdn.example.com/apple-avatar-2.jpg',
+      banner: 'https://cdn.example.com/apple-banner-2.jpg',
+      profilePubkeys: ['1'.repeat(64), '2'.repeat(64)],
       includeTags: ['apple', 'iphone', 'macbook'],
       excludeTags: ['spam'],
       mode: 'all',

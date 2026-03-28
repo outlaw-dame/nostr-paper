@@ -17,7 +17,6 @@ import './styles/global.css'
 // Always disable SW in dev to avoid stale-cache reload loops during local testing.
 const shouldSkipServiceWorker = import.meta.env.DEV
 const shouldRegisterServiceWorker = !shouldSkipServiceWorker
-const LOCAL_SW_RESET_RELOAD_KEY = 'nostr-paper:local-sw-reset:v1'
 const LOCAL_CACHE_PREFIXES = ['nostr-paper-', 'workbox-'] as const
 
 document.documentElement.dataset.theme = 'light'
@@ -39,10 +38,8 @@ async function disableLocalServiceWorkers(): Promise<void> {
 
   try {
     const registrations = await navigator.serviceWorker.getRegistrations()
-    const hadController = Boolean(navigator.serviceWorker.controller)
 
-    if (registrations.length === 0 && !hadController) {
-      sessionStorage.removeItem(LOCAL_SW_RESET_RELOAD_KEY)
+    if (registrations.length === 0 && !navigator.serviceWorker.controller) {
       return
     }
 
@@ -51,22 +48,13 @@ async function disableLocalServiceWorkers(): Promise<void> {
     )
     await clearLocalServiceWorkerCaches()
 
-    if (hadController) {
-      const alreadyReloaded = sessionStorage.getItem(LOCAL_SW_RESET_RELOAD_KEY) === '1'
-      if (!alreadyReloaded) {
-        sessionStorage.setItem(LOCAL_SW_RESET_RELOAD_KEY, '1')
-        console.info('[PWA] Local service worker detached; reloading once to finish cleanup.')
-        window.location.reload()
-        return
-      }
-
-      console.warn('[PWA] Local service worker still controls the page after cleanup reload.')
-      // Keep the one-shot flag set while a controller is still present.
-      // This prevents repeat reload loops across subsequent startup evaluations.
+    // Avoid forced reloads in development. They can amplify into reload churn if
+    // the browser keeps handing control back to a stale worker while HMR is active.
+    if (navigator.serviceWorker.controller) {
+      console.info('[PWA] Local service worker unregistered; current page remains controlled until next manual reload.')
       return
     }
 
-    sessionStorage.removeItem(LOCAL_SW_RESET_RELOAD_KEY)
     console.info('[PWA] Local service workers unregistered and caches cleared.')
   } catch (error) {
     console.warn('[PWA] Failed to disable local service workers:', error)

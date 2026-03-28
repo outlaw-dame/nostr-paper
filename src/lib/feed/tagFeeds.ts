@@ -5,7 +5,13 @@ import {
   type TagTimelineMode,
   type TagTimelineSpec,
 } from '@/lib/feed/tagTimeline'
-import { normalizeHashtag } from '@/lib/security/sanitize'
+import {
+  isSafeMediaURL,
+  isValidHex32,
+  normalizeHashtag,
+  sanitizeAbout,
+  sanitizeName,
+} from '@/lib/security/sanitize'
 
 const STORAGE_KEY_PREFIX = 'nostr-paper:tag-feeds:v1:'
 const GLOBAL_TAG_FEED_SCOPE = 'global'
@@ -15,6 +21,10 @@ export const TAG_FEEDS_UPDATED_EVENT = 'nostr-paper:tag-feeds-updated'
 export interface SavedTagFeed extends TagTimelineSpec {
   id: string
   title: string
+  description: string
+  avatar: string
+  banner: string
+  profilePubkeys: string[]
   createdAt: number
   updatedAt: number
 }
@@ -22,6 +32,10 @@ export interface SavedTagFeed extends TagTimelineSpec {
 export interface SavedTagFeedInput extends TagTimelineSpec {
   id?: string | undefined
   title: string
+  description?: string | undefined
+  avatar?: string | undefined
+  banner?: string | undefined
+  profilePubkeys?: string[] | undefined
 }
 
 export function getTagFeedsScopeId(_scopeId?: string | null): string {
@@ -70,6 +84,16 @@ function sanitizeTagList(values: string[]): string[] {
   )]
 }
 
+function sanitizeProfilePubkeys(values: string[] | undefined): string[] {
+  if (!Array.isArray(values)) return []
+
+  return [...new Set(
+    values
+      .map((value) => value.trim().toLowerCase())
+      .filter((value): value is string => isValidHex32(value)),
+  )]
+}
+
 function sanitizeTagFeedInput(input: SavedTagFeedInput): SavedTagFeedInput | null {
   const includeTags = sanitizeTagList(input.includeTags)
   if (includeTags.length === 0) return null
@@ -80,11 +104,19 @@ function sanitizeTagFeedInput(input: SavedTagFeedInput): SavedTagFeedInput | nul
   const mode: TagTimelineMode = includeTags.length > 1 && input.mode === 'all' ? 'all' : 'any'
   const spec = { includeTags, excludeTags, mode }
   const fallbackTitle = describeTagTimeline(spec)?.title ?? `#${includeTags[0]}`
-  const title = input.title.trim() || fallbackTitle
+  const title = sanitizeName(input.title) || fallbackTitle
+  const description = sanitizeAbout(input.description ?? '')
+  const avatar = isSafeMediaURL(input.avatar ?? '') ? input.avatar!.trim() : ''
+  const banner = isSafeMediaURL(input.banner ?? '') ? input.banner!.trim() : ''
+  const profilePubkeys = sanitizeProfilePubkeys(input.profilePubkeys)
 
   return {
     id: input.id,
     title,
+    description,
+    avatar,
+    banner,
+    profilePubkeys,
     includeTags,
     excludeTags,
     mode,
@@ -106,6 +138,10 @@ function sanitizeSavedTagFeedRecord(value: unknown): SavedTagFeed | null {
   const sanitized = sanitizeTagFeedInput({
     id: typeof candidate.id === 'string' ? candidate.id : undefined,
     title: typeof candidate.title === 'string' ? candidate.title : '',
+    description: typeof candidate.description === 'string' ? candidate.description : '',
+    avatar: typeof candidate.avatar === 'string' ? candidate.avatar : '',
+    banner: typeof candidate.banner === 'string' ? candidate.banner : '',
+    profilePubkeys: Array.isArray(candidate.profilePubkeys) ? candidate.profilePubkeys : [],
     includeTags,
     excludeTags,
     mode,
@@ -117,6 +153,10 @@ function sanitizeSavedTagFeedRecord(value: unknown): SavedTagFeed | null {
   return {
     id: sanitized.id ?? generateTagFeedId(),
     title: sanitized.title,
+    description: sanitized.description ?? '',
+    avatar: sanitized.avatar ?? '',
+    banner: sanitized.banner ?? '',
+    profilePubkeys: sanitized.profilePubkeys ?? [],
     includeTags: sanitized.includeTags,
     excludeTags: sanitized.excludeTags,
     mode: sanitized.mode,
@@ -169,6 +209,10 @@ function pickPreferredSavedTagFeed(current: SavedTagFeed, candidate: SavedTagFee
     createdAt: Math.min(current.createdAt, candidate.createdAt),
     updatedAt: Math.max(current.updatedAt, candidate.updatedAt),
     title: preferred.title || fallback.title,
+    description: preferred.description || fallback.description,
+    avatar: preferred.avatar || fallback.avatar,
+    banner: preferred.banner || fallback.banner,
+    profilePubkeys: [...new Set([...preferred.profilePubkeys, ...fallback.profilePubkeys])],
   }
 }
 
@@ -247,6 +291,10 @@ export function saveTagFeed(input: SavedTagFeedInput, scopeId?: string | null): 
   const nextFeed: SavedTagFeed = {
     id: existing?.id ?? sanitized.id ?? generateTagFeedId(),
     title: sanitized.title,
+    description: sanitized.description ?? '',
+    avatar: sanitized.avatar ?? '',
+    banner: sanitized.banner ?? '',
+    profilePubkeys: sanitized.profilePubkeys ?? [],
     includeTags: sanitized.includeTags,
     excludeTags: sanitized.excludeTags,
     mode: sanitized.mode,

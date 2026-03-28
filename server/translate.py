@@ -2,8 +2,8 @@
 """
 SMaLL-100 local translation daemon for nostr-paper PWA.
 
-SMaLL-100 (alirezamsh/small100) covers 100+ languages with a single ~300 MB
-multilingual model — ideal for a local-first social app.
+SMaLL-100 (alirezamsh/small100) offers faster startup and lower memory usage
+for local-first translation workflows.
 
 Quick start (CPU):
     pip install fastapi uvicorn torch transformers sentencepiece accelerate
@@ -20,6 +20,7 @@ Environment variables:
     TRANSLATE_PORT   listen port (default 7080)
     TRANSLATE_HOST   bind address (default 127.0.0.1)
     TRANSLATE_DEVICE cpu | cuda | mps (default: auto-detect)
+    TRANSLATE_MODEL_ID huggingface model id (default alirezamsh/small100)
 """
 
 import argparse
@@ -49,7 +50,7 @@ except Exception:  # noqa: BLE001
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-MODEL_ID = "alirezamsh/small100"
+MODEL_ID = os.environ.get("TRANSLATE_MODEL_ID", "alirezamsh/small100")
 SAFE_BROWSING_ENDPOINT = "https://safebrowsing.googleapis.com/v4/threatMatches:find"
 SAFE_BROWSING_TIMEOUT_SECONDS = 8
 
@@ -81,6 +82,27 @@ SUPPORTED_LANGUAGES: dict[str, str] = {
 _tokenizer = None
 _model = None
 _device = "cpu"
+
+
+def _normalize_text_for_compare(value: str) -> str:
+    return " ".join(value.strip().casefold().split())
+
+
+def _looks_unusable_translation(source_text: str, translated_text: str) -> bool:
+    translated = translated_text.strip()
+    if not translated:
+        return True
+
+    normalized_source = _normalize_text_for_compare(source_text)
+    normalized_translated = _normalize_text_for_compare(translated)
+    if normalized_source and normalized_source == normalized_translated:
+        return True
+
+    # Very short outputs from longer inputs are often special-token artifacts.
+    if len(source_text.strip()) >= 12 and len(translated) <= 2:
+        return True
+
+    return False
 
 
 def _is_public_http_url(value: str) -> bool:
@@ -194,7 +216,7 @@ class SafeBrowsingCheckRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": "small100", "device": _device}
+    return {"status": "ok", "model": MODEL_ID, "device": _device}
 
 
 @app.get("/languages")
@@ -214,8 +236,10 @@ def translate(req: TranslateRequest):
     src = req.source_lang
 
     try:
-        # SMaLL-100 uses forced target-language token as BOS
-        _tokenizer.set_tgt_lang_special_tokens(tgt)
+        if src != "auto" and hasattr(_tokenizer, "src_lang"):
+            _tokenizer.src_lang = src
+
+        # M2M100 generation path for multilingual translation.
         inputs = _tokenizer(
             req.text,
             return_tensors="pt",
@@ -233,6 +257,22 @@ def translate(req: TranslateRequest):
             )
 
         translation = _tokenizer.batch_decode(generated, skip_special_tokens=True)[0]
+        if _looks_unusable_translation(req.text, translation):
+            # Retry once with explicit target prefix to avoid occasional token-only outputs.
+            fallback_inputs = _tokenizer(
+                f"__{tgt}__ {req.text}",
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=512,
+            ).to(_device)
+            with torch.no_grad():
+                fallback_generated = _model.generate(
+                    **fallback_inputs,
+                    max_new_tokens=512,
+                    num_beams=4,
+                )
+            translation = _tokenizer.batch_decode(fallback_generated, skip_special_tokens=True)[0]
     except Exception as exc:  # noqa: BLE001
         log.exception("Translation failed")
         raise HTTPException(500, f"Translation error: {exc}") from exc

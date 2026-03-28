@@ -700,7 +700,7 @@ function EventResult({ event }: { event: NostrEvent }) {
             )}
           </>
         )}
-        <EventMetricsRow event={event} />
+        <EventMetricsRow event={event} interactive />
       </Link>
     </motion.div>
   )

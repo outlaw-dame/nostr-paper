@@ -17,6 +17,8 @@ import { syncCurrentUserContactList } from '@/lib/nostr/contacts'
 import { refreshNip05Verifications } from '@/lib/nostr/nip05'
 import { getCurrentUser, performLogout, STORAGE_KEY_PUBKEY } from '@/lib/nostr/ndk'
 
+const shouldRunDevNip05Sweep = import.meta.env.VITE_ENABLE_DEV_NIP05_SWEEP === 'true'
+
 const initialState: AppState = {
   status:      'idle',
   bootstrap:   null,
@@ -108,7 +110,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'BOOT_PARTIAL', payload: bootResult })
       }
 
-      if (bootResult.dbReady) {
+      if (bootResult.dbReady && (!import.meta.env.DEV || shouldRunDevNip05Sweep)) {
         void refreshNip05Verifications(signal).catch((error: unknown) => {
           if (signal.aborted) return
           console.warn('[App] NIP-05 background verification degraded:', error)

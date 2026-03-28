@@ -1,5 +1,6 @@
 import { createStore, getMany, setMany } from 'idb-keyval'
 import { env, pipeline } from '@huggingface/transformers'
+import { resolveAppUrl } from '@/lib/runtime/baseUrl'
 import { withRetry } from '@/lib/retry'
 import {
   DEFAULT_MEDIA_NSFW_MODEL_ID,
@@ -100,14 +101,12 @@ function getWorkerOrigin(): string | null {
 }
 
 function buildMediaProxyUrl(target: string): string | null {
-  const workerOrigin = getWorkerOrigin()
   const proxyBase = import.meta.env.DEV ? DEV_MEDIA_PROXY_PATH : MEDIA_PROXY_BASE
   if (!proxyBase) return null
 
   try {
-    const endpoint = proxyBase.startsWith('http://') || proxyBase.startsWith('https://')
-      ? new URL(proxyBase)
-      : new URL(proxyBase, workerOrigin ?? 'http://localhost')
+    const endpoint = resolveAppUrl(proxyBase, { preferPublicOrigin: false })
+    if (!endpoint) return null
     endpoint.searchParams.set('url', target)
     return endpoint.href
   } catch {

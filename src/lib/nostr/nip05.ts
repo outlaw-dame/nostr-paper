@@ -11,6 +11,7 @@ import {
   isValidRelayURL,
   normalizeNip05Identifier,
 } from '@/lib/security/sanitize'
+import { resolveAppBaseUrl, resolveAppUrl } from '@/lib/runtime/baseUrl'
 import type { NostrEvent, Profile } from '@/types'
 import { Kind } from '@/types'
 
@@ -22,6 +23,7 @@ const NIP05_SWEEP_LIMIT = 8
 const NIP05_MAX_RELAY_HINTS = 12
 const DEV_NIP05_PROXY_PATH = '/__dev/nip05'
 const NIP05_LOOKUP_MAX_ATTEMPTS = import.meta.env.DEV ? 1 : 2
+const ENABLE_DEV_NIP05_BACKGROUND_LOOKUPS = import.meta.env.VITE_ENABLE_DEV_NIP05_LOOKUPS === 'true'
 
 const inflightVerifications = new Map<string, Promise<Nip05VerificationStatus>>()
 
@@ -114,11 +116,13 @@ export function formatNip05Identifier(identifier: string): string {
 }
 
 function buildLookupRequestUrl(parsed: ParsedNip05Identifier): URL {
-  if (import.meta.env.DEV && typeof window !== 'undefined') {
-    const url = new URL(DEV_NIP05_PROXY_PATH, window.location.origin)
-    url.searchParams.set('domain', parsed.domain)
-    url.searchParams.set('name', parsed.localPart)
-    return url
+  if (import.meta.env.DEV) {
+    const devProxyUrl = resolveAppUrl(DEV_NIP05_PROXY_PATH, { preferPublicOrigin: false })
+    if (devProxyUrl) {
+      devProxyUrl.searchParams.set('domain', parsed.domain)
+      devProxyUrl.searchParams.set('name', parsed.localPart)
+      return devProxyUrl
+    }
   }
 
   const url = new URL(`https://${parsed.domain}/.well-known/nostr.json`)
@@ -134,7 +138,8 @@ async function lookupNip05Identifier(
 
   try {
     const requestUrl = buildLookupRequestUrl(parsed)
-    const isCrossOrigin = typeof window !== 'undefined' && requestUrl.origin !== window.location.origin
+    const appBaseUrl = resolveAppBaseUrl({ preferPublicOrigin: false })
+    const isCrossOrigin = typeof window !== 'undefined' && requestUrl.origin !== appBaseUrl
     const response = await fetchWithRetry(
       requestUrl,
       {
@@ -289,6 +294,7 @@ export async function verifyProfileNip05(
   pubkey: string,
   signal?: AbortSignal,
 ): Promise<Nip05VerificationStatus> {
+  if (import.meta.env.DEV && !ENABLE_DEV_NIP05_BACKGROUND_LOOKUPS) return 'skipped'
   if (!isValidHex32(pubkey)) return 'skipped'
 
   const existing = inflightVerifications.get(pubkey)

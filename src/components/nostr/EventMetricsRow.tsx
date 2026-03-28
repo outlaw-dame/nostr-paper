@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '@/contexts/app-context'
 import { useVisibilityOnce } from '@/hooks/useVisibilityOnce'
+import { buildComposeSearch } from '@/lib/compose'
 import { getEventEngagementSummary } from '@/lib/db/nostr'
+import { canBookmarkEvent, toggleGlobalBookmark } from '@/lib/nostr/lists'
+import { buildEventReferenceValue } from '@/lib/nostr/nip21'
+import { publishReaction } from '@/lib/nostr/reaction'
+import { publishRepost } from '@/lib/nostr/repost'
 import { getMetricsVisible, ZEN_SETTINGS_UPDATED_EVENT } from '@/lib/ui/zenSettings'
 import type { EventEngagementSummary, NostrEvent } from '@/types'
 
@@ -63,13 +69,17 @@ interface EventMetricsRowProps {
   event: NostrEvent
   className?: string
   tone?: 'default' | 'inverse'
+  interactive?: boolean
 }
 
-export function EventMetricsRow({ event, className = '', tone = 'default' }: EventMetricsRowProps) {
+export function EventMetricsRow({ event, className = '', tone = 'default', interactive = false }: EventMetricsRowProps) {
+  const navigate = useNavigate()
+  const location = useLocation()
   const { currentUser } = useApp()
   const [summary, setSummary] = useState<EventEngagementSummary>(EMPTY_SUMMARY)
   const [loading, setLoading] = useState(true)
   const [visible, setVisible] = useState(true)
+  const [publishing, setPublishing] = useState<'like' | 'repost' | 'bookmark' | null>(null)
   const scopeId = useMemo(() => currentUser?.pubkey ?? 'anon', [currentUser?.pubkey])
   const summaryKey = useMemo(() => getSummaryCacheKey(event.id, currentUser?.pubkey), [currentUser?.pubkey, event.id])
   const { ref, visible: metricsInView } = useVisibilityOnce<HTMLDivElement>({ disabled: !visible, rootMargin: '220px 0px' })
@@ -139,6 +149,59 @@ export function EventMetricsRow({ event, className = '', tone = 'default' }: Eve
     return () => controller.abort()
   }, [currentUser?.pubkey, event.id, metricsInView, summaryKey, visible])
 
+  const refreshSummary = async () => {
+    const key = getSummaryCacheKey(event.id, currentUser?.pubkey)
+    summaryCache.delete(key)
+    const next = await getEventEngagementSummary(event.id, currentUser?.pubkey)
+    setCachedSummary(key, next)
+    setSummary(next)
+  }
+
+  const handleReply = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    if (!currentUser) { navigate('/onboard'); return }
+    const ref = buildEventReferenceValue(event)
+    if (!ref) return
+    navigate({ pathname: location.pathname, search: buildComposeSearch(location.search, { quoteReference: null, replyReference: ref }) })
+  }
+
+  const handleRepost = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    if (!currentUser) { navigate('/onboard'); return }
+    if (summary.currentUserHasReposted || publishing !== null) return
+    setPublishing('repost')
+    try {
+      await publishRepost(event)
+      await refreshSummary()
+    } catch { /* silent */ } finally { setPublishing(null) }
+  }
+
+  const handleLike = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    if (!currentUser) { navigate('/onboard'); return }
+    if (summary.currentUserHasLiked || publishing !== null) return
+    setPublishing('like')
+    try {
+      await publishReaction(event, '+')
+      await refreshSummary()
+    } catch { /* silent */ } finally { setPublishing(null) }
+  }
+
+  const handleBookmark = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    if (!currentUser) { navigate('/onboard'); return }
+    if (publishing !== null) return
+    setPublishing('bookmark')
+    try {
+      await toggleGlobalBookmark(event)
+      await refreshSummary()
+    } catch { /* silent */ } finally { setPublishing(null) }
+  }
+
   if (!visible) return null
 
   const labelClass = tone === 'inverse'
@@ -147,6 +210,7 @@ export function EventMetricsRow({ event, className = '', tone = 'default' }: Eve
   const activeClass = tone === 'inverse'
     ? 'text-white'
     : 'text-[rgb(var(--color-label-secondary))]'
+  const bookmarkable = canBookmarkEvent(event)
 
   return (
     <div ref={ref} className={`mt-3 flex flex-wrap items-center gap-3 text-[12px] ${labelClass} ${className}`}>
@@ -154,12 +218,47 @@ export function EventMetricsRow({ event, className = '', tone = 'default' }: Eve
         <MetricsLoadingSkeleton tone={tone} />
       ) : (
         <>
-          <MetricItem icon={<ReplyIcon />} value={summary.replyCount} className={activeClass} label="Replies" />
-          <MetricItem icon={<RepostIcon />} value={summary.repostCount} className={activeClass} label="Reposts" />
-          <MetricItem icon={<HeartIcon />} value={summary.likeCount} className={summary.currentUserHasLiked ? activeClass : labelClass} label="Likes" />
-          <span className={`inline-flex items-center ${labelClass}`} aria-label="Bookmark">
-            <BookmarkIcon />
-          </span>
+          <MetricItem
+            icon={<ReplyIcon />}
+            value={summary.replyCount}
+            className={activeClass}
+            label="Replies"
+            {...(interactive ? { onClick: handleReply } : {})}
+          />
+          <MetricItem
+            icon={<RepostIcon />}
+            value={summary.repostCount}
+            className={summary.currentUserHasReposted ? activeClass : (interactive ? activeClass : activeClass)}
+            label={publishing === 'repost' ? 'Reposting…' : 'Reposts'}
+            {...(interactive && !summary.currentUserHasReposted
+              ? { onClick: (event: React.MouseEvent) => { void handleRepost(event) } }
+              : {})}
+            disabled={interactive && (summary.currentUserHasReposted || publishing !== null)}
+          />
+          <MetricItem
+            icon={<HeartIcon filled={summary.currentUserHasLiked} />}
+            value={summary.likeCount}
+            className={summary.currentUserHasLiked ? activeClass : labelClass}
+            label={publishing === 'like' ? 'Liking…' : 'Likes'}
+            {...(interactive && !summary.currentUserHasLiked
+              ? { onClick: (event: React.MouseEvent) => { void handleLike(event) } }
+              : {})}
+            disabled={interactive && (summary.currentUserHasLiked || publishing !== null)}
+          />
+          {bookmarkable ? (
+            <MetricItem
+              icon={<BookmarkIcon />}
+              value={undefined}
+              className={labelClass}
+              label="Bookmark"
+              {...(interactive ? { onClick: (event: React.MouseEvent) => { void handleBookmark(event) } } : {})}
+              disabled={interactive && publishing !== null}
+            />
+          ) : (
+            <span className={`inline-flex items-center ${labelClass}`} aria-label="Bookmark">
+              <BookmarkIcon />
+            </span>
+          )}
         </>
       )}
     </div>
@@ -186,16 +285,35 @@ function MetricItem({
   value,
   className,
   label,
+  onClick,
+  disabled,
 }: {
   icon: React.ReactNode
-  value: number
+  value: number | undefined
   className: string
   label: string
+  onClick?: (e: React.MouseEvent) => void
+  disabled?: boolean
 }) {
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        className={`inline-flex items-center gap-1 ${className} transition-opacity active:opacity-60 disabled:opacity-40 cursor-pointer`}
+        aria-label={value !== undefined ? `${label}: ${value}` : label}
+      >
+        {icon}
+        {value !== undefined && <span className="font-medium tabular-nums">{value}</span>}
+      </button>
+    )
+  }
+
   return (
-    <span className={`inline-flex items-center gap-1 ${className}`} aria-label={`${label}: ${value}`}>
+    <span className={`inline-flex items-center gap-1 ${className}`} aria-label={value !== undefined ? `${label}: ${value}` : label}>
       {icon}
-      <span className="font-medium tabular-nums">{value}</span>
+      {value !== undefined && <span className="font-medium tabular-nums">{value}</span>}
     </span>
   )
 }
@@ -220,9 +338,9 @@ function RepostIcon() {
   )
 }
 
-function HeartIcon() {
+function HeartIcon({ filled = false }: { filled?: boolean }) {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <svg width="13" height="13" viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
     </svg>
   )

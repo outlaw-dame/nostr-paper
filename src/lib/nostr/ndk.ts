@@ -39,12 +39,25 @@ const DEFAULT_RELAYS = [
   'wss://nostr.bitcoiner.social',
   'wss://relay.nostr.band',
   'wss://nostr.fmt.wiz.biz',
-  'wss://ditto.pub/relay',
   'wss://relay.mostr.pub',
   'wss://relay.nos.social',
   'wss://news.nos.social',
   'wss://relay.nostr.net',
 ] as const
+
+const BLOCKED_RELAY_URLS = new Set([
+  // This endpoint currently returns HTTP 200 to websocket upgrades and triggers reconnect churn.
+  'wss://ditto.pub/relay/',
+])
+
+function normalizeRelayCandidate(url: string): string {
+  return url.trim().replace(/\/+$/, '/')
+}
+
+function isUsableRelayUrl(url: string): boolean {
+  if (!isValidRelayURL(url)) return false
+  return !BLOCKED_RELAY_URLS.has(normalizeRelayCandidate(url))
+}
 
 // ── NIP-50 Search Relay Set ───────────────────────────────────
 // Relays explicitly supporting the NIP-50 full-text search filter.
@@ -66,6 +79,8 @@ export const SEARCH_RELAY_URLS = [
 const OUTBOX_RELAYS = [
   'wss://purplepag.es',  // NIP-65 relay list lookups
 ] as const
+
+const ENABLE_OUTBOX_MODEL = import.meta.env.PROD
 
 export function getDefaultRelayUrls(): string[] {
   return [...DEFAULT_RELAYS]
@@ -171,7 +186,7 @@ export async function initNDK(options: InitNDKOptions = {}): Promise<NDK> {
   // Validate and filter relay URLs — use user's stored list if they've customised it
   const storedRelays = getStoredRelayUrls()
   const relays = (options.relays ?? storedRelays ?? DEFAULT_RELAYS)
-    .filter(isValidRelayURL)
+    .filter(isUsableRelayUrl)
     .slice(0, 20) // hard cap
 
   // Create signer — NIP-07 preferred, nsec localStorage fallback
@@ -199,7 +214,7 @@ export async function initNDK(options: InitNDKOptions = {}): Promise<NDK> {
   _ndk = new NDK({
     explicitRelayUrls:  relays,
     outboxRelayUrls:    [...OUTBOX_RELAYS],
-    enableOutboxModel:  true,
+    enableOutboxModel:  ENABLE_OUTBOX_MODEL,
     cacheAdapter:       new SQLiteCacheAdapter(),
     ...(signer !== undefined ? { signer } : {}),
     // Autoconnect is disabled — we control connection timing

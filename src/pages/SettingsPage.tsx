@@ -12,6 +12,11 @@ import { getFeedInlineMediaAutoplayEnabled, setFeedInlineMediaAutoplayEnabled } 
 import { getNDK } from '@/lib/nostr/ndk'
 import { withRetry } from '@/lib/retry'
 import { sanitizeName, sanitizeText } from '@/lib/security/sanitize'
+import { checkSmall100Health } from '@/lib/translation/engines/small100'
+import { getBrowserLanguage } from '@/lib/translation/detect'
+import { loadTranslationConfiguration, TRANSLATION_SETTINGS_UPDATED_EVENT } from '@/lib/translation/storage'
+
+type TranslationHealthTone = 'ok' | 'warn'
 
 export default function SettingsPage() {
   const navigate = useNavigate()
@@ -27,6 +32,9 @@ export default function SettingsPage() {
   const [displayNameSaving, setDisplayNameSaving] = useState(false)
   const [displayNameError, setDisplayNameError] = useState<string | null>(null)
   const [displayNameSaved, setDisplayNameSaved] = useState(false)
+  const [translationHealthLabel, setTranslationHealthLabel] = useState('Checking…')
+  const [translationHealthDetail, setTranslationHealthDetail] = useState('Inspecting translation provider configuration.')
+  const [translationHealthTone, setTranslationHealthTone] = useState<TranslationHealthTone>('ok')
   const { profile: currentProfile } = useProfile(currentUser?.pubkey, { background: false })
   
   // Load current music status to show it
@@ -54,6 +62,96 @@ export default function SettingsPage() {
     setDisplayNameDraft(currentProfile?.display_name ?? '')
     setBioDraft(currentProfile?.about ?? '')
   }, [currentProfile?.about, currentProfile?.display_name])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const refreshTranslationHealth = async () => {
+      try {
+        const configuration = await loadTranslationConfiguration()
+        if (cancelled) return
+
+        const browserLanguage = (getBrowserLanguage() ?? 'en').toLowerCase()
+        const browserPrimary = browserLanguage.split('-')[0] ?? browserLanguage
+
+        const setHealth = (label: string, detail: string, tone: TranslationHealthTone) => {
+          setTranslationHealthLabel(label)
+          setTranslationHealthDetail(detail)
+          setTranslationHealthTone(tone)
+        }
+
+        switch (configuration.provider) {
+          case 'deepl': {
+            if (!configuration.deeplAuthKey) {
+              setHealth('Missing key', `DeepL selected. Add API key in Translations settings. Browser: ${browserPrimary}.`, 'warn')
+              return
+            }
+            setHealth('Configured', `DeepL ready. Target: ${configuration.deeplTargetLanguage.toLowerCase()}. Browser: ${browserPrimary}.`, 'ok')
+            return
+          }
+          case 'libretranslate': {
+            if (!configuration.libreBaseUrl) {
+              setHealth('Missing endpoint', `LibreTranslate selected. Set instance URL. Browser: ${browserPrimary}.`, 'warn')
+              return
+            }
+            setHealth('Configured', `LibreTranslate ready. Target: ${configuration.libreTargetLanguage}. Browser: ${browserPrimary}.`, 'ok')
+            return
+          }
+          case 'translang': {
+            if (!configuration.translangBaseUrl) {
+              setHealth('Missing endpoint', `TransLang selected. Set instance URL. Browser: ${browserPrimary}.`, 'warn')
+              return
+            }
+            setHealth('Configured', `TransLang ready. Target: ${configuration.translangTargetLanguage}. Browser: ${browserPrimary}.`, 'ok')
+            return
+          }
+          case 'lingva': {
+            if (!configuration.lingvaBaseUrl) {
+              setHealth('Missing endpoint', `Lingva selected. Set instance URL. Browser: ${browserPrimary}.`, 'warn')
+              return
+            }
+            setHealth('Configured', `Lingva ready. Target: ${configuration.lingvaTargetLanguage}. Browser: ${browserPrimary}.`, 'ok')
+            return
+          }
+          case 'small100': {
+            if (!configuration.small100BaseUrl) {
+              setHealth('Missing endpoint', `SMaLL-100 selected. Set daemon URL. Browser: ${browserPrimary}.`, 'warn')
+              return
+            }
+            const healthy = await checkSmall100Health(configuration.small100BaseUrl)
+            if (cancelled) return
+            if (!healthy) {
+              setHealth('Offline daemon', `SMaLL-100 at ${configuration.small100BaseUrl} is unreachable.`, 'warn')
+              return
+            }
+            setHealth('Configured', `SMaLL-100 reachable. Target: ${configuration.small100TargetLanguage}. Browser: ${browserPrimary}.`, 'ok')
+            return
+          }
+          case 'opusmt': {
+            setHealth('Configured', `Opus-MT in-browser. Target: ${configuration.opusMtTargetLanguage}. Browser: ${browserPrimary}.`, 'ok')
+            return
+          }
+        }
+      } catch {
+        if (cancelled) return
+        setTranslationHealthLabel('Unavailable')
+        setTranslationHealthDetail('Could not load translation configuration.')
+        setTranslationHealthTone('warn')
+      }
+    }
+
+    void refreshTranslationHealth()
+
+    const handleUpdated = () => {
+      void refreshTranslationHealth()
+    }
+
+    window.addEventListener(TRANSLATION_SETTINGS_UPDATED_EVENT, handleUpdated)
+    return () => {
+      cancelled = true
+      window.removeEventListener(TRANSLATION_SETTINGS_UPDATED_EVENT, handleUpdated)
+    }
+  }, [])
 
   const handleLogout = () => {
     if (logout) {
@@ -324,10 +422,10 @@ export default function SettingsPage() {
             <label className="flex items-start gap-3">
               <div className="mt-0.5 flex-1">
                 <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
-                  Inline video autoplay in feed
+                  Inline video autoplay in feed (Experimental)
                 </p>
                 <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
-                  Automatically play inline videos while scrolling the main feed. Disable this for better stability on unreliable networks.
+                  Automatically play inline videos while scrolling the main feed. This is high load and may reduce stability on busy tag feeds or unreliable networks.
                 </p>
               </div>
               <button
@@ -369,6 +467,31 @@ export default function SettingsPage() {
                   {savedTagFeeds.length === 0
                     ? 'Create saved tag feeds that appear in the main Feed rail.'
                     : `${savedTagFeeds.length} saved ${savedTagFeeds.length === 1 ? 'feed' : 'feeds'} ready for the main Feed rail.`}
+                </p>
+              </div>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-[rgb(var(--color-label-tertiary))]">
+                <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate('/settings/translations')}
+              className="flex w-full items-center justify-between text-left transition-opacity active:opacity-70"
+            >
+              <div>
+                <div className="flex items-center gap-2">
+                  <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
+                    Translations
+                  </p>
+                  <span
+                    className={`rounded-full px-2 py-[2px] text-[11px] font-semibold ${translationHealthTone === 'ok' ? 'bg-[rgb(var(--color-system-green)/0.14)] text-[rgb(var(--color-system-green))]' : 'bg-[rgb(var(--color-system-orange)/0.18)] text-[rgb(var(--color-system-orange))]'}`}
+                  >
+                    {translationHealthLabel}
+                  </span>
+                </div>
+                <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
+                  {translationHealthDetail}
                 </p>
               </div>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-[rgb(var(--color-label-tertiary))]">

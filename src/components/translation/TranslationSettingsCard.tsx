@@ -13,13 +13,16 @@ import {
 import {
   clearTranslationSecrets,
   getTranslationStorageMode,
+  loadTranslationDevQueueMetricsEnabled,
   loadTranslationConfiguration,
   normalizeTranslationPreferences,
+  saveTranslationDevQueueMetricsEnabled,
   saveTranslationPreferences,
   saveTranslationSecrets,
   type TranslationConfiguration,
   type TranslationProvider,
 } from '@/lib/translation/storage'
+import { getBrowserLanguage } from '@/lib/translation/detect'
 
 function sortLanguages(languages: TranslationLanguage[]): TranslationLanguage[] {
   return [...languages].sort((left, right) => left.name.localeCompare(right.name))
@@ -183,6 +186,14 @@ export function TranslationSettingsCard() {
   const [clearing, setClearing] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [showQueueMetrics, setShowQueueMetrics] = useState(() => (
+    import.meta.env.DEV ? loadTranslationDevQueueMetricsEnabled() : false
+  ))
+
+  function getBrowserPrimaryLanguage(): string {
+    const browserLanguage = getBrowserLanguage()?.toLowerCase() ?? 'en'
+    return browserLanguage.split('-')[0] ?? 'en'
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -418,6 +429,31 @@ export function TranslationSettingsCard() {
     }
   }
 
+  async function handleApplyLocalPreset(): Promise<void> {
+    setMessage('')
+    setError('')
+
+    const targetLanguage = getBrowserPrimaryLanguage()
+    setProvider('small100')
+    setSmall100BaseUrl('http://localhost:7080')
+    setSmall100SourceLanguage('auto')
+    setSmall100TargetLanguage(targetLanguage)
+    setSourceLanguages([])
+    setTargetLanguages([])
+
+    try {
+      await saveTranslationPreferences({
+        provider: 'small100',
+        small100BaseUrl: 'http://localhost:7080',
+        small100SourceLanguage: 'auto',
+        small100TargetLanguage: targetLanguage,
+      })
+      setMessage(`Applied local SMaLL-100 preset (target: ${targetLanguage}).`)
+    } catch (presetError) {
+      setError(presetError instanceof Error ? presetError.message : 'Failed to apply local preset.')
+    }
+  }
+
   if (!loaded) {
     return (
       <div className="rounded-[20px] border border-[rgb(var(--color-fill)/0.16)] bg-[rgb(var(--color-bg-secondary))] p-4">
@@ -468,6 +504,17 @@ export function TranslationSettingsCard() {
           <option value="opusmt">Opus-MT (in-browser)</option>
         </select>
       </label>
+
+      <div className="mt-3">
+        <button
+          type="button"
+          onClick={() => void handleApplyLocalPreset()}
+          disabled={saving || loadingLanguages || clearing}
+          className="w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] px-4 py-2.5 text-[14px] font-medium text-[rgb(var(--color-label))] transition-opacity active:opacity-75 disabled:opacity-40"
+        >
+          Use Local SMaLL-100 Defaults
+        </button>
+      </div>
 
       {provider === 'deepl' ? (
         <>
@@ -728,6 +775,24 @@ export function TranslationSettingsCard() {
           Storage: {storageMode === 'encrypted-indexeddb' ? 'Encrypted local persistence' : 'Session-only fallback'}
         </p>
       </div>
+
+      {import.meta.env.DEV && (
+        <label className="mt-3 flex items-center justify-between gap-3 rounded-[14px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] px-3 py-2.5">
+          <span className="text-[13px] text-[rgb(var(--color-label-secondary))]">
+            Show auto-translate queue metrics in feed (dev)
+          </span>
+          <input
+            type="checkbox"
+            checked={showQueueMetrics}
+            onChange={(event) => {
+              const enabled = event.target.checked
+              setShowQueueMetrics(enabled)
+              saveTranslationDevQueueMetricsEnabled(enabled)
+            }}
+            className="h-4 w-4 accent-[#007AFF]"
+          />
+        </label>
+      )}
 
       {provider === 'libretranslate' && (
         <p className="mt-3 text-[12px] leading-5 text-[rgb(var(--color-label-secondary))]">

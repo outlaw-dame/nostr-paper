@@ -10,7 +10,7 @@
  * All data is sourced from SQLite via useNostrFeed (local-first).
  */
 
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
+import { useState, useCallback, useMemo, useEffect, useRef, type ReactNode } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'motion/react'
 import { useApp } from '@/contexts/app-context'
@@ -38,6 +38,7 @@ import { useModerationDocuments } from '@/hooks/useModeration'
 import { useMuteList } from '@/hooks/useMuteList'
 import { useStoryCardPreview } from '@/hooks/useStoryCardPreview'
 import { useTagTimelineSemanticFeed } from '@/hooks/useTagTimelineSemanticFeed'
+import { useArticleFeedSections } from '@/hooks/useArticleFeedSections'
 import { useHideNsfwTaggedPosts } from '@/hooks/useHideNsfwTaggedPosts'
 import { useSavedTagFeeds } from '@/hooks/useSavedTagFeeds'
 import { useActivityUnread } from '@/hooks/useActivityUnread'
@@ -46,8 +47,9 @@ import { useVisibilityOnce } from '@/hooks/useVisibilityOnce'
 import { useEventFilterCheck, useSemanticFiltering, mergeResults } from '@/hooks/useKeywordFilters'
 import { recordMediaUrlFailure, recordMediaUrlSuccess, shouldAttemptMediaUrl } from '@/lib/media/failureBackoff'
 import { buildComposeSearch } from '@/lib/compose'
+import { type ArticleFeedSection } from '@/lib/feed/articleFeeds'
 import { collectRepostCarouselItems } from '@/lib/feed/reposts'
-import { getFeedHeaderSection } from '@/lib/feed/headerSection'
+import { getFeedHeaderSection, isSavedTagFeedTimeline } from '@/lib/feed/headerSection'
 import { buildFeedRailSections } from '@/lib/feed/railSections'
 import { type SavedTagFeed } from '@/lib/feed/tagFeeds'
 import {
@@ -283,7 +285,7 @@ function buildSavedTagFeedSection(feed: SavedTagFeed): FeedRailSection {
   return {
     id: `tag-feed:${feed.id}`,
     label: feed.title,
-    summary: details?.summary ?? 'Posts, articles, and videos collected from this tag feed.',
+    summary: feed.description || details?.summary || 'Posts, articles, and videos collected from this tag feed.',
     href: buildTagTimelineHref(feed),
     tagTimeline: feed,
     filter: {
@@ -309,6 +311,195 @@ function buildEphemeralTagFeedSection(spec: TagTimelineSpec): FeedRailSection {
       limit: spec.includeTags.length > 1 || spec.excludeTags.length > 0 ? 80 : 50,
     },
   }
+}
+
+function FeedHeaderImage({
+  src,
+  alt = '',
+  className,
+  fallback = null,
+}: {
+  src: string | null
+  alt?: string
+  className: string
+  fallback?: ReactNode
+}) {
+  const [failed, setFailed] = useState(() => !src || !shouldAttemptMediaUrl(src))
+
+  useEffect(() => {
+    setFailed(!src || !shouldAttemptMediaUrl(src))
+  }, [src])
+
+  if (!src || failed) return <>{fallback}</>
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      className={className}
+      onLoad={() => recordMediaUrlSuccess(src)}
+      onError={() => {
+        recordMediaUrlFailure(src)
+        setFailed(true)
+      }}
+    />
+  )
+}
+
+function ArticleFeedShowcase({
+  feed,
+  totalFeedCount,
+  customFeedCount,
+  followingCount,
+  loading,
+  onManage,
+}: {
+  feed: ArticleFeedSection
+  totalFeedCount: number
+  customFeedCount: number
+  followingCount: number
+  loading: boolean
+  onManage: () => void
+}) {
+  const toneBackground = {
+    all: 'bg-[radial-gradient(circle_at_top_left,_rgba(var(--color-accent),0.24),_transparent_52%),linear-gradient(135deg,rgba(var(--color-fill),0.14),rgba(var(--color-fill),0.04))]',
+    following: 'bg-[radial-gradient(circle_at_top_left,_rgba(80,180,255,0.22),_transparent_54%),linear-gradient(135deg,rgba(var(--color-fill),0.14),rgba(var(--color-fill),0.05))]',
+    custom: 'bg-[radial-gradient(circle_at_top_left,_rgba(var(--color-accent),0.18),_transparent_48%),linear-gradient(135deg,rgba(var(--color-fill),0.16),rgba(var(--color-fill),0.06))]',
+  } as const
+
+  const chips: string[] = []
+
+  if (feed.tone === 'all') {
+    chips.push(`${totalFeedCount} lanes`)
+    if (customFeedCount > 0) chips.push(`${customFeedCount} custom`)
+    if (followingCount > 0) chips.push(`${followingCount} following`)
+  }
+
+  if (feed.tone === 'following') {
+    if (followingCount > 0) chips.push(`${followingCount} followed`)
+    if ((feed.profileCount ?? 0) > followingCount) chips.push('Includes you')
+  }
+
+  if (feed.tone === 'custom') {
+    if ((feed.keywordCount ?? 0) > 0) {
+      chips.push(`${feed.keywordCount} ${(feed.keywordCount ?? 0) === 1 ? 'keyword' : 'keywords'}`)
+    }
+    if ((feed.profileCount ?? 0) > 0) {
+      chips.push(`${feed.profileCount} ${(feed.profileCount ?? 0) === 1 ? 'profile' : 'profiles'}`)
+    }
+    if (feed.tagTimeline && feed.tagTimeline.includeTags.length > 1) {
+      chips.push(feed.tagTimeline.mode === 'all' ? 'All keywords' : 'Any keyword')
+    }
+  }
+
+  if (loading) {
+    chips.push('Refreshing')
+  }
+
+  const defaultAvatar = (
+    <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(145deg,rgba(var(--color-accent),0.16),rgba(var(--color-fill),0.12))] text-[rgb(var(--color-label))]">
+      {feed.tone === 'following' ? (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+      ) : feed.tone === 'all' ? (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+        </svg>
+      ) : (
+        <span className="text-[22px] font-semibold">
+          {(feed.label.trim().replace(/^#/, '')[0] ?? 'A').toUpperCase()}
+        </span>
+      )}
+    </div>
+  )
+
+  return (
+    <div className="overflow-hidden rounded-[30px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg-secondary))]">
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={feed.id}
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          transition={{ type: 'spring', stiffness: 260, damping: 28 }}
+          className="relative overflow-hidden px-4 py-4"
+        >
+          <div className={`absolute inset-0 ${toneBackground[feed.tone]}`}>
+            {feed.banner && (
+              <>
+                <FeedHeaderImage
+                  src={feed.banner}
+                  alt=""
+                  className="h-full w-full object-cover opacity-35"
+                />
+                <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.04),rgba(0,0,0,0.2))]" />
+              </>
+            )}
+          </div>
+
+          <div className="relative flex items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgb(var(--color-label-secondary))]">
+                {feed.eyebrow}
+              </p>
+
+              <div className="mt-3 flex items-start gap-3">
+                <div className="h-12 w-12 shrink-0 overflow-hidden rounded-full ring-1 ring-[rgb(var(--color-fill)/0.12)]">
+                  <FeedHeaderImage
+                    src={feed.avatar ?? null}
+                    alt={`${feed.label} avatar`}
+                    className="h-full w-full object-cover"
+                    fallback={defaultAvatar}
+                  />
+                </div>
+
+                <div className="min-w-0">
+                  <h2 className="text-[26px] font-semibold leading-[1.04] tracking-[-0.04em] text-[rgb(var(--color-label))]">
+                    <TwemojiText text={feed.label} />
+                  </h2>
+                  <p className="mt-2 max-w-[34rem] text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
+                    {feed.summary}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={onManage}
+              onPointerDownCapture={(event) => {
+                event.stopPropagation()
+              }}
+              className="shrink-0 rounded-full border border-[rgb(var(--color-fill)/0.14)] bg-[rgb(var(--color-bg)/0.72)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label))] transition-opacity active:opacity-75"
+            >
+              {customFeedCount > 0 ? 'Manage feeds' : 'Create feed'}
+            </button>
+          </div>
+
+          {chips.length > 0 && (
+            <div className="relative mt-4 flex flex-wrap gap-2">
+              {chips.map((chip) => (
+                <span
+                  key={`${feed.id}:${chip}`}
+                  className="rounded-full bg-[rgb(var(--color-bg)/0.68)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label-secondary))] ring-1 ring-[rgb(var(--color-fill)/0.08)]"
+                >
+                  {chip}
+                </span>
+              ))}
+            </div>
+          )}
+        </motion.div>
+      </AnimatePresence>
+    </div>
+  )
 }
 
 export default function FeedPage() {
@@ -350,6 +541,7 @@ export default function FeedPage() {
     })
   }, [routeSection, savedTagSections])
   const [activeSectionId, setActiveSectionId] = useState(DEFAULT_SECTIONS[0]!.id)
+  const [activeArticleFeedId, setActiveArticleFeedId] = useState('articles:all-feeds')
   const [repostCarouselVisible, setRepostCarouselVisible] = useState(true)
   const [feedInlineAutoplayEnabled, setFeedInlineAutoplayEnabled] = useState(true)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -367,7 +559,33 @@ export default function FeedPage() {
       ?? railSections.find((section) => section.id === activeSectionId)
       ?? DEFAULT_SECTIONS[0]!
   ), [activeSectionId, railSections, routeSection])
-  const activeTagTimeline = activeSection.tagTimeline ?? null
+  const {
+    sections: articleFeedSections,
+    followingCount: articleFeedFollowingCount,
+    loading: articleFeedSectionsLoading,
+  } = useArticleFeedSections(currentUser?.pubkey ?? null, savedTagFeeds)
+  const activeArticleFeed = useMemo<ArticleFeedSection | null>(() => {
+    if (activeSection.id !== 'articles') return null
+    return articleFeedSections.find((section) => section.id === activeArticleFeedId)
+      ?? articleFeedSections[0]
+      ?? null
+  }, [activeArticleFeedId, activeSection.id, articleFeedSections])
+  const effectiveFeedSection = useMemo<FeedRailSection>(() => {
+    if (activeSection.id !== 'articles' || !activeArticleFeed) return activeSection
+
+    return {
+      id: activeArticleFeed.id,
+      label: activeArticleFeed.label,
+      summary: activeArticleFeed.summary,
+      filter: activeArticleFeed.filter,
+      tagTimeline: activeArticleFeed.tagTimeline ?? null,
+    }
+  }, [activeArticleFeed, activeSection])
+  const activeTagTimeline = effectiveFeedSection.tagTimeline ?? null
+  const activeSavedTagFeed = useMemo(
+    () => (isSavedTagFeedTimeline(activeSection.tagTimeline) ? activeSection.tagTimeline : null),
+    [activeSection.tagTimeline],
+  )
   const activeTagTimelineDetails = useMemo(
     () => describeTagTimeline(activeTagTimeline),
     [activeTagTimeline],
@@ -378,8 +596,8 @@ export default function FeedPage() {
   )
 
   const feedScopeKey = useMemo(
-    () => `${currentUser?.pubkey ?? 'anon'}::${activeSection.id}`,
-    [activeSection.id, currentUser?.pubkey],
+    () => `${currentUser?.pubkey ?? 'anon'}::${effectiveFeedSection.id}`,
+    [currentUser?.pubkey, effectiveFeedSection.id],
   )
 
   const resumeScopeId = useMemo(
@@ -387,13 +605,20 @@ export default function FeedPage() {
     [currentUser?.pubkey],
   )
 
-  const { events, loading, eose } = useNostrFeed({ section: activeSection })
+  useEffect(() => {
+    if (articleFeedSections.length === 0) return
+    if (!articleFeedSections.some((section) => section.id === activeArticleFeedId)) {
+      setActiveArticleFeedId(articleFeedSections[0]!.id)
+    }
+  }, [activeArticleFeedId, articleFeedSections])
+
+  const { events, loading, eose } = useNostrFeed({ section: effectiveFeedSection })
   const {
     events: semanticTimelineEvents,
     scores: semanticTimelineScores,
     loading: semanticTimelineLoading,
     error: semanticTimelineError,
-  } = useTagTimelineSemanticFeed(activeTagTimeline, activeSection.filter.kinds)
+  } = useTagTimelineSemanticFeed(activeTagTimeline, effectiveFeedSection.filter.kinds)
   const timelineCandidateEvents = useMemo(() => {
     if (!activeTagTimeline) return events
 
@@ -646,6 +871,10 @@ export default function FeedPage() {
     })
   }, [location.pathname, location.search, navigate])
 
+  const stopPullGestureCapture = useCallback((event: React.PointerEvent) => {
+    event.stopPropagation()
+  }, [])
+
   const handlePullRelease = useCallback(
     (_: unknown, info: { offset: { y: number } }) => {
       if (info.offset.y >= COMPOSE_TRIGGER_OFFSET) {
@@ -702,6 +931,96 @@ export default function FeedPage() {
   const sectionSummary = headerSection.summary
   const showStories = !activeTagTimeline && activeSection.id === 'feed'
   const showRepostCarousel = repostFeatureEnabled && repostCarouselItems.length > 0
+  const showArticleFeeds = activeSection.id === 'articles' && activeArticleFeed !== null
+  const customArticleFeedCount = articleFeedSections.filter((section) => section.tone === 'custom').length
+  const savedFeedTopicOverflow = Math.max(0, (activeSavedTagFeed?.includeTags.length ?? 0) - 4)
+  const headerActions = (
+    <div className="flex items-center gap-1 pt-0.5">
+      <button
+        type="button"
+        onClick={() => navigate(currentUser ? '/profile' : '/onboard')}
+        onPointerDownCapture={stopPullGestureCapture}
+        className="
+          flex h-10 w-10 shrink-0 items-center justify-center rounded-full
+          overflow-hidden text-[rgb(var(--color-label-secondary))]
+          transition-opacity active:opacity-70
+        "
+        aria-label={currentUser ? 'My Profile' : 'Sign In'}
+      >
+        {currentUserProfile?.picture ? (
+          <img
+            src={currentUserProfile.picture}
+            alt="Profile"
+            className="h-9 w-9 rounded-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <circle cx="12" cy="8" r="5" />
+            <path d="M20 21a8 8 0 0 0-16 0" />
+          </svg>
+        )}
+      </button>
+
+      <button
+        type="button"
+        onClick={() => navigate('/activity')}
+        onPointerDownCapture={stopPullGestureCapture}
+        className="
+          relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full
+          text-[rgb(var(--color-label-secondary))]
+          transition-opacity active:opacity-70
+        "
+        aria-label="Activity"
+      >
+        {currentUser && hasUnreadActivity && (
+          <span
+            className="absolute -right-0.5 -top-0.5 min-w-[16px] rounded-full bg-[rgb(var(--color-system-red))] px-1 py-[1px] text-center text-[10px] font-semibold leading-[1.2] text-white"
+            aria-label={`${activityUnreadCount} unread notifications`}
+          >
+            {activityUnreadBadgeText}
+          </span>
+        )}
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8" />
+          <path d="M10.5 20a1.5 1.5 0 0 0 3 0" />
+        </svg>
+      </button>
+
+      <button
+        type="button"
+        onClick={() => navigate('/settings')}
+        onPointerDownCapture={stopPullGestureCapture}
+        className="
+          flex h-10 w-10 shrink-0 items-center justify-center rounded-full
+          text-[rgb(var(--color-label-secondary))]
+          transition-opacity active:opacity-70
+        "
+        aria-label="Settings"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+      </button>
+
+      <button
+        type="button"
+        onClick={handleCompose}
+        onPointerDownCapture={stopPullGestureCapture}
+        className="
+          flex h-10 w-10 shrink-0 items-center justify-center rounded-full
+          text-[rgb(var(--color-label))]
+          transition-opacity active:opacity-70
+        "
+        aria-label="Compose a note"
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+          <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
+      </button>
+    </div>
+  )
 
   return (
     <div className="min-h-dvh bg-[rgb(var(--color-bg))] flex flex-col overflow-hidden">
@@ -745,103 +1064,107 @@ export default function FeedPage() {
         >
           <div className="pb-6 pt-safe">
             <section className="px-1 pt-2">
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0 flex-1">
-                  <p className="section-kicker">Nostr Paper</p>
-                  <h1 className="mt-1.5 text-[30px] font-semibold leading-[1.02] tracking-[-0.04em] text-[rgb(var(--color-label))]">
-                    <TwemojiText text={headerSection.label} />
-                  </h1>
-                  <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
-                    {sectionSummary}
-                  </p>
-                </div>
+              {activeSavedTagFeed ? (
+                <div className="space-y-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0 flex-1">
+                      <p className="section-kicker">Saved Feed</p>
+                      <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
+                        Exact hashtags, plain-text mentions, and semantic context around your selected topics.
+                      </p>
+                    </div>
 
-                <div className="flex items-center gap-1 pt-0.5">
-                  <button
-                    type="button"
-                    onClick={() => navigate(currentUser ? '/profile' : '/onboard')}
-                    className="
-                      flex h-10 w-10 shrink-0 items-center justify-center rounded-full
-                      overflow-hidden text-[rgb(var(--color-label-secondary))]
-                      transition-opacity active:opacity-70
-                    "
-                    aria-label={currentUser ? 'My Profile' : 'Sign In'}
-                  >
-                    {currentUserProfile?.picture ? (
-                      <img
-                        src={currentUserProfile.picture}
-                        alt="Profile"
-                        className="h-9 w-9 rounded-full object-cover"
-                        loading="lazy"
+                    {headerActions}
+                  </div>
+
+                  <div className="overflow-hidden rounded-[28px] border border-[rgb(var(--color-fill)/0.1)] bg-[rgb(var(--color-bg-secondary))]">
+                    <div className="relative h-40 overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(var(--color-accent),0.2),_transparent_55%),linear-gradient(180deg,_rgba(var(--color-fill),0.14),_rgba(var(--color-fill),0.05))]">
+                      <FeedHeaderImage
+                        src={activeSavedTagFeed.banner || null}
+                        className="h-full w-full object-cover"
                       />
-                    ) : (
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                        <circle cx="12" cy="8" r="5" />
-                        <path d="M20 21a8 8 0 0 0-16 0" />
-                      </svg>
-                    )}
-                  </button>
+                      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,0.22))]" />
+                    </div>
 
-                  <button
-                    type="button"
-                    onClick={() => navigate('/activity')}
-                    className="
-                      relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full
-                      text-[rgb(var(--color-label-secondary))]
-                      transition-opacity active:opacity-70
-                    "
-                    aria-label="Activity"
-                  >
-                    {currentUser && hasUnreadActivity && (
-                      <span
-                        className="absolute -right-0.5 -top-0.5 min-w-[16px] rounded-full bg-[rgb(var(--color-system-red))] px-1 py-[1px] text-center text-[10px] font-semibold leading-[1.2] text-white"
-                        aria-label={`${activityUnreadCount} unread notifications`}
-                      >
-                        {activityUnreadBadgeText}
-                      </span>
-                    )}
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8" />
-                      <path d="M10.5 20a1.5 1.5 0 0 0 3 0" />
-                    </svg>
-                  </button>
+                    <div className="relative px-4 pb-4">
+                      <div className="-mt-10 flex items-end justify-between gap-3">
+                        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full ring-4 ring-[rgb(var(--color-bg))]">
+                          <FeedHeaderImage
+                            src={activeSavedTagFeed.avatar || null}
+                            alt={`${headerSection.label} avatar`}
+                            className="h-full w-full object-cover"
+                            fallback={(
+                              <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(145deg,rgba(var(--color-accent),0.18),rgba(var(--color-fill),0.12))] text-[rgb(var(--color-label))]">
+                                <span className="text-[28px] font-semibold">
+                                  {(headerSection.label.trim().replace(/^#/, '')[0] ?? 'F').toUpperCase()}
+                                </span>
+                              </div>
+                            )}
+                          />
+                        </div>
 
-                  <button
-                    type="button"
-                    onClick={() => navigate('/settings')}
-                    className="
-                      flex h-10 w-10 shrink-0 items-center justify-center rounded-full
-                      text-[rgb(var(--color-label-secondary))]
-                      transition-opacity active:opacity-70
-                    "
-                    aria-label="Settings"
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                      <circle cx="12" cy="12" r="3" />
-                      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                    </svg>
-                  </button>
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
+                            {activeSavedTagFeed.includeTags.length} topic{activeSavedTagFeed.includeTags.length === 1 ? '' : 's'}
+                          </span>
+                          <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
+                            {activeSavedTagFeed.mode === 'all' ? 'All topics' : 'Any topic'}
+                          </span>
+                          {activeSavedTagFeed.profilePubkeys.length > 0 && (
+                            <span className="rounded-full bg-[rgb(var(--color-accent)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
+                              {activeSavedTagFeed.profilePubkeys.length} profile{activeSavedTagFeed.profilePubkeys.length === 1 ? '' : 's'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
 
-                  <button
-                    type="button"
-                    onClick={handleCompose}
-                    className="
-                      flex h-10 w-10 shrink-0 items-center justify-center rounded-full
-                      text-[rgb(var(--color-label))]
-                      transition-opacity active:opacity-70
-                    "
-                    aria-label="Compose a note"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-                      <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                    </svg>
-                  </button>
+                      <div className="mt-3">
+                        <h1 className="text-[30px] font-semibold leading-[1.02] tracking-[-0.04em] text-[rgb(var(--color-label))]">
+                          <TwemojiText text={headerSection.label} />
+                        </h1>
+                        <p className="mt-2 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
+                          {sectionSummary}
+                        </p>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {activeSavedTagFeed.includeTags.slice(0, 4).map((tag) => (
+                          <span
+                            key={`saved-header:${activeSavedTagFeed.id}:${tag}`}
+                            className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label))]"
+                          >
+                            #{tag}
+                          </span>
+                        ))}
+                        {savedFeedTopicOverflow > 0 && (
+                          <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
+                            +{savedFeedTopicOverflow}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <p className="section-kicker">Nostr Paper</p>
+                    <h1 className="mt-1.5 text-[30px] font-semibold leading-[1.02] tracking-[-0.04em] text-[rgb(var(--color-label))]">
+                      <TwemojiText text={headerSection.label} />
+                    </h1>
+                    <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
+                      {sectionSummary}
+                    </p>
+                  </div>
+
+                  {headerActions}
+                </div>
+              )}
 
               <button
                 type="button"
                 onClick={() => navigate('/explore')}
+                onPointerDownCapture={stopPullGestureCapture}
                 className="
                   mt-4 flex w-full items-center gap-3 border-b border-[rgb(var(--color-fill)/0.12)] pb-3
                   text-left text-[15px] text-[rgb(var(--color-label-tertiary))]
@@ -868,6 +1191,25 @@ export default function FeedPage() {
                 onSelect={handleSectionChange}
               />
             </div>
+
+            {showArticleFeeds && activeArticleFeed && (
+              <div className="mt-4 space-y-3">
+                <ArticleFeedShowcase
+                  feed={activeArticleFeed}
+                  totalFeedCount={articleFeedSections.length}
+                  customFeedCount={customArticleFeedCount}
+                  followingCount={articleFeedFollowingCount}
+                  loading={articleFeedSectionsLoading}
+                  onManage={() => navigate('/settings/tag-feeds')}
+                />
+
+                <SectionRail
+                  sections={articleFeedSections}
+                  activeId={activeArticleFeed.id}
+                  onSelect={setActiveArticleFeedId}
+                />
+              </div>
+            )}
 
             {activeTagTimeline && semanticTimelineError && (
               <p className="mt-3 px-1 text-[12px] leading-5 text-[rgb(var(--color-label-tertiary))]">

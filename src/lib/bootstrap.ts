@@ -90,9 +90,9 @@ export async function bootstrap(
     await withRetry(
       () => initNDK(signal !== undefined ? { signal } : {}),
       {
-        maxAttempts: 2,
-        baseDelayMs: 1_000,
-        maxDelayMs:  5_000,
+        maxAttempts: 1,
+        baseDelayMs: 400,
+        maxDelayMs:  1_200,
         ...(signal !== undefined ? { signal } : {}),
         shouldRetry: (error) => {
           // Do not retry auth errors

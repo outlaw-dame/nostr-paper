@@ -9,6 +9,8 @@
     "dev:5173": "VITE_DEV_PORT=5173 vite",
     "dev:5174": "VITE_DEV_PORT=5174 vite",
     "dev:auto": "vite --strictPort false",
+    "dev:5175": "VITE_DEV_PORT=5175 vite",
+    "dev:5176": "VITE_DEV_PORT=5176 vite",
     "dev:host": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "precompress": "node scripts/precompress.mjs",
@@ -24,6 +26,15 @@
     "test:coverage": "vitest run --coverage",
     "analyze": "vite build --mode analyze",
     "api:safe": "set -a && source .env.local && set +a && .venv/bin/python server/translate.py --host 0.0.0.0 --port 7080"
+  },
+  "multiAppDev": {
+    "usage": [
+      "npm run dev:5173   # App A on port 5173 (http://localhost:5173/)",
+      "npm run dev:5174   # App B on port 5174 (http://localhost:5174/)",
+      "npm run dev:5175   # App C on port 5175 (http://localhost:5175/)",
+      "npm run dev:5176   # App D on port 5176 (http://localhost:5176/)"
+    ],
+    "note": "Each app must use a unique port. Always open the matching URL for the script you run."
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",

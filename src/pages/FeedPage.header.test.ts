@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { getFeedHeaderSection } from '@/lib/feed/headerSection'
+import type { SavedTagFeed } from '@/lib/feed/tagFeeds'
 import type { TagTimelineSpec } from '@/lib/feed/tagTimeline'
 import { Kind } from '@/types'
 
@@ -49,5 +50,38 @@ describe('getFeedHeaderSection', () => {
     })
 
     expect(getFeedHeaderSection(notes, makeSection())).toEqual(notes)
+  })
+
+  it('preserves the saved tag feed header when the active timeline is a saved feed', () => {
+    const savedFeed: SavedTagFeed = {
+      id: 'saved-intelligence',
+      title: 'Intelligence',
+      description: 'Research, signals, and people to watch.',
+      avatar: 'https://cdn.example.com/intelligence-avatar.jpg',
+      banner: 'https://cdn.example.com/intelligence-banner.jpg',
+      profilePubkeys: ['a'.repeat(64)],
+      includeTags: ['intelligence'],
+      excludeTags: [],
+      mode: 'any',
+      createdAt: 10,
+      updatedAt: 20,
+    }
+    const defaultFeedSection = makeSection()
+
+    const header = getFeedHeaderSection(makeSection({
+      id: 'tag-feed:saved-intelligence',
+      label: 'Intelligence',
+      summary: 'Research, signals, and people to watch.',
+      tagTimeline: savedFeed,
+      filter: {
+        kinds: [Kind.ShortNote, Kind.Thread],
+        '#t': ['intelligence'],
+        limit: 50,
+      },
+    }), defaultFeedSection)
+
+    expect(header.id).toBe('tag-feed:saved-intelligence')
+    expect(header.label).toBe('Intelligence')
+    expect(header.summary).toBe('Research, signals, and people to watch.')
   })
 })

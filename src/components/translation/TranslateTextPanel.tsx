@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { TwemojiText } from '@/components/ui/TwemojiText'
 import {
   inspectConfiguredTranslation,
@@ -8,7 +9,10 @@ import {
   type TranslationPreflight,
   type TranslationResult,
 } from '@/lib/translation/client'
-import { TRANSLATION_SETTINGS_UPDATED_EVENT } from '@/lib/translation/storage'
+import {
+  loadTranslationDevQueueMetricsEnabled,
+  TRANSLATION_SETTINGS_UPDATED_EVENT,
+} from '@/lib/translation/storage'
 
 interface TranslateTextPanelProps {
   text: string
@@ -18,11 +22,76 @@ interface TranslateTextPanelProps {
 
 const MAX_AUTO_TRANSLATE_CHARS = 2_800
 const AUTO_RETRY_COOLDOWN_MS = 30_000
+const MAX_CONCURRENT_AUTO_TRANSLATIONS = 4
+
+let activeAutoTranslationJobs = 0
+const queuedAutoTranslationStarters: Array<() => void> = []
+const autoQueueMetricListeners = new Set<(snapshot: { active: number; queued: number }) => void>()
+
+function publishAutoQueueMetrics(): void {
+  const snapshot = {
+    active: activeAutoTranslationJobs,
+    queued: queuedAutoTranslationStarters.length,
+  }
+  autoQueueMetricListeners.forEach(listener => listener(snapshot))
+}
+
+function scheduleNextAutoTranslation(): void {
+  if (activeAutoTranslationJobs >= MAX_CONCURRENT_AUTO_TRANSLATIONS) return
+  const next = queuedAutoTranslationStarters.shift()
+  if (next) next()
+}
+
+function runAutoTranslationJob<T>(
+  execute: () => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const start = () => {
+      if (signal.aborted) {
+        reject(new DOMException('Aborted', 'AbortError'))
+        return
+      }
+
+      activeAutoTranslationJobs += 1
+      publishAutoQueueMetrics()
+      void execute()
+        .then(resolve)
+        .catch(reject)
+        .finally(() => {
+          activeAutoTranslationJobs = Math.max(0, activeAutoTranslationJobs - 1)
+          publishAutoQueueMetrics()
+          scheduleNextAutoTranslation()
+        })
+    }
+
+    if (activeAutoTranslationJobs < MAX_CONCURRENT_AUTO_TRANSLATIONS) {
+      start()
+      return
+    }
+
+    const onAbort = () => {
+      const index = queuedAutoTranslationStarters.indexOf(start)
+      if (index !== -1) {
+        queuedAutoTranslationStarters.splice(index, 1)
+        publishAutoQueueMetrics()
+      }
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+
+    signal.addEventListener('abort', onAbort, { once: true })
+    queuedAutoTranslationStarters.push(() => {
+      signal.removeEventListener('abort', onAbort)
+      start()
+    })
+    publishAutoQueueMetrics()
+  })
+}
 
 export function TranslateTextPanel({
   text,
   className = '',
-  autoStart = false,
+  autoStart = true,
 }: TranslateTextPanelProps) {
   const [result, setResult] = useState<TranslationResult | null>(null)
   const [hidden, setHidden] = useState(false)
@@ -35,6 +104,14 @@ export function TranslateTextPanel({
   const [autoAttempted, setAutoAttempted] = useState(false)
   const [autoBlockedUntil, setAutoBlockedUntil] = useState(0)
   const [preflight, setPreflight] = useState<TranslationPreflight | null>(null)
+  const [toastVisible, setToastVisible] = useState(false)
+  const [toastMessage, setToastMessage] = useState('')
+  const [showQueueMetrics, setShowQueueMetrics] = useState(() => (
+    import.meta.env.DEV ? loadTranslationDevQueueMetricsEnabled() : false
+  ))
+  const [autoQueueSnapshot, setAutoQueueSnapshot] = useState({ active: 0, queued: 0 })
+  const toastTimerRef = useRef<number | null>(null)
+  const pendingRequestIsAutoRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
   const trimmedText = text.trim()
   const now = Date.now()
@@ -66,6 +143,10 @@ export function TranslateTextPanel({
       setLoading(false)
       setAutoAttempted(false)
       setAutoBlockedUntil(0)
+      pendingRequestIsAutoRef.current = false
+      if (import.meta.env.DEV) {
+        setShowQueueMetrics(loadTranslationDevQueueMetricsEnabled())
+      }
       setSettingsVersion(version => version + 1)
     }
 
@@ -77,6 +158,29 @@ export function TranslateTextPanel({
 
   useEffect(() => {
     return () => abortRef.current?.abort()
+  }, [])
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || !showQueueMetrics) return
+
+    const handleQueueUpdate = (snapshot: { active: number; queued: number }) => {
+      setAutoQueueSnapshot(snapshot)
+    }
+
+    autoQueueMetricListeners.add(handleQueueUpdate)
+    publishAutoQueueMetrics()
+    return () => {
+      autoQueueMetricListeners.delete(handleQueueUpdate)
+    }
+  }, [showQueueMetrics])
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current)
+        toastTimerRef.current = null
+      }
+    }
   }, [])
 
   useEffect(() => {
@@ -114,13 +218,24 @@ export function TranslateTextPanel({
     const controller = new AbortController()
     abortRef.current?.abort()
     abortRef.current = controller
-    setLoading(true)
     setError(null)
     setErrorCode(null)
 
+    const requestIsAuto = pendingRequestIsAutoRef.current
+    pendingRequestIsAutoRef.current = false
+
     void (async () => {
       try {
-        const translated = await translateConfiguredText(trimmedText, controller.signal)
+        const translated = requestIsAuto
+          ? await runAutoTranslationJob(async () => {
+            if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError')
+            setLoading(true)
+            return translateConfiguredText(trimmedText, controller.signal)
+          }, controller.signal)
+          : await (async () => {
+            setLoading(true)
+            return translateConfiguredText(trimmedText, controller.signal)
+          })()
         if (controller.signal.aborted) return
         setResult(translated)
       } catch (translationError) {
@@ -148,6 +263,21 @@ export function TranslateTextPanel({
         setErrorCode(code)
         setRequested(false)
 
+        const shouldShowToast = code === 'config' || code === 'unavailable' || code === 'network' || code === 'provider'
+        if (shouldShowToast) {
+          setToastMessage(code === 'config' || code === 'unavailable'
+            ? 'Translation needs setup. Open Translation Settings.'
+            : 'Translation failed. You can retry or adjust Translation Settings.')
+          setToastVisible(true)
+          if (toastTimerRef.current !== null) {
+            window.clearTimeout(toastTimerRef.current)
+          }
+          toastTimerRef.current = window.setTimeout(() => {
+            setToastVisible(false)
+            toastTimerRef.current = null
+          }, 4800)
+        }
+
         if (autoStart && !autoAttempted && (code === 'network' || code === 'provider')) {
           setAutoBlockedUntil(Date.now() + AUTO_RETRY_COOLDOWN_MS)
         }
@@ -171,6 +301,7 @@ export function TranslateTextPanel({
     if (autoAttempted) return
     if (autoBlockedUntil > Date.now()) return
 
+    pendingRequestIsAutoRef.current = true
     setAutoAttempted(true)
     setRequested(true)
     setRequestVersion(version => version + 1)
@@ -202,6 +333,7 @@ export function TranslateTextPanel({
   if (sameLanguage || sameLanguageResult || errorCode === 'same-language') return null
 
   const requestTranslation = () => {
+    pendingRequestIsAutoRef.current = false
     setRequested(true)
     setAutoAttempted(true)
     setAutoBlockedUntil(0)
@@ -213,14 +345,24 @@ export function TranslateTextPanel({
   const autoBlocked = autoBlockedUntil > now
   const autoLongText = trimmedText.length > MAX_AUTO_TRANSLATE_CHARS
 
+  const stopPropagation = (event: React.SyntheticEvent) => {
+    event.stopPropagation()
+  }
+
   return (
-    <div className={`mt-3 ${className}`} onClick={e => e.stopPropagation()}>
+    <div
+      className={`mt-3 ${className}`}
+      onClick={stopPropagation}
+      onPointerDownCapture={stopPropagation}
+      onPointerUpCapture={stopPropagation}
+    >
       {!requested && !loading && !result && !error && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           {preflight && (
             <button
               type="button"
               onClick={requestTranslation}
+              onPointerDownCapture={stopPropagation}
               className="text-[12px] font-semibold tracking-[0.01em] text-[#007AFF]"
             >
               🌐 Translate
@@ -245,6 +387,12 @@ export function TranslateTextPanel({
         </p>
       )}
 
+      {import.meta.env.DEV && showQueueMetrics && (autoQueueSnapshot.active > 0 || autoQueueSnapshot.queued > 0) && (
+        <p className="text-[11px] text-[rgb(var(--color-label-tertiary))]">
+          Auto-translate queue: {autoQueueSnapshot.active} active, {autoQueueSnapshot.queued} waiting
+        </p>
+      )}
+
       {error && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="text-[12px] text-[rgb(var(--color-system-red))]" title={error}>
@@ -255,14 +403,20 @@ export function TranslateTextPanel({
           <button
             type="button"
             onClick={requestTranslation}
+            onPointerDownCapture={stopPropagation}
             className="text-[12px] font-medium text-[rgb(var(--color-system-red))] underline underline-offset-2"
           >
             Retry
           </button>
           {(errorCode === 'config' || errorCode === 'unavailable') && (
-            <span className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
-              Configure provider in Settings.
-            </span>
+            <Link
+              to="/settings/translations"
+              onClick={stopPropagation}
+              onPointerDownCapture={stopPropagation}
+              className="text-[12px] text-[#007AFF] underline underline-offset-2"
+            >
+              Open Translation Settings
+            </Link>
           )}
         </div>
       )}
@@ -287,6 +441,7 @@ export function TranslateTextPanel({
             <button
               type="button"
               onClick={() => setHidden(prev => !prev)}
+              onPointerDownCapture={stopPropagation}
               className="font-medium text-[#007AFF]"
             >
               {hidden ? 'Show translation' : 'Hide translation'}
@@ -295,12 +450,31 @@ export function TranslateTextPanel({
             <button
               type="button"
               onClick={requestTranslation}
+              onPointerDownCapture={stopPropagation}
               className="font-medium text-[#007AFF]"
             >
               Re-translate
             </button>
           </p>
         </>
+      )}
+
+      {toastVisible && (
+        <div className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+14px)] z-50 flex justify-center pointer-events-none">
+          <div className="pointer-events-auto max-w-md rounded-[14px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg-secondary))] px-3 py-2 shadow-lg">
+            <p className="text-[12px] leading-5 text-[rgb(var(--color-label-secondary))]">
+              {toastMessage}{' '}
+              <Link
+                to="/settings/translations"
+                onClick={stopPropagation}
+                onPointerDownCapture={stopPropagation}
+                className="font-medium text-[#007AFF] underline underline-offset-2"
+              >
+                Open Translation Settings
+              </Link>
+            </p>
+          </div>
+        </div>
       )}
     </div>
   )

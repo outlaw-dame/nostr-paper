@@ -9,7 +9,7 @@
  * - Global error boundary
  */
 
-import React, { useEffect, useState, Suspense, lazy } from 'react'
+import React, { useEffect, useState, Suspense, lazy, Component, type ReactNode, type ErrorInfo } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { App as KonstaApp } from 'konsta/react'
 import { AnimatePresence } from 'motion/react'
@@ -20,6 +20,39 @@ import { BootSplash } from '@/components/layout/BootSplash'
 import { UpdateBanner } from '@/components/ui/UpdateBanner'
 import { ErrorScreen } from '@/components/ui/ErrorScreen'
 import { OfflineBanner } from '@/components/ui/OfflineBanner'
+
+// ── Error Boundary ────────────────────────────────────────────
+
+interface ErrorBoundaryState {
+  error: Error | null
+}
+
+class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
+  constructor(props: { children: ReactNode }) {
+    super(props)
+    this.state = { error: null }
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { error }
+  }
+
+  override componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[AppErrorBoundary] Render error caught:', error, info.componentStack)
+  }
+
+  override render() {
+    if (this.state.error) {
+      return (
+        <ErrorScreen
+          code="RENDER_ERROR"
+          message={this.state.error.message || 'An unexpected error occurred while rendering.'}
+        />
+      )
+    }
+    return this.props.children
+  }
+}
 
 // Lazy-loaded pages (code-split per route)
 const FeedPage    = lazy(() => import('@/pages/FeedPage'))
@@ -39,6 +72,7 @@ const ModerationPage = lazy(() => import('@/pages/ModerationPage'))
 const TagFeedsPage = lazy(() => import('@/pages/TagFeedsPage'))
 const FiltersPage  = lazy(() => import('@/pages/FiltersPage'))
 const RelaysPage   = lazy(() => import('@/pages/RelaysPage'))
+const TranslationsPage = lazy(() => import('@/pages/TranslationsPage'))
 const ActivityPage = lazy(() => import('@/pages/ActivityPage'))
 const OnboardPage  = lazy(() => import('@/pages/OnboardPage'))
 const ExplorePage  = lazy(() => import('@/pages/ExplorePage'))
@@ -141,6 +175,7 @@ function InnerApp() {
             <Route path="/settings/appearance" element={<AppearancePage />} />
             <Route path="/settings/moderation" element={<ModerationPage />} />
             <Route path="/settings/tag-feeds"  element={<TagFeedsPage />} />
+            <Route path="/settings/translations" element={<TranslationsPage />} />
             <Route path="/settings/moderation/filters" element={<FiltersPage />} />
             <Route path="/settings/relays"     element={<RelaysPage />} />
             <Route path="/filters"             element={<Navigate to="/settings/moderation/filters" replace />} />

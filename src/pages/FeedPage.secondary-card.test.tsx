@@ -143,6 +143,10 @@ vi.mock('@/components/nostr/RepostBody', () => ({
   RepostBody: () => null,
 }))
 
+vi.mock('@/components/nostr/EventMetricsRow', () => ({
+  EventMetricsRow: () => null,
+}))
+
 vi.mock('@/components/translation/TranslateTextPanel', () => ({
   TranslateTextPanel: () => null,
 }))
@@ -202,7 +206,7 @@ describe('SecondaryCard', () => {
     expect(html).toContain('src="https://techcrunch.com/hero.jpg"')
   })
 
-  it('renders embeddable video previews and external bylines for video cards', () => {
+  it('renders video story previews and external bylines for video cards', () => {
     const event = baseEvent({
       kind: Kind.Video,
       content: '',
@@ -231,8 +235,8 @@ describe('SecondaryCard', () => {
       </MemoryRouter>,
     )
 
-    expect(html).toContain('<iframe')
-    expect(html).toContain('youtube-nocookie.com/embed/launch-demo')
+    expect(html).toContain('src="https://video.example.com/poster.jpg"')
+    expect(html).toContain('>Video<')
     expect(html).toContain('By Studio Channel • youtube.com')
   })
 })
