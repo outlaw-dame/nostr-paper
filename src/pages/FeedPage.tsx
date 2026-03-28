@@ -13,6 +13,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef, memo, type ReactNode } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'motion/react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useApp } from '@/contexts/app-context'
 import { useNostrFeed } from '@/hooks/useNostrFeed'
 import { HeroCard } from '@/components/cards/HeroCard'
@@ -864,6 +865,18 @@ export default function FeedPage() {
   const checkEvent      = useEventFilterCheck()
   const semanticResults = useSemanticFiltering(visibleEvents)
 
+  const virtualizer = useVirtualizer({
+    count: secondaryEvents.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => 280,
+    overscan: 5,
+  })
+  const virtualItems = virtualizer.getVirtualItems()
+  const virtualPaddingTop = virtualItems.length > 0 ? virtualItems[0]!.start : 0
+  const virtualPaddingBottom = virtualItems.length > 0
+    ? virtualizer.getTotalSize() - virtualItems[virtualItems.length - 1]!.end
+    : 0
+
   const handleCompose = useCallback(() => {
     navigate({
       pathname: location.pathname,
@@ -1260,24 +1273,35 @@ export default function FeedPage() {
               ) : null}
             </div>
 
-            <div className="mt-4 space-y-3">
+            <div className="mt-4">
               {feedLoading && secondaryEvents.length === 0 ? (
-                Array.from({ length: 3 }, (_, i) => (
-                  <FeedSkeleton key={i} type="card" />
-                ))
-              ) : (
-                <AnimatePresence initial={false}>
-                  {secondaryEvents.map((event, i) => (
-                    <MemoSecondaryCard
-                      key={event.id}
-                      event={event}
-                      index={i}
-                      checkEvent={checkEvent}
-                      semanticResult={semanticResults.get(event.id) ?? EMPTY_FILTER_RESULT}
-                      feedInlineAutoplayEnabled={feedInlineAutoplayEnabled}
-                    />
+                <div className="space-y-3">
+                  {Array.from({ length: 3 }, (_, i) => (
+                    <FeedSkeleton key={i} type="card" />
                   ))}
-                </AnimatePresence>
+                </div>
+              ) : (
+                  <div style={{ paddingTop: `${virtualPaddingTop}px`, paddingBottom: `${virtualPaddingBottom}px` }}>
+                    {virtualItems.map((virtualRow) => {
+                      const event = secondaryEvents[virtualRow.index]!
+                      return (
+                        <div
+                          key={event.id}
+                          ref={virtualizer.measureElement}
+                          data-index={virtualRow.index}
+                          className="pb-3"
+                        >
+                          <MemoSecondaryCard
+                            event={event}
+                            index={virtualRow.index}
+                            checkEvent={checkEvent}
+                            semanticResult={semanticResults.get(event.id) ?? EMPTY_FILTER_RESULT}
+                            feedInlineAutoplayEnabled={feedInlineAutoplayEnabled}
+                          />
+                        </div>
+                      )
+                    })}
+                  </div>
               )}
             </div>
           </div>
