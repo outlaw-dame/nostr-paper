@@ -7,6 +7,7 @@ import { useSavedTagFeeds } from '@/hooks/useSavedTagFeeds'
 import { useUserStatus } from '@/hooks/useUserStatus'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { UserStatusBody } from '@/components/nostr/UserStatusBody'
+import { BlossomServerManager } from '@/components/blossom/BlossomServerManager'
 import { getFeedResumeEnabled, setFeedResumeEnabled } from '@/lib/feed/resumeSettings'
 import { getFeedInlineMediaAutoplayEnabled, setFeedInlineMediaAutoplayEnabled } from '@/lib/ui/zenSettings'
 import { getNDK } from '@/lib/nostr/ndk'
@@ -498,6 +499,24 @@ export default function SettingsPage() {
                 <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </button>
+          </div>
+        </section>
+
+        {/* Media Servers Section */}
+        <section>
+          <h2 className="section-kicker px-1 mb-3">Media</h2>
+          <div className="app-panel rounded-ios-xl p-4 card-elevated">
+            <div className="space-y-4">
+              <div>
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
+                  Blossom Media Servers
+                </p>
+                <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
+                  Configure where your photos, videos, and files are uploaded.
+                </p>
+              </div>
+              <BlossomServerManager />
+            </div>
           </div>
         </section>
 
