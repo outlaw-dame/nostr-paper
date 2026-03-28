@@ -34,14 +34,19 @@ export function SearchBar({
     inputRef.current?.focus()
   }, [onChange, onClear])
 
-  const handleSubmit = useCallback((e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSubmit = useCallback((event?: React.SyntheticEvent) => {
+    event?.preventDefault()
     inputRef.current?.blur()
     onSubmit?.()
   }, [onSubmit])
 
+  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter') return
+    handleSubmit(event)
+  }, [handleSubmit])
+
   return (
-    <form onSubmit={handleSubmit} className={`relative flex items-center ${className}`}>
+    <div role="search" className={`relative flex items-center ${className}`}>
       {/* Search icon */}
       <svg
         width="16" height="16" viewBox="0 0 16 16" fill="none"
@@ -64,6 +69,7 @@ export function SearchBar({
         spellCheck={false}
         value={value}
         onChange={e => onChange(e.target.value)}
+        onKeyDown={handleKeyDown}
         placeholder={placeholder}
         className="
           w-full h-10 pl-10 pr-10
@@ -105,6 +111,6 @@ export function SearchBar({
           </svg>
         </motion.button>
       )}
-    </form>
+    </div>
   )
 }

@@ -10,7 +10,7 @@
  * All data is sourced from SQLite via useNostrFeed (local-first).
  */
 
-import { useState, useCallback, useMemo, useEffect, useRef, type ReactNode } from 'react'
+import { useState, useCallback, useMemo, useEffect, useRef, memo, type ReactNode } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'motion/react'
 import { useApp } from '@/contexts/app-context'
@@ -81,6 +81,11 @@ type FeedRailSection = FeedSection & {
   href?: string
   summary: string
   tagTimeline?: TagTimelineSpec | null
+}
+
+const EMPTY_FILTER_RESULT: FilterCheckResult = {
+  action: null,
+  matches: [],
 }
 
 const TAG_FEED_KINDS = [
@@ -677,11 +682,13 @@ export default function FeedPage() {
     ),
     [allowedModerationIds, hideNsfwTaggedPosts, isMuted, moderationDocumentIds, tagMatchedEvents],
   )
-  const repostCarouselItems = useMemo(
-    () => collectRepostCarouselItems(visibleEvents, { minReposts: 3, maxItems: 12 }),
-    [visibleEvents],
-  )
   const repostFeatureEnabled = !activeTagTimeline && activeSection.id === 'feed' && repostCarouselVisible
+  const repostCarouselItems = useMemo(
+    () => (repostFeatureEnabled
+      ? collectRepostCarouselItems(visibleEvents, { minReposts: 3, maxItems: 12 })
+      : []),
+    [repostFeatureEnabled, visibleEvents],
+  )
   const featuredRepostTargetIds = useMemo(
     () => (repostFeatureEnabled
       ? new Set(repostCarouselItems.map((item) => item.targetEventId))
@@ -750,12 +757,6 @@ export default function FeedPage() {
       clearFeedViewSnapshot(feedScopeKey)
       restoreCompletedRef.current = true
     } else {
-      restoreCompletedRef.current = false
-    }
-  }, [feedScopeKey, resumeFeedPosition])
-
-  useEffect(() => {
-    if (resumeFeedPosition) {
       restoreCompletedRef.current = false
     }
   }, [feedScopeKey, resumeFeedPosition])
@@ -1267,12 +1268,12 @@ export default function FeedPage() {
               ) : (
                 <AnimatePresence initial={false}>
                   {secondaryEvents.map((event, i) => (
-                    <SecondaryCard
+                    <MemoSecondaryCard
                       key={event.id}
                       event={event}
                       index={i}
                       checkEvent={checkEvent}
-                      semanticResult={semanticResults.get(event.id) ?? { action: null, matches: [] }}
+                      semanticResult={semanticResults.get(event.id) ?? EMPTY_FILTER_RESULT}
                       feedInlineAutoplayEnabled={feedInlineAutoplayEnabled}
                     />
                   ))}
@@ -1439,6 +1440,8 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
     </FilteredGate>
   )
 }
+
+const MemoSecondaryCard = memo(SecondaryCard)
 
 interface RichStoryMediaProps {
   isArticle: boolean

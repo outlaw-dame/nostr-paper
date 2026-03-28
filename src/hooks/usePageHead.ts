@@ -17,7 +17,7 @@
  *   })
  */
 
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 
 // ── Descriptor Types ─────────────────────────────────────────
 
@@ -58,6 +58,8 @@ function createElement(descriptor: MetaTagDescriptor): HTMLElement {
 // ── Hook ─────────────────────────────────────────────────────
 
 export function usePageHead({ title, tags = [] }: PageHeadOptions): void {
+  const tagsKey = useMemo(() => JSON.stringify(tags), [tags])
+
   useEffect(() => {
     if (typeof document === 'undefined') return
 
@@ -82,5 +84,5 @@ export function usePageHead({ title, tags = [] }: PageHeadOptions): void {
   // Tags array identity doesn't change across re-renders unless rebuilt — serialize
   // to a stable string to prevent infinite loops from inline array literals.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, JSON.stringify(tags)])
+  }, [title, tagsKey])
 }
