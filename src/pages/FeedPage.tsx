@@ -583,8 +583,14 @@ export default function FeedPage() {
   }, [activeArticleFeed, activeSection])
   const activeTagTimeline = effectiveFeedSection.tagTimeline ?? null
   const activeSavedTagFeed = useMemo(
-    () => (isSavedTagFeedTimeline(activeSection.tagTimeline) ? activeSection.tagTimeline : null),
-    [activeSection.tagTimeline],
+    () => {
+      // Only show saved feed header for saved/tag feed sections, not for primary sections
+      const isSavedOrTagFeedSection = activeSection.id.startsWith('tag-feed:') || activeSection.id.startsWith('tag-route:')
+      return isSavedOrTagFeedSection && isSavedTagFeedTimeline(activeSection.tagTimeline)
+        ? activeSection.tagTimeline
+        : null
+    },
+    [activeSection.id, activeSection.tagTimeline],
   )
   const activeTagTimelineDetails = useMemo(
     () => describeTagTimeline(activeTagTimeline),
