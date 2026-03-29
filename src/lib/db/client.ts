@@ -15,8 +15,8 @@
 import type { DBWorkerRequest, DBWorkerResponse } from '@/types'
 import { withRetry } from '@/lib/retry'
 
-const QUERY_TIMEOUT_MS = 5_000    // 5s base query timeout (was 20s — too lenient)
-const INIT_TIMEOUT_MS  = 15_000   // 15s for WASM init (was 30s)
+const QUERY_TIMEOUT_MS = 8_000    // 8s base query timeout (5s was too tight for iOS on complex FTS queries)
+const INIT_TIMEOUT_MS  = 25_000   // 25s for WASM init (iOS WASM load + migrations can be slow)
 const MAX_QUEUE_TIMEOUT_SLOP_MS = 3_000  // 3ms per pending query (was 10s slop)
 
 // ── Worker Singleton ─────────────────────────────────────────

@@ -544,6 +544,29 @@ export default function SettingsPage() {
           </div>
         </section>
 
+        <section>
+          <h2 className="section-kicker px-1 mb-3">Developer</h2>
+          <div className="app-panel rounded-ios-xl p-4 card-elevated">
+            <button
+              type="button"
+              onClick={() => navigate('/settings/debug')}
+              className="flex w-full items-center justify-between text-left transition-opacity active:opacity-70"
+            >
+              <div>
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
+                  Debug Diagnostics
+                </p>
+                <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
+                  Inspect startup telemetry, last boot failure, and copy diagnostics JSON for troubleshooting.
+                </p>
+              </div>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-[rgb(var(--color-label-tertiary))]">
+                <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+          </div>
+        </section>
+
         {/* Moderation Section */}
         <section>
           <h2 className="section-kicker px-1 mb-3">Moderation</h2>

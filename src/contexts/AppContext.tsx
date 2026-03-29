@@ -16,6 +16,7 @@ import { AppContext, type AppAction, type AppState } from '@/contexts/app-contex
 import { syncCurrentUserContactList } from '@/lib/nostr/contacts'
 import { refreshNip05Verifications } from '@/lib/nostr/nip05'
 import { getCurrentUser, performLogout, STORAGE_KEY_PUBKEY } from '@/lib/nostr/ndk'
+import { markBootStage, recordBootFailure, recordBootSuccess } from '@/lib/runtime/startupDiagnostics'
 
 const shouldRunDevNip05Sweep = import.meta.env.VITE_ENABLE_DEV_NIP05_SWEEP === 'true'
 
@@ -92,12 +93,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     abortRef.current = new AbortController()
     const { signal } = abortRef.current
 
+    markBootStage('bootstrap:start')
     dispatch({ type: 'BOOT_START' })
 
     bootstrap(signal).then(async (result) => {
       if (signal.aborted) return
 
       if (!result.ok) {
+        recordBootFailure('bootstrap:error', result.error.message)
         dispatch({ type: 'BOOT_ERROR', payload: result.error })
         return
       }
@@ -105,8 +108,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const bootResult = result.value
 
       if (bootResult.ndkReady) {
+        recordBootSuccess('bootstrap:ready')
         dispatch({ type: 'BOOT_SUCCESS', payload: bootResult })
       } else {
+        recordBootSuccess('bootstrap:offline')
         dispatch({ type: 'BOOT_PARTIAL', payload: bootResult })
       }
 
@@ -149,6 +154,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }).catch((error: unknown) => {
       if (signal.aborted) return
       if (error instanceof DOMException && error.name === 'AbortError') return
+      recordBootFailure(
+        'bootstrap:error',
+        error instanceof Error ? error.message : 'Boot failed',
+      )
       dispatch({
         type:    'BOOT_ERROR',
         payload: {

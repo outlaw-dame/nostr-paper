@@ -67,6 +67,7 @@ const VideoComposePage = lazy(() => import('@/pages/VideoComposePage'))
 const ProfilePage = lazy(() => import('@/pages/ProfilePage'))
 const NotePage    = lazy(() => import('@/pages/NotePage'))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'))
+const DebugPage = lazy(() => import('@/pages/DebugPage'))
 const AppearancePage = lazy(() => import('@/pages/AppearancePage'))
 const ModerationPage = lazy(() => import('@/pages/ModerationPage'))
 const TagFeedsPage = lazy(() => import('@/pages/TagFeedsPage'))
@@ -172,6 +173,7 @@ function InnerApp() {
             <Route path="/profile/:pubkey"     element={<ProfilePage />} />
             <Route path="/activity"            element={<ActivityPage />} />
             <Route path="/settings"            element={<SettingsPage />} />
+            <Route path="/settings/debug"      element={<DebugPage />} />
             <Route path="/settings/appearance" element={<AppearancePage />} />
             <Route path="/settings/moderation" element={<ModerationPage />} />
             <Route path="/settings/tag-feeds"  element={<TagFeedsPage />} />

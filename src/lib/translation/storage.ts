@@ -51,11 +51,16 @@ const SECRET_KEY_KEY = 'translation-crypto-key'
 const ENCRYPTED_SECRETS_KEY = 'translation-encrypted-secrets'
 const MAX_SECRET_CHARS = 256
 const DEV_QUEUE_METRICS_PREF_KEY = 'translation-dev-queue-metrics-enabled'
+const DEFAULT_DEEPL_AUTH_KEY = sanitizeSecret(
+  typeof import.meta.env.VITE_DEEPL_AUTH_KEY === 'string'
+    ? import.meta.env.VITE_DEEPL_AUTH_KEY
+    : '',
+)
 
 export const TRANSLATION_SETTINGS_UPDATED_EVENT = 'nostr-paper:translation-settings-updated'
 
 const DEFAULT_PREFERENCES: TranslationPreferences = {
-  provider: 'opusmt',
+  provider: 'deepl',
   deeplPlan: 'free',
   deeplTargetLanguage: 'EN-US',
   deeplSourceLanguage: 'auto',
@@ -76,7 +81,7 @@ const DEFAULT_PREFERENCES: TranslationPreferences = {
 }
 
 const DEFAULT_SECRETS: TranslationSecrets = {
-  deeplAuthKey: '',
+  deeplAuthKey: DEFAULT_DEEPL_AUTH_KEY,
   libreApiKey: '',
 }
 
@@ -507,17 +512,15 @@ export async function loadTranslationConfiguration(): Promise<TranslationConfigu
     loadTranslationSecrets(),
   ])
 
-  // Migrate users who have deepl as their stored provider but no API key
-  // configured — silently upgrade them to opusmt (zero-config, in-browser).
+  // Migrate legacy defaults from opusmt -> deepl so auto-translate uses
+  // DeepL unless the user explicitly chooses another provider.
   let effectivePreferences = preferences
-  if (preferences.provider === 'deepl' && !secrets.deeplAuthKey) {
+  if (preferences.provider === 'opusmt') {
     effectivePreferences = {
       ...preferences,
-      provider: 'opusmt',
-      opusMtSourceLanguage: preferences.opusMtSourceLanguage === 'en'
-        ? 'auto'
-        : preferences.opusMtSourceLanguage,
+      provider: 'deepl',
     }
+    void saveTranslationPreferences(effectivePreferences).catch(() => {})
   }
 
   cachedConfiguration = mergeConfiguration(effectivePreferences, secrets)

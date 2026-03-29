@@ -17,16 +17,23 @@ import type { DBWorkerRequest, DBWorkerResponse } from '@/types'
 
 const SCHEMA_VERSION = 1
 
+// Detect mobile/iOS to apply conservative memory settings.
+// iOS Safari kills Web Workers that allocate too much memory (e.g. 256MB mmap).
+const IS_MOBILE = /iPhone|iPad|iPod|Android/i.test(
+  (self as unknown as { navigator: Navigator }).navigator?.userAgent ?? ''
+)
+const CACHE_SIZE  = IS_MOBILE ? -4000  : -16000   // 4MB mobile, 16MB desktop
+const MMAP_SIZE   = IS_MOBILE ? 0      : 67108864 // disabled mobile, 64MB desktop
+
 const SCHEMA_SQL = `
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = ON;
 PRAGMA temp_store = MEMORY;
-PRAGMA cache_size = -32000;   -- 32MB page cache
-PRAGMA mmap_size = 268435456; -- 256MB memory-mapped I/O
+PRAGMA cache_size = ${CACHE_SIZE};
+PRAGMA mmap_size = ${MMAP_SIZE};
 PRAGMA query_only = OFF;
 PRAGMA optimize;              -- Run analyzer on startup
-PRAGMA quick_check;           -- Fast integrity check
 
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -752,8 +759,10 @@ async function initializeDB(): Promise<void> {
     _db.exec(MIGRATION_V11_SQL)
   }
 
+  // Bound analysis rows per index before running optimize.
+  // analysis_limit = 0 means unlimited, which is slow on large DBs on mobile.
+  _db.exec('PRAGMA analysis_limit = 400;')
   _db.exec('PRAGMA optimize = 0x10002;')
-  _db.exec('PRAGMA analysis_limit = 0;')
 
   initialized = true
 }

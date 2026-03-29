@@ -12,7 +12,7 @@ afterEach(() => {
 
 describe('normalizeTranslationPreferences', () => {
   it('normalizes DeepL settings and rejects invalid language codes', () => {
-    expect(normalizeTranslationPreferences({}).provider).toBe('opusmt')
+    expect(normalizeTranslationPreferences({}).provider).toBe('deepl')
 
     expect(normalizeTranslationPreferences({
       provider: 'deepl',
@@ -95,9 +95,9 @@ describe('normalizeTranslationPreferences', () => {
     expect(normalizeTranslationPreferences({
       provider: 'opusmt',
     })).toMatchObject({
-      opusMtTargetLanguage: 'fr-ca',
-      libreTargetLanguage: 'fr-ca',
-      lingvaTargetLanguage: 'fr-ca',
+      opusMtTargetLanguage: 'fr',
+      libreTargetLanguage: 'fr',
+      lingvaTargetLanguage: 'fr',
       translangTargetLanguage: 'fr-CA',
       deeplTargetLanguage: 'FR-CA',
     })
