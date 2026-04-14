@@ -87,16 +87,32 @@ function getConfiguredRelayPreferences(): RelayPreference[] {
   return getStoredRelayPreferences() ?? getDefaultRelayPreferences()
 }
 
+function normalizeRelayKey(url: string): string {
+  try {
+    const parsed = new URL(url)
+    if (parsed.pathname === '/') parsed.pathname = ''
+    return parsed.toString()
+  } catch {
+    return url.replace(/\/+$/g, '')
+  }
+}
+
 function getRelayEntries(preferences: readonly RelayPreference[] = getConfiguredRelayPreferences()): RelayEntry[] {
   try {
     const ndk = getNDK()
-    const poolEntries = new Map(Array.from(ndk.pool.relays.entries()).map(([url, relay]) => ([
-      url,
-      relay.status ?? NDKRelayStatus.DISCONNECTED,
-    ])))
+    const poolEntries = new Map<string, NDKRelayStatus>()
+
+    for (const [url, relay] of ndk.pool.relays.entries()) {
+      const status = relay.status ?? NDKRelayStatus.DISCONNECTED
+      poolEntries.set(url, status)
+      poolEntries.set(normalizeRelayKey(url), status)
+    }
+
     return preferences.map(preference => ({
       ...preference,
-      status: poolEntries.get(preference.url) ?? NDKRelayStatus.DISCONNECTED,
+      status: poolEntries.get(preference.url)
+        ?? poolEntries.get(normalizeRelayKey(preference.url))
+        ?? NDKRelayStatus.DISCONNECTED,
     }))
   } catch {
     // NDK not yet initialised — return configured relays as disconnected.
@@ -250,6 +266,13 @@ function RelayRow({
   const disableReadToggle = entry.read && !entry.write
   const disableWriteToggle = entry.write && !entry.read
   const showRetry = entry.read && !connected && retryAvailable
+  const offlineHint = !connected
+    ? health?.tier === 'restricted'
+      ? 'This relay is reachable but may require auth or payment; offline state may be expected for unauthenticated reads.'
+      : health?.tier === 'good' || health?.tier === 'caution'
+        ? 'Relay metadata looks healthy; current offline state is likely a temporary network path or remote relay outage.'
+        : 'Health is unknown; offline state is usually due to remote relay downtime, regional routing, or transient handshake failures.'
+    : null
 
   return (
     <div className="flex gap-3 py-3">
@@ -376,6 +399,11 @@ function RelayRow({
         {health?.details && (
           <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))] leading-relaxed">
             {health.details}
+          </p>
+        )}
+        {offlineHint && (
+          <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))] leading-relaxed">
+            {offlineHint}
           </p>
         )}
       </div>

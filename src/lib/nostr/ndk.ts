@@ -178,6 +178,33 @@ class SQLiteCacheAdapter implements NDKCacheAdapter {
 let _ndk: NDK | null = null
 const cacheAdapter = new SQLiteCacheAdapter()
 
+function normalizeRelayPoolUrl(url: string): string {
+  try {
+    const parsed = new URL(url)
+    if (parsed.pathname === '/') parsed.pathname = ''
+    return parsed.toString()
+  } catch {
+    return url.replace(/\/+$/g, '')
+  }
+}
+
+function resolveRelayPoolKey(url: string): string | null {
+  if (!_ndk) return null
+
+  const normalized = normalizeRelayPoolUrl(url)
+  const candidates = [...new Set([
+    url,
+    normalized,
+    `${normalized}/`,
+  ])]
+
+  for (const candidate of candidates) {
+    if (_ndk.pool.relays.has(candidate)) return candidate
+  }
+
+  return null
+}
+
 export function getNDK(): NDK {
   if (!_ndk) throw new Error('NDK not initialized — call initNDK() first')
   return _ndk
@@ -327,8 +354,11 @@ export function disconnectNDK(): void {
  */
 export function addRelayToPool(url: string): void {
   if (!_ndk || !isValidRelayURL(url)) return
-  if (_ndk.pool.relays.has(url)) return
-  const relay = new NDKRelay(url, _ndk.relayAuthDefaultPolicy, _ndk)
+
+  if (resolveRelayPoolKey(url)) return
+
+  const normalized = normalizeRelayPoolUrl(url)
+  const relay = new NDKRelay(normalized, _ndk.relayAuthDefaultPolicy, _ndk)
   _ndk.pool.addRelay(relay, true)
 }
 
@@ -338,7 +368,11 @@ export function addRelayToPool(url: string): void {
  */
 export function removeRelayFromPool(url: string): void {
   if (!_ndk) return
-  _ndk.pool.removeRelay(url)
+
+  const key = resolveRelayPoolKey(url)
+  if (!key) return
+
+  _ndk.pool.removeRelay(key)
 }
 
 /**
@@ -356,17 +390,20 @@ export function getPoolRelayUrls(): string[] {
 export function retryRelayConnection(url: string): boolean {
   if (!_ndk || !isValidRelayURL(url)) return false
 
-  const existingRelay = _ndk.pool.relays.get(url)
+  const key = resolveRelayPoolKey(url)
+  if (!key) return false
+
+  const existingRelay = _ndk.pool.relays.get(key)
   if (!existingRelay) return false
 
   existingRelay.disconnect()
-  _ndk.pool.removeRelay(url)
-  const relay = new NDKRelay(url, _ndk.relayAuthDefaultPolicy, _ndk)
+  _ndk.pool.removeRelay(key)
+  const relay = new NDKRelay(normalizeRelayPoolUrl(url), _ndk.relayAuthDefaultPolicy, _ndk)
   _ndk.pool.addRelay(relay, true)
   return true
 }
 
 export function canRetryRelayConnection(url: string): boolean {
   if (!_ndk || !isValidRelayURL(url)) return false
-  return _ndk.pool.relays.has(url)
+  return resolveRelayPoolKey(url) !== null
 }
