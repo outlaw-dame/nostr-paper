@@ -38,6 +38,7 @@ const DEFAULT_RELAYS = [
   'wss://relay.primal.net',
   'wss://nostr.bitcoiner.social',
   'wss://relay.nostr.band',
+  'wss://search.nos.today',
   'wss://nostr.fmt.wiz.biz',
   'wss://relay.mostr.pub',
   'wss://relay.nos.social',

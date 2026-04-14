@@ -8,6 +8,10 @@ export interface ReplyTreeNode {
   children: ReplyTreeNode[]
 }
 
+interface BuildReplyTreeOptions {
+  anchorEventId?: string
+}
+
 function sortChronologically(events: NostrEvent[]): NostrEvent[] {
   return [...events].sort((a, b) => (
     a.created_at - b.created_at || a.id.localeCompare(b.id)
@@ -68,8 +72,12 @@ function introducesParentCycle(
   return false
 }
 
-export function buildReplyTree(replies: NostrEvent[]): ReplyTreeNode[] {
+export function buildReplyTree(
+  replies: NostrEvent[],
+  options: BuildReplyTreeOptions = {},
+): ReplyTreeNode[] {
   const sortedReplies = sortChronologically(replies)
+  const { anchorEventId } = options
   const byId = new Map<string, ReplyTreeNode>()
   const parentByEventId = new Map<string, string>()
   const detachedRootIds = new Set<string>()
@@ -103,7 +111,7 @@ export function buildReplyTree(replies: NostrEvent[]): ReplyTreeNode[] {
     const parentNode = byId.get(parentId)
     if (!parentNode) {
       rootIds.add(reply.id)
-      if (!isLikelyTopLevelReply(reply, parentId)) {
+      if (parentId !== anchorEventId && !isLikelyTopLevelReply(reply, parentId)) {
         detachedRootIds.add(reply.id)
       }
       continue
@@ -127,7 +135,15 @@ export function buildReplyTree(replies: NostrEvent[]): ReplyTreeNode[] {
       children: node.children,
     }))
 
-  return sortTree(roots)
+  const sortedRoots = sortTree(roots)
+  if (!anchorEventId) return sortedRoots
+
+  return [...sortedRoots].sort((a, b) => {
+    const aAnchored = parentByEventId.get(a.event.id) === anchorEventId
+    const bAnchored = parentByEventId.get(b.event.id) === anchorEventId
+    if (aAnchored !== bAnchored) return aAnchored ? -1 : 1
+    return a.event.created_at - b.event.created_at || a.event.id.localeCompare(b.event.id)
+  })
 }
 
 export function countDescendants(node: ReplyTreeNode): number {

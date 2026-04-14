@@ -65,6 +65,12 @@ import { Kind, type NostrEvent } from '@/types'
 export default function NotePage() {
   const navigate = useNavigate()
   const { id } = useParams<{ id: string }>()
+  const handleBack = () => {
+    // navigate(-1) is a no-op when the user landed directly on this URL.
+    // Fall back to home so the back button always works.
+    if (window.history.state?.idx > 0) navigate(-1)
+    else navigate('/')
+  }
   const [event, setEvent] = useState<NostrEvent | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -202,7 +208,7 @@ export default function NotePage() {
         <div className="sticky top-0 z-10 bg-[rgb(var(--color-bg)/0.88)] py-4 backdrop-blur-xl">
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            onClick={handleBack}
             className="rounded-full bg-[rgb(var(--color-fill)/0.09)] px-4 py-2 text-[15px] text-[rgb(var(--color-label))]"
           >
             Back
@@ -221,7 +227,7 @@ export default function NotePage() {
         <div className="sticky top-0 z-10 bg-[rgb(var(--color-bg)/0.88)] py-4 backdrop-blur-xl">
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            onClick={handleBack}
             className="rounded-full bg-[rgb(var(--color-fill)/0.09)] px-4 py-2 text-[15px] text-[rgb(var(--color-label))]"
           >
             Back
@@ -260,9 +266,20 @@ export default function NotePage() {
               </button>
             </>
           ) : error ? (
-            <p className="mt-3 text-[16px] leading-7 text-[rgb(var(--color-label-secondary))]">
-              {error}
-            </p>
+            <>
+              <p className="mt-3 text-[16px] leading-7 text-[rgb(var(--color-label-secondary))]">
+                {error === 'Note not found.'
+                  ? 'This note could not be found on connected relays. It may have been deleted or the relay may be unavailable.'
+                  : error}
+              </p>
+              <button
+                type="button"
+                onClick={() => { window.location.reload() }}
+                className="mt-4 rounded-full bg-[rgb(var(--color-fill)/0.12)] px-4 py-2 text-[15px] font-medium text-[rgb(var(--color-label))]"
+              >
+                Try Again
+              </button>
+            </>
           ) : null}
         </div>
       </div>
@@ -298,7 +315,7 @@ export default function NotePage() {
       <div className="sticky top-0 z-10 bg-[rgb(var(--color-bg)/0.88)] py-4 pt-safe backdrop-blur-xl">
         <button
           type="button"
-          onClick={() => navigate(-1)}
+          onClick={handleBack}
           className="rounded-full bg-[rgb(var(--color-fill)/0.09)] px-4 py-2 text-[15px] text-[rgb(var(--color-label))]"
         >
           Back
@@ -310,10 +327,13 @@ export default function NotePage() {
           <>
             <FileMetadataView event={event} metadata={fileMetadata} profile={profile} />
             <EventActionBar event={event} className="mt-5" />
-            <ConversationSection event={event} className="mt-6" />
+            <ConversationSection event={event} section="replies" className="mt-6" />
           </>
         ) : (
           <>
+            {/* Parent context — shows above the post if this is a reply */}
+            <ConversationSection event={event} section="root" className="mb-4" />
+
             <AuthorRow
               pubkey={event.pubkey}
               profile={profile}
@@ -353,7 +373,7 @@ export default function NotePage() {
                 {comment.content.trim().length > 0 && (
                   <NoteContent content={comment.content} className="mt-4" allowTranslation enableMarkdown />
                 )}
-                <QuotePreviewList event={event} className="mt-5" />
+                <QuotePreviewList event={event} showHeader={false} className="mt-5" />
               </>
             ) : userStatus ? (
               <UserStatusBody event={event} className="mt-4" />
@@ -369,12 +389,12 @@ export default function NotePage() {
                 {attachments.length > 0 && (
                   <NoteMediaAttachments attachments={attachments} className="mt-5" />
                 )}
-                <QuotePreviewList event={event} className="mt-5" />
+                <QuotePreviewList event={event} showHeader={false} className="mt-5" />
               </>
             )}
 
             <EventActionBar event={event} className="mt-5" />
-            <ConversationSection event={event} className="mt-6" />
+            <ConversationSection event={event} section="replies" className="mt-6" />
           </>
         )}
       </article>

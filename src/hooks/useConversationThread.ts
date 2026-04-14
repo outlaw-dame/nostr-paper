@@ -31,6 +31,141 @@ function sameRootAddress(value: string | undefined, expected: string | undefined
   return Boolean(value && expected && value === expected)
 }
 
+const REPLY_QUERY_LIMIT = 200
+const MAX_FETCH_ITERATIONS = 4
+const MAX_FRONTIER_IDS = 48
+
+function dedupeById(events: NostrEvent[]): NostrEvent[] {
+  const seen = new Set<string>()
+  const unique: NostrEvent[] = []
+  for (const event of events) {
+    if (seen.has(event.id)) continue
+    seen.add(event.id)
+    unique.push(event)
+  }
+  return unique
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return [...new Set(values)]
+}
+
+function buildReplyFilters(rootReference: ReturnType<typeof getConversationRootReference>) {
+  if (!rootReference) return []
+
+  if (rootReference.kind === Kind.ShortNote && rootReference.eventId) {
+    return [
+      {
+        kinds: [Kind.ShortNote],
+        '#e': [rootReference.eventId],
+        limit: REPLY_QUERY_LIMIT,
+      },
+      {
+        kinds: [Kind.Comment],
+        '#E': [rootReference.eventId],
+        limit: REPLY_QUERY_LIMIT,
+      },
+    ]
+  }
+
+  if (rootReference.address) {
+    return [
+      {
+        kinds: [Kind.Comment],
+        '#A': [rootReference.address],
+        limit: REPLY_QUERY_LIMIT,
+      },
+      ...(rootReference.eventId
+        ? [{
+            kinds: [Kind.Comment],
+            '#E': [rootReference.eventId],
+            limit: REPLY_QUERY_LIMIT,
+          }]
+        : []),
+    ]
+  }
+
+  return [
+    {
+      kinds: [Kind.Comment],
+      '#E': rootReference.eventId ? [rootReference.eventId] : [],
+      limit: REPLY_QUERY_LIMIT,
+    },
+    {
+      kinds: [Kind.ShortNote],
+      '#e': rootReference.eventId ? [rootReference.eventId] : [],
+      limit: REPLY_QUERY_LIMIT,
+    },
+  ]
+}
+
+async function queryReplyCandidates(
+  rootReference: NonNullable<ReturnType<typeof getConversationRootReference>>,
+): Promise<NostrEvent[]> {
+  const filters = buildReplyFilters(rootReference)
+  if (filters.length === 0) return []
+
+  const resultSets = await Promise.all(filters.map((filter) => queryEvents(filter)))
+  return dedupeById(resultSets.flat())
+}
+
+function collectFrontierIds(
+  events: NostrEvent[],
+  rootReference: NonNullable<ReturnType<typeof getConversationRootReference>>,
+): string[] {
+  const ids = new Set<string>()
+
+  for (const candidate of events) {
+    if (candidate.kind === Kind.ShortNote) {
+      const parsed = parseTextNoteReply(candidate)
+      if (!parsed) continue
+      if (rootReference.eventId && parsed.rootEventId !== rootReference.eventId) continue
+      ids.add(candidate.id)
+      continue
+    }
+
+    if (candidate.kind === Kind.Comment) {
+      const parsed = parseCommentEvent(candidate)
+      if (!parsed) continue
+      if (rootReference.address && parsed.rootAddress !== rootReference.address) continue
+      if (!rootReference.address && rootReference.eventId && parsed.rootEventId !== rootReference.eventId) continue
+      ids.add(candidate.id)
+    }
+  }
+
+  return [...ids]
+}
+
+async function queryConversationReplies(
+  event: NostrEvent,
+  rootReference: NonNullable<ReturnType<typeof getConversationRootReference>>,
+): Promise<NostrEvent[]> {
+  const events = await queryReplyCandidates(rootReference)
+
+  const filtered = rootReference.kind === Kind.ShortNote && rootReference.eventId
+    ? events.filter((candidate) => {
+        if (candidate.id === event.id || candidate.id === rootReference.eventId) return false
+        if (candidate.kind === Kind.ShortNote) {
+          return parseTextNoteReply(candidate)?.rootEventId === rootReference.eventId
+        }
+        if (candidate.kind === Kind.Comment) {
+          return parseCommentEvent(candidate)?.rootEventId === rootReference.eventId
+        }
+        return false
+      })
+    : events.filter((candidate) => {
+        if (candidate.id === event.id || candidate.kind !== Kind.Comment) return false
+        const parsed = parseCommentEvent(candidate)
+        if (!parsed) return false
+        if (rootReference.address) {
+          return parsed.rootAddress === rootReference.address
+        }
+        return parsed.rootEventId === rootReference.eventId
+      })
+
+  return sortChronologically(dedupeById(filtered))
+}
+
 export function useConversationThread(event: NostrEvent | null | undefined): ConversationThreadState {
   const rootReference = useMemo(
     () => (event ? getConversationRootReference(event) : null),
@@ -84,47 +219,14 @@ export function useConversationThread(event: NostrEvent | null | undefined): Con
     const controller = new AbortController()
     const { signal } = controller
 
-    const filter = rootReference.kind === Kind.ShortNote && rootReference.eventId
-      ? {
-          kinds: [Kind.ShortNote],
-          '#e': [rootReference.eventId],
-          limit: 200,
-        }
-      : rootReference.address
-        ? {
-            kinds: [Kind.Comment],
-            '#A': [rootReference.address],
-            limit: 200,
-          }
-        : {
-            kinds: [Kind.Comment],
-            '#E': rootReference.eventId ? [rootReference.eventId] : [],
-            limit: 200,
-          }
-
     const loadLocal = async () => {
-      const events = await queryEvents(filter)
+      const localReplies = await queryConversationReplies(event, rootReference)
       if (signal.aborted) return
 
-      const filtered = rootReference.kind === Kind.ShortNote && rootReference.eventId
-        ? events.filter((candidate) => (
-            candidate.id !== event.id &&
-            candidate.id !== rootReference.eventId &&
-            parseTextNoteReply(candidate)?.rootEventId === rootReference.eventId
-          ))
-        : events.filter((candidate) => {
-            if (candidate.id === event.id) return false
-            const parsed = parseCommentEvent(candidate)
-            if (!parsed) return false
-            if (rootReference.address) {
-              return parsed.rootAddress === rootReference.address
-            }
-            return parsed.rootEventId === rootReference.eventId
-          })
-
-      setReplies(sortChronologically(filtered))
+      setReplies(localReplies)
       setLoading(false)
       setError(null)
+      return localReplies
     }
 
     const fetchFromRelays = async () => {
@@ -135,18 +237,86 @@ export function useConversationThread(event: NostrEvent | null | undefined): Con
         return
       }
 
-      await withRetry(
-        async () => {
-          if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
-          await ndk.fetchEvents(filter)
-        },
-        {
-          maxAttempts: 2,
-          baseDelayMs: 1_000,
-          maxDelayMs: 3_000,
-          signal,
-        },
-      )
+      const baseFilters = buildReplyFilters(rootReference)
+      if (baseFilters.length === 0) return
+
+      for (const filter of baseFilters) {
+        await withRetry(
+          async () => {
+            if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+            await ndk.fetchEvents(filter)
+          },
+          {
+            maxAttempts: 2,
+            baseDelayMs: 1_000,
+            maxDelayMs: 3_000,
+            signal,
+          },
+        )
+      }
+
+      const initialReplies = await queryConversationReplies(event, rootReference)
+      let frontierIds = collectFrontierIds(initialReplies, rootReference)
+      if (rootReference.eventId) {
+        frontierIds = [rootReference.eventId, ...frontierIds]
+      }
+      frontierIds = dedupeStrings(frontierIds)
+
+      let iteration = 0
+      while (iteration < MAX_FETCH_ITERATIONS && frontierIds.length > 0) {
+        if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+
+        const batch = frontierIds.slice(0, MAX_FRONTIER_IDS)
+        frontierIds = frontierIds.slice(batch.length)
+
+        const iterativeFilters = rootReference.kind === Kind.ShortNote
+          ? [
+              {
+                kinds: [Kind.ShortNote],
+                '#e': batch,
+                limit: REPLY_QUERY_LIMIT,
+              },
+              {
+                kinds: [Kind.Comment],
+                '#E': batch,
+                limit: REPLY_QUERY_LIMIT,
+              },
+            ]
+          : [
+              {
+                kinds: [Kind.Comment],
+                '#E': batch,
+                limit: REPLY_QUERY_LIMIT,
+              },
+            ]
+
+        for (const iterativeFilter of iterativeFilters) {
+          await withRetry(
+            async () => {
+              if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+              await ndk.fetchEvents(iterativeFilter)
+            },
+            {
+              maxAttempts: 2,
+              baseDelayMs: 800,
+              maxDelayMs: 2_500,
+              signal,
+            },
+          )
+        }
+
+        const refreshedReplies = await queryConversationReplies(event, rootReference)
+        const nextIds = collectFrontierIds(refreshedReplies, rootReference)
+        const seenFrontier = new Set(frontierIds)
+        for (const id of nextIds) {
+          if (!seenFrontier.has(id)) {
+            frontierIds.push(id)
+            seenFrontier.add(id)
+          }
+        }
+
+        iteration += 1
+      }
     }
 
     setLoading(true)

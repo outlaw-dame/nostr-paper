@@ -336,10 +336,16 @@ export function NoteContent({
     () => filterTokens(tokenize(tryParseBridgeContent(content)), hiddenUrlSet),
     [content, hiddenUrlSet],
   )
-  const translationSourceText = React.useMemo(
+  const plainText = React.useMemo(
     () => tokensToPlainText(tokens),
     [tokens],
   )
+  const translationSourceText = plainText
+  const shouldClampCompactText = React.useMemo(() => {
+    if (!plainText) return false
+    if (plainText.length <= 180) return false
+    return true
+  }, [plainText])
   const entityCandidates = React.useMemo(
     () => collectEntityCandidates(
       tokens.filter(
@@ -356,7 +362,7 @@ export function NoteContent({
       <>
         <p className={`
           text-[rgb(var(--color-label-secondary))] text-[15px]
-          leading-snug line-clamp-2 ${className}
+          leading-snug ${shouldClampCompactText ? 'line-clamp-2' : ''} ${className}
         `}>
           {tokens.map((token, index) => renderToken(token, index, true, interactive))}
         </p>

@@ -11,7 +11,7 @@
  * Layout ID ties this to ExpandedNote for shared layout morph.
  */
 
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import {
   motion,
   useMotionValue,
@@ -63,6 +63,9 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
   const { profile } = useProfile(event.pubkey, { background: false })
   const followStatus = useFollowStatus(event.pubkey)
   const [expanded, setExpanded] = useState(false)
+  // Track whether we pushed a history entry for this expansion so we can
+  // pop it on programmatic close. Using a ref avoids stale-closure issues.
+  const pushedHistoryRef = useRef(false)
   const [autoplayFailed, setAutoplayFailed] = useState(false)
   const {
     article,
@@ -112,6 +115,38 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
     setAutoplayFailed(false)
   }, [event.id])
 
+  // ── History-backed expand/close ─────────────────────────────
+  // Push a history entry when the overlay opens so the OS/browser back
+  // gesture closes the overlay instead of navigating away from the feed.
+
+  const openOverlay = useCallback(() => {
+    window.history.pushState({ expandedHeroId: event.id }, '')
+    pushedHistoryRef.current = true
+    setExpanded(true)
+  }, [event.id])
+
+  const closeOverlay = useCallback(() => {
+    if (pushedHistoryRef.current) {
+      pushedHistoryRef.current = false
+      window.history.back()
+      // setExpanded(false) will be called by the popstate listener below.
+    } else {
+      setExpanded(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!expanded) return
+
+    const onPop = () => {
+      pushedHistoryRef.current = false
+      setExpanded(false)
+    }
+
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [expanded])
+
   const videoAutoplaySources = useMemo(
     () => (videoPlaybackPlan?.sources ?? []).filter((source) => shouldAttemptMediaUrl(source.url)),
     [videoPlaybackPlan],
@@ -138,10 +173,10 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
   const handleDragEnd = useCallback(
     (_: unknown, info: { velocity: { y: number }; offset: { y: number } }) => {
       if (info.offset.y < EXPAND_OFFSET || info.velocity.y < EXPAND_VEL) {
-        setExpanded(true)
+        openOverlay()
       }
     },
-    []
+    [openOverlay]
   )
 
   return (
@@ -169,13 +204,13 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
         onPointerDownCapture={(eventPointer) => {
           eventPointer.stopPropagation()
         }}
-        onClick={() => setExpanded(true)}
+        onClick={openOverlay}
         role="button"
         tabIndex={0}
         aria-label={`Open ${article ? 'article' : video ? (video.isShort ? 'short video' : 'video') : thread ? 'thread' : poll ? 'poll' : repost ? 'repost' : 'note'} by ${profile?.display_name ?? profile?.name ?? 'unknown'}`}
         onDragStart={(e) => e.preventDefault()}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') setExpanded(true)
+          if (e.key === 'Enter' || e.key === ' ') openOverlay()
         }}
       >
         {/* Full-bleed media */}
@@ -313,7 +348,7 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
           <ExpandedNote
             event={event}
             profile={profile}
-            onClose={() => setExpanded(false)}
+            onClose={closeOverlay}
           />
         )}
       </AnimatePresence>

@@ -19,6 +19,7 @@ import { Kind } from '@/types'
 interface ConversationSectionProps {
   event: NostrEvent
   className?: string
+  section?: 'all' | 'root' | 'replies'
 }
 
 function ReplyTreeItem({
@@ -26,18 +27,26 @@ function ReplyTreeItem({
   depth,
   collapsedIds,
   onToggleCollapsed,
+  parentPubkey,
 }: {
   node: ReplyTreeNode
   depth: number
   collapsedIds: Set<string>
   onToggleCollapsed: (id: string) => void
+  parentPubkey?: string
 }) {
   const hasChildren = node.children.length > 0
   const collapsed = hasChildren && collapsedIds.has(node.event.id)
   const totalNestedReplies = hasChildren ? countDescendants(node) : 0
+  const isContinuation = depth > 0 && parentPubkey === node.event.pubkey
 
   return (
     <div className={depth > 0 ? 'ml-4 border-l border-[rgb(var(--color-fill)/0.14)] pl-3' : ''}>
+      {isContinuation && (
+        <p className="mb-1 ml-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-tertiary))]">
+          Thread continuation
+        </p>
+      )}
       <EventPreviewCard event={node.event} compact />
       {node.detached && (
         <div className="mt-1.5">
@@ -73,6 +82,7 @@ function ReplyTreeItem({
                   depth={depth + 1}
                   collapsedIds={collapsedIds}
                   onToggleCollapsed={onToggleCollapsed}
+                  parentPubkey={node.event.pubkey}
                 />
               ))}
             </div>
@@ -86,13 +96,17 @@ function ReplyTreeItem({
 export function ConversationSection({
   event,
   className = '',
+  section = 'all',
 }: ConversationSectionProps) {
   const { rootEvent, replies, loading, rootLoading, error } = useConversationThread(event)
   const rootReference = getConversationRootReference(event)
   const noteReply = parseTextNoteReply(event)
   const comment = parseCommentEvent(event)
   const thread = parseThreadEvent(event)
-  const replyTree = useMemo(() => buildReplyTree(replies), [replies])
+  const replyTree = useMemo(
+    () => buildReplyTree(replies, { anchorEventId: event.id }),
+    [event.id, replies],
+  )
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
 
   useEffect(() => {
@@ -143,30 +157,25 @@ export function ConversationSection({
     return null
   }
 
-  if (!showRootBlock && !showRepliesBlock) {
+  if (section === 'all' && !showRootBlock && !showRepliesBlock) {
     return null
   }
+  if (section === 'root' && (!showRootBlock || (!rootEvent && !rootLoading))) return null
+  if (section === 'replies' && !showRepliesBlock) return null
 
   return (
     <section className={`space-y-3 ${className}`}>
-      {showRootBlock && (
-        <div className="space-y-2">
-          <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-            In Conversation
-          </p>
+      {(section === 'all' || section === 'root') && showRootBlock && (rootEvent || rootLoading) && (
+        <div>
           {rootEvent ? (
             <EventPreviewCard event={rootEvent} compact linked />
           ) : (
-            <div className="rounded-[18px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg-secondary))] p-3">
-              <p className="text-[14px] text-[rgb(var(--color-label-secondary))]">
-                {rootLoading ? 'Loading conversation root…' : 'Conversation root unavailable.'}
-              </p>
-            </div>
+            <div className="h-[72px] animate-pulse rounded-[18px] bg-[rgb(var(--color-fill)/0.07)]" />
           )}
         </div>
       )}
 
-      {showRepliesBlock && (
+      {(section === 'all' || section === 'replies') && showRepliesBlock && (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
@@ -206,6 +215,7 @@ export function ConversationSection({
                   return next
                 })
               }}
+              parentPubkey={event.pubkey}
             />
           ))}
 

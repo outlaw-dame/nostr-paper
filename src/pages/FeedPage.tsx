@@ -1445,15 +1445,26 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
           />
         )}
 
+        {repost && (
+          <div className="flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M17 1l4 4-4 4" />
+              <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+              <path d="M7 23l-4-4 4-4" />
+              <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+            </svg>
+            <span>Repost</span>
+          </div>
+        )}
         <AuthorRow
           pubkey={event.pubkey}
           profile={profile}
           timestamp={event.created_at}
           actions
         />
-        {(repost || thread || comment) && (
+        {(thread || comment) && (
           <p className="mt-3 text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-            {thread ? 'Thread' : comment ? 'Comment' : 'Repost'}
+            {thread ? 'Thread' : 'Comment'}
           </p>
         )}
         <ThreadIndexBadge threadIndex={threadIndex} className="mt-3" />
@@ -1483,7 +1494,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
             )}
           </>
         ) : !poll && repost ? (
-          <RepostBody event={event} className="mt-3" compact linked={false} />
+          <RepostBody event={event} className="mt-3" compact linked={false} showLabel={false} />
         ) : !poll ? (
           <>
             {quoteBody.trim().length > 0 && (
@@ -1503,7 +1514,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
                 interactive
               />
             )}
-            <QuotePreviewList event={event} className="mt-3" compact linked={false} maxItems={1} />
+            <QuotePreviewList event={event} className="mt-3" compact linked={false} maxItems={1} showHeader={false} />
           </>
         ) : null}
         <EventMetricsRow event={event} interactive />

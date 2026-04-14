@@ -97,6 +97,10 @@ export function UpdateBanner({ onUpdate, onDismiss }: UpdateBannerProps) {
   const [dismissed, setDismissed] = useState(false)
   const [updating, setUpdating] = useState(false)
 
+  const forceReload = () => {
+    window.location.reload()
+  }
+
   const handleDismiss = () => {
     setDismissed(true)
     onDismiss?.()
@@ -108,12 +112,16 @@ export function UpdateBanner({ onUpdate, onDismiss }: UpdateBannerProps) {
 
     try {
       if (onUpdate) {
-        await onUpdate()
-        return
+        await onUpdate().catch((error) => {
+          console.warn('[PWA] applyUpdate callback failed, falling back to manual reload:', error)
+        })
+      } else {
+        navigator.serviceWorker.controller?.postMessage({ type: 'SKIP_WAITING' })
       }
 
-      navigator.serviceWorker.controller?.postMessage({ type: 'SKIP_WAITING' })
-      window.location.reload()
+      // Some browser/SW states do not auto-reload after skipWaiting.
+      // Always force a reload fallback so tapping Update is never a no-op.
+      window.setTimeout(forceReload, 150)
     } finally {
       setUpdating(false)
     }

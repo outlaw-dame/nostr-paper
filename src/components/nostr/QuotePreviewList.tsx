@@ -14,6 +14,7 @@ interface QuotePreviewListProps {
   compact?: boolean
   linked?: boolean
   maxItems?: number
+  showHeader?: boolean
 }
 
 function QuoteReferenceCard({
@@ -56,13 +57,7 @@ function QuoteReferenceCard({
   }
 
   if (targetEvent && !moderationLoading && blocked) {
-    return (
-      <div className="rounded-[18px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg-secondary))] p-3">
-        <p className="text-[14px] text-[rgb(var(--color-label-secondary))]">
-          Quoted event unavailable.
-        </p>
-      </div>
-    )
+    return null
   }
 
   if (targetEvent) {
@@ -70,11 +65,9 @@ function QuoteReferenceCard({
   }
 
   return (
-    <div className="rounded-[18px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg-secondary))] p-3">
-      <p className="text-[14px] text-[rgb(var(--color-label-secondary))]">
-        {loading || moderationLoading ? 'Loading quoted event…' : 'Quoted event unavailable.'}
-      </p>
-    </div>
+    loading || moderationLoading
+      ? <div className="h-[72px] animate-pulse rounded-[18px] bg-[rgb(var(--color-fill)/0.07)]" />
+      : null
   )
 }
 
@@ -121,6 +114,7 @@ export function QuotePreviewList({
   compact = false,
   linked = true,
   maxItems = 2,
+  showHeader = true,
 }: QuotePreviewListProps) {
   const quoted = parseQuoteTags(event)
   const references = getReferencedEvents(event).slice(0, Math.max(1, maxItems))
@@ -128,9 +122,11 @@ export function QuotePreviewList({
 
   return (
     <div className={`space-y-3 ${className}`}>
-      <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-        {quoted.length > 0 ? 'Quoted' : 'References'}
-      </p>
+      {showHeader && (
+        <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+          {quoted.length > 0 ? 'Quoted' : 'References'}
+        </p>
+      )}
       {references.map((reference) => (
         <QuoteReferenceCard
           key={reference.key}

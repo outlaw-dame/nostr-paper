@@ -253,11 +253,15 @@ export function TranslateTextPanel({
           setRequested(false)
           return
         }
-        if (requestIsAuto && (code === 'config' || code === 'unavailable')) {
+        if (requestIsAuto) {
           setResult(null)
           setError(null)
           setErrorCode(null)
           setRequested(false)
+
+          if (code === 'network' || code === 'provider' || code === 'config' || code === 'unavailable') {
+            setAutoBlockedUntil(Date.now() + AUTO_RETRY_COOLDOWN_MS)
+          }
           return
         }
         const message = translationError instanceof TranslationServiceError
@@ -287,9 +291,6 @@ export function TranslateTextPanel({
           }, 4800)
         }
 
-        if (autoStart && !autoAttempted && (code === 'network' || code === 'provider')) {
-          setAutoBlockedUntil(Date.now() + AUTO_RETRY_COOLDOWN_MS)
-        }
       } finally {
         if (!controller.signal.aborted) {
           setLoading(false)

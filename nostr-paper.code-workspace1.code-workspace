@@ -34,7 +34,8 @@
 			"npx vitest": true,
 			"git remote": true,
 			"git add": true,
-			"git commit": true
+			"git commit": true,
+			"git push": true
 		}
 	}
 }

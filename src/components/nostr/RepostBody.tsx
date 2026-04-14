@@ -10,6 +10,7 @@ interface RepostBodyProps {
   className?: string
   compact?: boolean
   linked?: boolean
+  showLabel?: boolean
 }
 
 function RepostIcon() {
@@ -28,6 +29,7 @@ export function RepostBody({
   className = '',
   compact = false,
   linked = true,
+  showLabel = true,
 }: RepostBodyProps) {
   const repost = parseRepostEvent(event)
   const targetAddress = repost?.targetAddress ? parseAddressCoordinate(repost.targetAddress) : null
@@ -45,12 +47,14 @@ export function RepostBody({
 
   return (
     <div className={`space-y-3 ${className}`}>
-      <div className="flex items-center gap-1.5">
-        <RepostIcon />
-        <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-          Repost
-        </p>
-      </div>
+      {showLabel && (
+        <div className="flex items-center gap-1.5">
+          <RepostIcon />
+          <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+            Repost
+          </p>
+        </div>
+      )}
 
       {targetEvent ? (
         <EventPreviewCard event={targetEvent} compact={compact} linked={linked} />
