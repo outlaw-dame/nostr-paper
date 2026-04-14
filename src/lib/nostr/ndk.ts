@@ -29,6 +29,9 @@ import { isValidRelayURL } from '@/lib/security/sanitize'
 import type { Profile, NostrEvent, NostrFilter } from '@/types'
 
 // ── Default Relay Set ────────────────────────────────────────
+import { initRelayOptimizer, getRelayOptimizer } from '@/lib/nostr/relay-optimizer'
+
+// ── Default Relay Set ────────────────────────────────────────
 // Well-known, reliable relays with broad coverage
 const DEFAULT_RELAYS = [
   'wss://relay.damus.io',
@@ -91,7 +94,13 @@ export function getOutboxRelayUrls(): string[] {
   return [...OUTBOX_RELAYS]
 }
 
+/**
+ * Get relay optimizer instance (for ML-based relay selection)
+ * Returns null if not yet initialized
+ */
+export { getRelayOptimizer }
 // ── SQLite Cache Adapter ─────────────────────────────────────
+// (relay optimizer is exported above and initialized in initNDK)
 
 class SQLiteCacheAdapter implements NDKCacheAdapter {
   // SQLite-backed local state is fast enough to be treated as a primary cache.
@@ -278,6 +287,9 @@ export async function initNDK(options: InitNDKOptions = {}): Promise<NDK> {
     ])
   } else {
     await connectPromise
+
+    // Initialize relay optimizer for ML-based selection (Phase 1)
+    initRelayOptimizer(relays)
   }
 
   return _ndk

@@ -12,6 +12,7 @@ import { useAddressableEvent } from '@/hooks/useAddressableEvent'
 import { useEvent } from '@/hooks/useEvent'
 import type { NostrEvent } from '@/types'
 import { Kind } from '@/types'
+import { getRelayOptimizer } from '@/lib/nostr/relay-optimizer'
 
 interface ConversationThreadState {
   rootEvent: NostrEvent | null
@@ -239,12 +240,32 @@ export function useConversationThread(event: NostrEvent | null | undefined): Con
 
       const baseFilters = buildReplyFilters(rootReference)
       if (baseFilters.length === 0) return
+      const optimizer = getRelayOptimizer()
+      const recordMetric = (relay: string, latency: number, success: boolean) => {
+        if (!optimizer) return
+        optimizer.recordOutcome(relay, { success, latency, hitRate: success ? 1.0 : 0.5 })
+      }
+
 
       for (const filter of baseFilters) {
         await withRetry(
           async () => {
             if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
-            await ndk.fetchEvents(filter)
+            const start = performance.now()
+            try {
+              await ndk.fetchEvents(filter)
+              const latency = performance.now() - start
+              // Record success on all relays (NDK handles relay list internally)
+              ndk.pool.relays.forEach(relay => {
+                recordMetric(relay.url, latency, true)
+              })
+            } catch (err) {
+              const latency = performance.now() - start
+              ndk.pool.relays.forEach(relay => {
+                recordMetric(relay.url, latency, false)
+              })
+              throw err
+            }
           },
           {
             maxAttempts: 2,
@@ -294,7 +315,20 @@ export function useConversationThread(event: NostrEvent | null | undefined): Con
           await withRetry(
             async () => {
               if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
-              await ndk.fetchEvents(iterativeFilter)
+              const start = performance.now()
+              try {
+                await ndk.fetchEvents(iterativeFilter)
+                const latency = performance.now() - start
+                ndk.pool.relays.forEach(relay => {
+                  recordMetric(relay.url, latency, true)
+                })
+              } catch (err) {
+                const latency = performance.now() - start
+                ndk.pool.relays.forEach(relay => {
+                  recordMetric(relay.url, latency, false)
+                })
+                throw err
+              }
             },
             {
               maxAttempts: 2,
