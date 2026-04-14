@@ -9,6 +9,7 @@ import {
   type TranslationPreflight,
   type TranslationResult,
 } from '@/lib/translation/client'
+import { hasMeaningfulTranslationText } from '@/lib/translation/text'
 import {
   loadTranslationDevQueueMetricsEnabled,
   TRANSLATION_SETTINGS_UPDATED_EVENT,
@@ -114,6 +115,7 @@ export function TranslateTextPanel({
   const pendingRequestIsAutoRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
   const trimmedText = text.trim()
+  const hasMeaningfulText = useMemo(() => hasMeaningfulTranslationText(trimmedText), [trimmedText])
   const now = Date.now()
 
   useEffect(() => {
@@ -184,7 +186,7 @@ export function TranslateTextPanel({
   }, [])
 
   useEffect(() => {
-    if (!trimmedText) {
+    if (!trimmedText || !hasMeaningfulText) {
       setPreflight(null)
       return
     }
@@ -210,7 +212,7 @@ export function TranslateTextPanel({
     return () => {
       cancelled = true
     }
-  }, [autoStart, settingsVersion, trimmedText])
+  }, [autoStart, hasMeaningfulText, settingsVersion, trimmedText])
 
   useEffect(() => {
     if (!trimmedText || !requested) return
@@ -248,6 +250,13 @@ export function TranslateTextPanel({
           setResult(null)
           setError(null)
           setErrorCode(code)
+          setRequested(false)
+          return
+        }
+        if (requestIsAuto && (code === 'config' || code === 'unavailable')) {
+          setResult(null)
+          setError(null)
+          setErrorCode(null)
           setRequested(false)
           return
         }
@@ -329,7 +338,7 @@ export function TranslateTextPanel({
   }, [detectedLanguage, result])
   const sameLanguage = preflight?.sameLanguage ?? false
 
-  if (!trimmedText) return null
+  if (!trimmedText || !hasMeaningfulText) return null
   if (sameLanguage || sameLanguageResult || errorCode === 'same-language') return null
 
   const requestTranslation = () => {

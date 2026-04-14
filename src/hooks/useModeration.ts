@@ -79,20 +79,16 @@ export function useModerationDocuments(
     }
 
     const controller = new AbortController()
-    const nextDecisions = new Map<string, ModerationDecision>()
     const missing: ModerationDocument[] = []
 
     for (const document of documents) {
       const cacheKey = getModerationDocumentCacheKey(document)
       const cached = inMemoryModerationCache.get(cacheKey)
-      if (cached) {
-        nextDecisions.set(document.id, cached)
-      } else {
+      if (!cached) {
         missing.push(document)
       }
     }
 
-    setDecisions(nextDecisions)
     setError(null)
     setLoading(true)
 
@@ -105,24 +101,42 @@ export function useModerationDocuments(
       .then(([results, tagrDecisions]) => {
         if (controller.signal.aborted) return
 
-        const merged = new Map(nextDecisions)
-        for (const decision of results) {
-          const document = missing.find((entry) => entry.id === decision.id)
-          if (!document) continue
+        setDecisions((previous) => {
+          const merged = new Map<string, ModerationDecision>()
 
-          const cacheKey = getModerationDocumentCacheKey(document)
-          cacheSetModeration(cacheKey, decision)
-          merged.set(decision.id, decision)
-        }
+          for (const document of documents) {
+            const cacheKey = getModerationDocumentCacheKey(document)
+            const cached = inMemoryModerationCache.get(cacheKey)
 
-        for (const [id, tagrDecision] of tagrDecisions) {
-          const existing = merged.get(id)
-          if (!existing || existing.action !== 'block') {
-            merged.set(id, tagrDecision)
+            if (cached) {
+              merged.set(document.id, cached)
+              continue
+            }
+
+            const priorDecision = previous.get(document.id)
+            if (priorDecision) {
+              merged.set(document.id, priorDecision)
+            }
           }
-        }
 
-        setDecisions(merged)
+          for (const decision of results) {
+            const document = missing.find((entry) => entry.id === decision.id)
+            if (!document) continue
+
+            const cacheKey = getModerationDocumentCacheKey(document)
+            cacheSetModeration(cacheKey, decision)
+            merged.set(decision.id, decision)
+          }
+
+          for (const [id, tagrDecision] of tagrDecisions) {
+            const existing = merged.get(id)
+            if (!existing || existing.action !== 'block') {
+              merged.set(id, tagrDecision)
+            }
+          }
+
+          return merged
+        })
         setLoading(false)
       })
       .catch((moderationError: unknown) => {

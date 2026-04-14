@@ -85,11 +85,16 @@ function InnerApp() {
   const { status, errors, isOnline } = useApp()
   const location = useLocation()
   const [updateAvailable, setUpdateAvailable] = useState(false)
+  const [applyUpdate, setApplyUpdate] = useState<(() => Promise<void>) | null>(null)
 
   useEffect(() => {
-    const handler = () => setUpdateAvailable(true)
-    window.addEventListener('pwa-update-available', handler)
-    return () => window.removeEventListener('pwa-update-available', handler)
+    const handler = (event: Event) => {
+      const customEvent = event as CustomEvent<{ applyUpdate?: () => Promise<void> }>
+      setApplyUpdate(() => customEvent.detail?.applyUpdate ?? null)
+      setUpdateAvailable(true)
+    }
+    window.addEventListener('pwa-update-available', handler as EventListener)
+    return () => window.removeEventListener('pwa-update-available', handler as EventListener)
   }, [])
 
   if (status === 'idle' || status === 'booting') {
@@ -148,7 +153,12 @@ function InnerApp() {
   return (
     <>
       {!isOnline && <OfflineBanner />}
-      {updateAvailable && <UpdateBanner />}
+      {updateAvailable && (
+        <UpdateBanner
+          {...(applyUpdate ? { onUpdate: applyUpdate } : {})}
+          onDismiss={() => setUpdateAvailable(false)}
+        />
+      )}
 
       <Suspense fallback={<BootSplash minimal />}>
         {/*

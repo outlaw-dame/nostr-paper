@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TranslationServiceError } from '@/lib/translation/errors'
 
+const loadTranslationConfiguration = vi.fn()
+
+vi.mock('@/lib/translation/storage', () => ({
+  loadTranslationConfiguration,
+}))
+
 const listSmall100Languages = vi.fn(async () => [])
 const translateWithSmall100 = vi.fn()
 const checkSmall100Health = vi.fn(async () => false)
@@ -29,6 +35,7 @@ vi.mock('@/lib/translation/engines/translang', () => ({
 
 const {
   inspectTranslationWithConfiguration,
+  translateConfiguredText,
   translateTextWithConfiguration,
 } = await import('@/lib/translation/client')
 
@@ -166,5 +173,68 @@ describe('translateTextWithConfiguration', () => {
       sameLanguage: false,
       canAutoTranslate: true,
     })
+  })
+
+  it('treats short ASCII snippets as same-language when the target is English', () => {
+    expect(inspectTranslationWithConfiguration({
+      provider: 'opusmt',
+      deeplPlan: 'free',
+      deeplTargetLanguage: 'EN-US',
+      deeplSourceLanguage: 'auto',
+      deeplAuthKey: '',
+      libreBaseUrl: '',
+      libreTargetLanguage: 'en',
+      libreSourceLanguage: 'auto',
+      libreApiKey: '',
+      translangBaseUrl: '',
+      translangTargetLanguage: 'en',
+      translangSourceLanguage: 'auto',
+      lingvaBaseUrl: '',
+      lingvaTargetLanguage: 'en',
+      lingvaSourceLanguage: 'auto',
+      small100BaseUrl: 'http://localhost:7080',
+      small100TargetLanguage: 'en',
+      small100SourceLanguage: 'auto',
+      opusMtTargetLanguage: 'en',
+      opusMtSourceLanguage: 'auto',
+    }, 'Breaking news')).toMatchObject({
+      sameLanguage: true,
+      canAutoTranslate: false,
+    })
+  })
+
+  it('falls back to Opus-MT when the configured provider is unavailable', async () => {
+    loadTranslationConfiguration.mockResolvedValue({
+      provider: 'deepl',
+      deeplPlan: 'free',
+      deeplTargetLanguage: 'EN-US',
+      deeplSourceLanguage: 'auto',
+      deeplAuthKey: '',
+      libreBaseUrl: '',
+      libreTargetLanguage: 'en',
+      libreSourceLanguage: 'auto',
+      libreApiKey: '',
+      translangBaseUrl: '',
+      translangTargetLanguage: 'en',
+      translangSourceLanguage: 'auto',
+      lingvaBaseUrl: '',
+      lingvaTargetLanguage: 'en',
+      lingvaSourceLanguage: 'auto',
+      small100BaseUrl: 'http://localhost:7080',
+      small100TargetLanguage: 'en',
+      small100SourceLanguage: 'auto',
+      opusMtTargetLanguage: 'en',
+      opusMtSourceLanguage: 'ru',
+    })
+    translateWithOpusMt.mockResolvedValue({ translation: 'Hello world' })
+
+    const result = await translateConfiguredText('Привет, мир')
+
+    expect(result).toMatchObject({
+      provider: 'opusmt',
+      translatedText: 'Hello world',
+      targetLanguage: 'en',
+    })
+    expect(translateWithOpusMt).toHaveBeenCalled()
   })
 })

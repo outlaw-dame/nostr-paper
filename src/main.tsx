@@ -89,7 +89,11 @@ if (shouldRegisterServiceWorker) {
     updateSW = registerSW({
       onNeedRefresh() {
         // Dispatch custom event — App.tsx handles the update prompt
-        window.dispatchEvent(new CustomEvent('pwa-update-available'))
+        window.dispatchEvent(new CustomEvent('pwa-update-available', {
+          detail: {
+            applyUpdate: () => updateSW(true),
+          },
+        }))
       },
       onOfflineReady() {
         window.dispatchEvent(new CustomEvent('pwa-offline-ready'))

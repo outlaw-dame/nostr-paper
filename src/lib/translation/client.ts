@@ -6,6 +6,7 @@ import {
 } from '@/lib/translation/storage'
 import {
   batchTranslationSegments,
+  hasMeaningfulTranslationText,
   joinTranslatedSegments,
   normalizeTranslationSourceText,
   splitTextForTranslation,
@@ -18,6 +19,8 @@ import {
   detectLikelyLanguage,
   detectScriptLanguage,
   languagesProbablyMatch,
+  looksLikeShortAsciiSnippet,
+  normalizeLanguageCode,
 } from '@/lib/translation/detect'
 import { listLingvaLanguages, translateWithLingva } from '@/lib/translation/engines/lingva'
 import { isRecord } from '@/lib/translation/utils'
@@ -134,18 +137,58 @@ function getConfiguredSourceLanguage(configuration: TranslationConfiguration): s
   }
 }
 
+function normalizeLanguageForOpusMt(code: string, fallback: string): string {
+  const normalized = code.trim().toLowerCase()
+  if (!normalized) return fallback
+  const [primary] = normalized.split('-')
+  return primary || fallback
+}
+
+function buildOpusMtFallbackConfiguration(
+  configuration: TranslationConfiguration,
+): TranslationConfiguration {
+  const targetFromProvider = getConfiguredTargetLanguage(configuration)
+  const fallbackTarget = normalizeLanguageForOpusMt(
+    configuration.opusMtTargetLanguage,
+    'en',
+  )
+
+  return {
+    ...configuration,
+    provider: 'opusmt',
+    opusMtTargetLanguage: normalizeLanguageForOpusMt(targetFromProvider, fallbackTarget),
+    opusMtSourceLanguage: configuration.opusMtSourceLanguage || 'auto',
+  }
+}
+
+function shouldFallbackToOpusMt(
+  configuration: TranslationConfiguration,
+  error: unknown,
+): error is TranslationServiceError {
+  if (configuration.provider === 'opusmt') return false
+  if (!(error instanceof TranslationServiceError)) return false
+  return error.code === 'config' || error.code === 'unavailable'
+}
+
 export function inspectTranslationWithConfiguration(
   configuration: TranslationConfiguration,
   text: string,
 ): TranslationPreflight {
   const normalizedText = normalizeTranslationSourceText(text)
   const targetLanguage = getConfiguredTargetLanguage(configuration)
+  const meaningfulText = hasMeaningfulTranslationText(normalizedText)
   const configuredSourceLanguage = getConfiguredSourceLanguage(configuration)
   const likelySourceLanguage = configuredSourceLanguage === 'auto'
     ? detectLikelyLanguage(normalizedText)
     : configuredSourceLanguage
-  const sameLanguage = languagesProbablyMatch(likelySourceLanguage, targetLanguage)
-  const canAutoTranslate = !sameLanguage && !(
+  const sameLanguage = !meaningfulText ||
+    languagesProbablyMatch(likelySourceLanguage, targetLanguage) ||
+    (
+      likelySourceLanguage === null &&
+      normalizeLanguageCode(targetLanguage) === 'en' &&
+      looksLikeShortAsciiSnippet(normalizedText)
+    )
+  const canAutoTranslate = meaningfulText && !sameLanguage && !(
     configuration.provider === 'opusmt' &&
     configuredSourceLanguage === 'auto' &&
     likelySourceLanguage === null
@@ -842,7 +885,7 @@ async function callOpusMt(
   // to the engine, so we can surface the detected language in the result.
   let resolvedSource = configuration.opusMtSourceLanguage
   if (resolvedSource === 'auto') {
-    const detected = detectScriptLanguage(text)
+    const detected = detectLikelyLanguage(text) ?? detectScriptLanguage(text)
     if (!detected) {
       throw new TranslationServiceError(
         'Opus-MT could not determine the source language from the text script. Set a source language in Settings or switch to SMaLL-100.',
@@ -946,5 +989,18 @@ export async function translateConfiguredText(
   signal?: AbortSignal,
 ): Promise<TranslationResult> {
   const configuration = await loadTranslationConfiguration()
-  return translateTextWithConfiguration(configuration, text, signal)
+  try {
+    return await translateTextWithConfiguration(configuration, text, signal)
+  } catch (error) {
+    if (!shouldFallbackToOpusMt(configuration, error)) {
+      throw error
+    }
+
+    const fallbackConfiguration = buildOpusMtFallbackConfiguration(configuration)
+    try {
+      return await translateTextWithConfiguration(fallbackConfiguration, text, signal)
+    } catch {
+      throw error
+    }
+  }
 }

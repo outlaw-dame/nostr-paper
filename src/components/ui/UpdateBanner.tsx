@@ -88,13 +88,35 @@ export function ErrorScreen({ code, message }: ErrorScreenProps) {
 
 // ── UpdateBanner ─────────────────────────────────────────────
 
-export function UpdateBanner() {
-  const [dismissed, setDismissed] = useState(false)
+interface UpdateBannerProps {
+  onUpdate?: () => Promise<void>
+  onDismiss?: () => void
+}
 
-  const handleUpdate = () => {
-    // Tell SW to skip waiting and reload
-    navigator.serviceWorker.controller?.postMessage({ type: 'SKIP_WAITING' })
-    window.location.reload()
+export function UpdateBanner({ onUpdate, onDismiss }: UpdateBannerProps) {
+  const [dismissed, setDismissed] = useState(false)
+  const [updating, setUpdating] = useState(false)
+
+  const handleDismiss = () => {
+    setDismissed(true)
+    onDismiss?.()
+  }
+
+  const handleUpdate = async () => {
+    if (updating) return
+    setUpdating(true)
+
+    try {
+      if (onUpdate) {
+        await onUpdate()
+        return
+      }
+
+      navigator.serviceWorker.controller?.postMessage({ type: 'SKIP_WAITING' })
+      window.location.reload()
+    } finally {
+      setUpdating(false)
+    }
   }
 
   return (
@@ -126,7 +148,7 @@ export function UpdateBanner() {
           </div>
 
           <ActionButton
-            onClick={() => setDismissed(true)}
+            onClick={handleDismiss}
             className="
               text-[rgb(var(--color-label-tertiary))] text-[13px]
               px-2 py-1 tap-none
@@ -145,7 +167,7 @@ export function UpdateBanner() {
               tap-none
             "
           >
-            Update
+            {updating ? 'Updating…' : 'Update'}
           </ActionButton>
         </motion.div>
       )}

@@ -137,6 +137,28 @@ export function detectLikelyLanguage(text: string): string | null {
   return null
 }
 
+export function looksLikeShortAsciiSnippet(text: string): boolean {
+  const sample = text
+    .slice(0, 120)
+    .trim()
+
+  if (!sample) return false
+  if (/[^\x00-\x7F]/.test(sample)) return false
+
+  const words = sample
+    .toLowerCase()
+    .replace(/[^a-z0-9\s'’-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+
+  if (words.length === 0 || words.length > 6) return false
+
+  const letterCount = words.join('').replace(/[^a-z]/g, '').length
+  return letterCount >= 2 && letterCount <= 32
+}
+
 export function languagesProbablyMatch(
   left: string | null | undefined,
   right: string | null | undefined,

@@ -678,7 +678,7 @@ export default function FeedPage() {
     () => filterNsfwTaggedEvents(
       tagMatchedEvents.filter((event) => {
         if (isMuted(event.pubkey)) return false
-        if (moderationDocumentIds.has(event.id) && !allowedModerationIds.has(event.id)) return false
+        if (moderationDocumentIds.has(event.id) && !allowedModerationIds.has(event.id) && !moderationLoading) return false
 
         // Word mutes: hide events whose content contains a muted keyword.
         if (mutedWords.size > 0) {
@@ -698,7 +698,7 @@ export default function FeedPage() {
       }),
       hideNsfwTaggedPosts,
     ),
-    [allowedModerationIds, hideNsfwTaggedPosts, isMuted, moderationDocumentIds, mutedHashtags, mutedWords, tagMatchedEvents],
+    [allowedModerationIds, hideNsfwTaggedPosts, isMuted, moderationDocumentIds, moderationLoading, mutedHashtags, mutedWords, tagMatchedEvents],
   )
   const repostFeatureEnabled = !activeTagTimeline && activeSection.id === 'feed' && repostCarouselVisible
   const repostCarouselItems = useMemo(

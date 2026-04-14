@@ -3,6 +3,7 @@ import {
   detectLikelyLanguage,
   detectScriptLanguage,
   languagesProbablyMatch,
+  looksLikeShortAsciiSnippet,
 } from '@/lib/translation/detect'
 
 describe('detectScriptLanguage', () => {
@@ -20,6 +21,14 @@ describe('detectScriptLanguage', () => {
 describe('detectLikelyLanguage', () => {
   it('detects likely English text with common stopwords', () => {
     expect(detectLikelyLanguage('This is an English sentence about the new release and what it means for users.')).toBe('en')
+  })
+})
+
+describe('looksLikeShortAsciiSnippet', () => {
+  it('matches short ASCII snippets and rejects emoji-only text', () => {
+    expect(looksLikeShortAsciiSnippet('Breaking news')).toBe(true)
+    expect(looksLikeShortAsciiSnippet('hello world')).toBe(true)
+    expect(looksLikeShortAsciiSnippet('🔥🔥🔥')).toBe(false)
   })
 })
 
