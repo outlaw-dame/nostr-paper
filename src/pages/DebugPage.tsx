@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   clearBootDiagnosticsForDebug,
@@ -69,6 +69,19 @@ export default function DebugPage() {
   const [refreshTick, setRefreshTick] = useState(0)
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
   const [exportStatus, setExportStatus] = useState<'idle' | 'shared' | 'downloaded' | 'failed'>('idle')
+  const copyTimerRef = useRef<number | null>(null)
+  const exportTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current)
+      }
+      if (exportTimerRef.current !== null) {
+        window.clearTimeout(exportTimerRef.current)
+      }
+    }
+  }, [])
 
   const diagnostics = useMemo(() => {
     const session = readBootSessionForDebug()
@@ -185,7 +198,10 @@ export default function DebugPage() {
                 onClick={async () => {
                   const ok = await copyText(diagnosticsJson)
                   setCopyStatus(ok ? 'copied' : 'failed')
-                  setTimeout(() => setCopyStatus('idle'), 1800)
+                  if (copyTimerRef.current !== null) {
+                    window.clearTimeout(copyTimerRef.current)
+                  }
+                  copyTimerRef.current = window.setTimeout(() => setCopyStatus('idle'), 1800)
                 }}
                 className="rounded-[12px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[13px] font-medium text-[rgb(var(--color-label))]"
               >
@@ -197,7 +213,10 @@ export default function DebugPage() {
                 onClick={async () => {
                   const result = await shareOrDownloadDiagnostics(diagnosticsJson)
                   setExportStatus(result)
-                  setTimeout(() => setExportStatus('idle'), 2200)
+                  if (exportTimerRef.current !== null) {
+                    window.clearTimeout(exportTimerRef.current)
+                  }
+                  exportTimerRef.current = window.setTimeout(() => setExportStatus('idle'), 2200)
                 }}
                 className="rounded-[12px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[13px] font-medium text-[rgb(var(--color-label))]"
               >

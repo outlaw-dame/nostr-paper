@@ -8,7 +8,19 @@ import {
 } from '@/lib/moderation/content'
 import type { ModerationDecision, ModerationDocument, NostrEvent, Profile } from '@/types'
 
+// Bounded in-memory LRU cache — evict oldest when over the limit so the
+// cache doesn't grow unbounded across a long session with thousands of events.
+const MODERATION_CACHE_MAX = 1_000
 const inMemoryModerationCache = new Map<string, ModerationDecision>()
+
+function cacheSetModeration(key: string, value: ModerationDecision): void {
+  if (inMemoryModerationCache.size >= MODERATION_CACHE_MAX) {
+    // Map preserves insertion order; the first key is the oldest.
+    const firstKey = inMemoryModerationCache.keys().next().value
+    if (firstKey !== undefined) inMemoryModerationCache.delete(firstKey)
+  }
+  inMemoryModerationCache.set(key, value)
+}
 
 interface UseModerationDocumentsResult {
   decisions: Map<string, ModerationDecision>
@@ -46,7 +58,9 @@ export function useModerationDocuments(
   const enabled = options.enabled ?? true
   const failClosed = options.failClosed ?? false
   const [decisions, setDecisions] = useState<Map<string, ModerationDecision>>(new Map())
-  const [loading, setLoading] = useState(false)
+  // Start loading:true so consumers don't render undecided events before
+  // the first decision batch arrives (prevents feed flicker).
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const signature = useMemo(
@@ -80,7 +94,6 @@ export function useModerationDocuments(
 
     setDecisions(nextDecisions)
     setError(null)
-
     setLoading(true)
 
     Promise.all([
@@ -98,7 +111,7 @@ export function useModerationDocuments(
           if (!document) continue
 
           const cacheKey = getModerationDocumentCacheKey(document)
-          inMemoryModerationCache.set(cacheKey, decision)
+          cacheSetModeration(cacheKey, decision)
           merged.set(decision.id, decision)
         }
 
@@ -119,7 +132,12 @@ export function useModerationDocuments(
       })
 
     return () => controller.abort()
-  }, [enabled, documents, signature])
+    // `documents` is intentionally excluded: `signature` encodes all document
+    // content, so reference-only changes (same array content, new object) do not
+    // re-trigger a relay fetch. Including `documents` caused a Tagr relay query
+    // on every parent re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, signature])
 
   const allowedIds = useMemo(
     () => getAllowedIds(documents, decisions, !failClosed && error !== null),

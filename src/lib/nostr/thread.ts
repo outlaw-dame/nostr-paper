@@ -214,6 +214,10 @@ function parseMarkedEReference(tag: string[]): {
   }
 }
 
+function isMarkedEReference(tag: NonNullable<ReturnType<typeof parseMarkedEReference>>): boolean {
+  return tag.marker === 'root' || tag.marker === 'reply'
+}
+
 function getLastTagValue(event: NostrEvent, name: string): string | undefined {
   let value: string | undefined
   for (const tag of event.tags) {
@@ -475,9 +479,11 @@ export function parseTextNoteReply(event: NostrEvent): ParsedTextNoteReply | nul
   const eTags = event.tags
     .map(parseMarkedEReference)
     .filter((tag): tag is NonNullable<typeof tag> => tag !== null)
+  const unmarkedTags = eTags.filter((tag) => !isMarkedEReference(tag))
 
   const rootTag = [...eTags].reverse().find((tag) => tag.marker === 'root')
   const replyTag = [...eTags].reverse().find((tag) => tag.marker === 'reply')
+  const trailingUnmarkedTag = unmarkedTags.length > 0 ? unmarkedTags[unmarkedTags.length - 1] : undefined
 
   let rootEventId: string | undefined
   let parentEventId: string | undefined
@@ -487,12 +493,21 @@ export function parseTextNoteReply(event: NostrEvent): ParsedTextNoteReply | nul
   let parentAuthorPubkey: string | undefined
 
   if (rootTag || replyTag) {
-    rootEventId = rootTag?.eventId ?? replyTag?.eventId
-    rootRelayHint = rootTag?.relayHint ?? replyTag?.relayHint
-    rootAuthorPubkey = rootTag?.authorPubkey ?? replyTag?.authorPubkey
-    parentEventId = replyTag?.eventId ?? rootEventId
-    parentRelayHint = replyTag?.relayHint ?? rootRelayHint
-    parentAuthorPubkey = replyTag?.authorPubkey ?? rootAuthorPubkey
+    // Real-world clients sometimes mix marked and unmarked e-tags.
+    // Prefer explicit markers, but use trailing unmarked e-tags as parent fallback.
+    rootEventId = rootTag?.eventId ?? unmarkedTags[0]?.eventId ?? replyTag?.eventId
+    rootRelayHint = rootTag?.relayHint ?? unmarkedTags[0]?.relayHint ?? replyTag?.relayHint
+    rootAuthorPubkey = rootTag?.authorPubkey ?? unmarkedTags[0]?.authorPubkey ?? replyTag?.authorPubkey
+
+    parentEventId = replyTag?.eventId
+      ?? trailingUnmarkedTag?.eventId
+      ?? rootEventId
+    parentRelayHint = replyTag?.relayHint
+      ?? trailingUnmarkedTag?.relayHint
+      ?? rootRelayHint
+    parentAuthorPubkey = replyTag?.authorPubkey
+      ?? trailingUnmarkedTag?.authorPubkey
+      ?? rootAuthorPubkey
   } else if (eTags.length === 1) {
     const only = eTags[0]!
     rootEventId = only.eventId

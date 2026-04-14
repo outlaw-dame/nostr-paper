@@ -21,7 +21,7 @@ import {
   type NDKEvent,
   type NDKSubscription,
 } from '@nostr-dev-kit/ndk'
-import { getNDK } from '@/lib/nostr/ndk'
+import { getNDK, waitForCachedEvents } from '@/lib/nostr/ndk'
 import { queryEvents } from '@/lib/db/nostr'
 import { isEventExpired } from '@/lib/nostr/expiration'
 import { isValidEvent } from '@/lib/security/sanitize'
@@ -128,11 +128,29 @@ export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const stableFilter = useMemo<NostrFilter>(() => section.filter, [filterKey])
 
-  const loadFromCache = useCallback(async (filter: NostrFilter) => {
+  const stopActiveSubscription = useCallback(() => {
+    abortRef.current?.abort()
+    abortRef.current = null
+    subRef.current?.stop()
+    subRef.current = null
+    pendingEventsRef.current = []
+
+    if (flushTimerRef.current !== null) {
+      window.clearTimeout(flushTimerRef.current)
+      flushTimerRef.current = null
+    }
+  }, [])
+
+  const loadFromCache = useCallback(async (filter: NostrFilter, signal: AbortSignal) => {
     try {
-      const cached = await queryEvents({ ...filter, limit: MAX_FEED_SIZE })
+      const cached = await queryEvents({
+        ...filter,
+        limit: Math.min(filter.limit ?? MAX_FEED_SIZE, MAX_FEED_SIZE),
+      })
+      if (signal.aborted) return
       dispatch({ type: 'LOAD_CACHE', payload: cached })
     } catch (err) {
+      if (signal.aborted) return
       dispatch({
         type:    'ERROR',
         payload: err instanceof Error ? err.message : 'Cache load failed',
@@ -142,22 +160,46 @@ export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
 
   const subscribe = useCallback(
     async (filter: NostrFilter, signal: AbortSignal) => {
-      const flushPendingEvents = () => {
-        if (pendingEventsRef.current.length === 0) return
-        dispatch({ type: 'NEW_EVENTS', payload: pendingEventsRef.current })
-        pendingEventsRef.current = []
-      }
-
       const scheduleFlush = () => {
         if (flushTimerRef.current !== null) return
         flushTimerRef.current = window.setTimeout(() => {
           flushTimerRef.current = null
-          flushPendingEvents()
+          void flushPendingEvents()
         }, 96)
       }
 
+      const flushPendingEvents = async () => {
+        if (signal.aborted || pendingEventsRef.current.length === 0) return
+
+        const pendingEvents = pendingEventsRef.current
+        pendingEventsRef.current = []
+
+        try {
+          const eventIds = [...new Set(pendingEvents.map((event) => event.id))]
+          await waitForCachedEvents(eventIds)
+          if (signal.aborted) return
+
+          const persistedEvents = await queryEvents({
+            ids: eventIds,
+            limit: Math.min(eventIds.length, MAX_FEED_SIZE),
+          })
+
+          if (signal.aborted) return
+          if (persistedEvents.length > 0) {
+            dispatch({ type: 'NEW_EVENTS', payload: persistedEvents })
+          }
+        } catch {
+          if (signal.aborted) return
+          dispatch({ type: 'NEW_EVENTS', payload: pendingEvents })
+        } finally {
+          if (!signal.aborted && pendingEventsRef.current.length > 0) {
+            scheduleFlush()
+          }
+        }
+      }
+
       // 1. Populate from SQLite immediately — local-first UX
-      await loadFromCache(filter)
+      await loadFromCache(filter, signal)
 
       // 2. Connect to live relay stream if NDK is available
       let ndk: NDK
@@ -165,6 +207,9 @@ export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
         ndk = getNDK()
       } catch {
         // NDK not initialised — cache-only mode, not an error
+        if (!signal.aborted) {
+          dispatch({ type: 'EOSE' })
+        }
         return
       }
 
@@ -195,8 +240,11 @@ export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
           window.clearTimeout(flushTimerRef.current)
           flushTimerRef.current = null
         }
-        flushPendingEvents()
-        dispatch({ type: 'EOSE' })
+        void flushPendingEvents().finally(() => {
+          if (!signal.aborted) {
+            dispatch({ type: 'EOSE' })
+          }
+        })
       })
     },
     [loadFromCache],
@@ -205,6 +253,7 @@ export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
   useEffect(() => {
     if (!enabled) return
 
+    stopActiveSubscription()
     dispatch({ type: 'RESET' })
     abortRef.current = new AbortController()
     const { signal } = abortRef.current
@@ -218,23 +267,26 @@ export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
     })
 
     return () => {
-      abortRef.current?.abort()
-      subRef.current?.stop()
-      subRef.current = null
-      pendingEventsRef.current = []
-      if (flushTimerRef.current !== null) {
-        window.clearTimeout(flushTimerRef.current)
-        flushTimerRef.current = null
-      }
+      stopActiveSubscription()
     }
-  }, [section.id, enabled, subscribe, stableFilter])
+  }, [section.id, enabled, stableFilter, stopActiveSubscription, subscribe])
 
-  const refresh = useCallback(() => {
-    abortRef.current?.abort()
+  const refresh = useCallback(async () => {
+    stopActiveSubscription()
     dispatch({ type: 'RESET' })
-    abortRef.current = new AbortController()
-    subscribe(stableFilter, abortRef.current.signal).catch(() => {})
-  }, [stableFilter, subscribe])
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    try {
+      await subscribe(stableFilter, controller.signal)
+    } catch (err) {
+      if (controller.signal.aborted) return
+      dispatch({
+        type:    'ERROR',
+        payload: err instanceof Error ? err.message : 'Subscription failed',
+      })
+    }
+  }, [stableFilter, stopActiveSubscription, subscribe])
 
   return { ...state, refresh }
 }

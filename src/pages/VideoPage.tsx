@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { VideoBody } from '@/components/video/VideoBody'
+import { useEventCombinedModeration } from '@/hooks/useEventCombinedModeration'
 import { useFilterOverride } from '@/hooks/useFilterOverride'
-import { mergeResults, useEventFilterCheck, useSemanticFiltering } from '@/hooks/useKeywordFilters'
-import { useEventModeration, useModerationDocuments } from '@/hooks/useModeration'
-import { useMuteList } from '@/hooks/useMuteList'
+import { useModerationDocuments } from '@/hooks/useModeration'
 import { usePageHead } from '@/hooks/usePageHead'
 import { useProfile } from '@/hooks/useProfile'
 import { getEvent, getLatestAddressableEvent } from '@/lib/db/nostr'
@@ -80,15 +79,15 @@ export default function VideoPage() {
   const [error, setError] = useState<string | null>(null)
   const [override, setOverride] = useState(false)
   const { profile } = useProfile(event?.pubkey)
-  const checkEvent = useEventFilterCheck()
-  const semanticFilterResults = useSemanticFiltering(event ? [event] : [])
   const { overridden: filterOverride, setOverridden: setFilterOverride } = useFilterOverride(event?.id)
   const video = useMemo(() => (event ? parseVideoEvent(event) : null), [event])
   const {
-    blocked: eventBlocked,
-    loading: moderationLoading,
-    decision: moderationDecision,
-  } = useEventModeration(event)
+    blocked:       eventMlBlocked,
+    loading:       moderationLoading,
+    mlBlocked:     eventBlocked,
+    mlDecision:    moderationDecision,
+    keywordResult: keywordFilterResult,
+  } = useEventCombinedModeration(event, profile)
 
   const videoMetaDocuments = useMemo(() => {
     if (!video) return []
@@ -103,19 +102,7 @@ export default function VideoPage() {
   }, [video, event])
   const { allowedIds: allowedMetaIds, loading: metaModerationLoading } = useModerationDocuments(videoMetaDocuments)
   const metaBlocked = videoMetaDocuments.length > 0 && !allowedMetaIds.has(videoMetaDocuments[0]?.id ?? '')
-  const keywordFilterResult = useMemo(
-    () => event
-      ? mergeResults(
-          checkEvent(event, profile ?? undefined),
-          semanticFilterResults.get(event.id) ?? { action: null, matches: [] },
-        )
-      : { action: null, matches: [] },
-    [checkEvent, event, profile, semanticFilterResults],
-  )
-
-  const { isMuted, loading: muteListLoading } = useMuteList()
-  const isMutedAuthor = event ? isMuted(event.pubkey) : false
-  const isBlocked = eventBlocked || metaBlocked || isMutedAuthor
+  const isBlocked = eventMlBlocked || metaBlocked
   const keywordGated = keywordFilterResult.action !== null && !filterOverride
   const keywordHidden = keywordFilterResult.action === 'hide'
   const blockedByTagr = eventBlocked && (moderationDecision?.reason?.startsWith('tagr:') ?? false)
@@ -260,7 +247,7 @@ export default function VideoPage() {
     return null
   }, [event, video])
 
-  if (loading || (event !== null && (moderationLoading || metaModerationLoading)) || muteListLoading) {
+  if (loading || (event !== null && (moderationLoading || metaModerationLoading))) {
     return (
       <div className="min-h-dvh bg-[rgb(var(--color-bg))] px-4 pt-safe pb-safe">
         <div className="sticky top-0 z-10 bg-[rgb(var(--color-bg)/0.88)] py-4 backdrop-blur-xl">

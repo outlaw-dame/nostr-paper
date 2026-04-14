@@ -477,6 +477,24 @@ export default function SettingsPage() {
 
             <button
               type="button"
+              onClick={() => navigate('/settings/feed-controls')}
+              className="flex w-full items-center justify-between text-left transition-opacity active:opacity-70"
+            >
+              <div>
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
+                  Feed Controls & Algorithms
+                </p>
+                <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
+                  Review ranking formulas for trending topics, suggested accounts, and follow packs.
+                </p>
+              </div>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-[rgb(var(--color-label-tertiary))]">
+                <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+
+            <button
+              type="button"
               onClick={() => navigate('/settings/translations')}
               className="flex w-full items-center justify-between text-left transition-opacity active:opacity-70"
             >

@@ -56,6 +56,7 @@ import { type SavedTagFeed } from '@/lib/feed/tagFeeds'
 import {
   buildTagTimelineHref,
   describeTagTimeline,
+  extractEventHashtags,
   getTagTimelineKey,
   matchesTagTimeline,
   parseTagTimeline,
@@ -556,7 +557,7 @@ export default function FeedPage() {
   const [resumeFeedPosition, setResumeFeedPosition] = useState(true)
 
   const { profile: currentUserProfile } = useProfile(currentUser?.pubkey)
-  const { isMuted, loading: muteListLoading } = useMuteList()
+  const { isMuted, mutedWords, mutedHashtags, loading: muteListLoading } = useMuteList()
   const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
   const { unreadCount: activityUnreadCount, hasUnread: hasUnreadActivity } = useActivityUnread({ enabled: Boolean(currentUser) })
   const activityUnreadBadgeText = activityUnreadCount > 99 ? '99+' : String(activityUnreadCount)
@@ -675,13 +676,29 @@ export default function FeedPage() {
 
   const visibleEvents = useMemo(
     () => filterNsfwTaggedEvents(
-      tagMatchedEvents.filter((event) => (
-        !isMuted(event.pubkey) &&
-        (!moderationDocumentIds.has(event.id) || allowedModerationIds.has(event.id))
-      )),
+      tagMatchedEvents.filter((event) => {
+        if (isMuted(event.pubkey)) return false
+        if (moderationDocumentIds.has(event.id) && !allowedModerationIds.has(event.id)) return false
+
+        // Word mutes: hide events whose content contains a muted keyword.
+        if (mutedWords.size > 0) {
+          const lower = event.content.toLowerCase()
+          for (const word of mutedWords) {
+            if (lower.includes(word)) return false
+          }
+        }
+
+        // Hashtag mutes: hide events that carry a muted #tag.
+        if (mutedHashtags.size > 0) {
+          const tags = extractEventHashtags(event)
+          if (tags.some((tag) => mutedHashtags.has(tag))) return false
+        }
+
+        return true
+      }),
       hideNsfwTaggedPosts,
     ),
-    [allowedModerationIds, hideNsfwTaggedPosts, isMuted, moderationDocumentIds, tagMatchedEvents],
+    [allowedModerationIds, hideNsfwTaggedPosts, isMuted, moderationDocumentIds, mutedHashtags, mutedWords, tagMatchedEvents],
   )
   const repostFeatureEnabled = !activeTagTimeline && activeSection.id === 'feed' && repostCarouselVisible
   const repostCarouselItems = useMemo(
@@ -709,6 +726,7 @@ export default function FeedPage() {
   }, [featuredRepostTargetIds, repostFeatureEnabled, visibleEvents])
   const heroEvent = curatedFeedEvents[0] ?? null
   const secondaryEvents = curatedFeedEvents.slice(1)
+  const feedSurfaceLoading = loading || moderationLoading
   const feedLoading = loading || semanticTimelineLoading || moderationLoading || muteListLoading
 
   useEffect(() => {
@@ -756,6 +774,10 @@ export default function FeedPage() {
   useEffect(() => {
     if (!resumeFeedPosition) {
       clearFeedViewSnapshot(feedScopeKey)
+      const container = scrollContainerRef.current
+      if (container) {
+        container.scrollTop = 0
+      }
       restoreCompletedRef.current = true
     } else {
       restoreCompletedRef.current = false
@@ -813,17 +835,29 @@ export default function FeedPage() {
   useEffect(() => {
     if (!resumeFeedPosition) return
     if (restoreCompletedRef.current) return
-    if (feedLoading) return
+    if (feedSurfaceLoading) return
     if (visibleEvents.length === 0 && !eose) return
 
     const container = scrollContainerRef.current
     const snapshot = getFeedViewSnapshot(feedScopeKey)
-    if (!container || !snapshot) {
+    if (!container) {
       restoreCompletedRef.current = true
       return
     }
 
+    if (!snapshot) {
+      container.scrollTop = 0
+      restoreCompletedRef.current = true
+      return
+    }
+
+    let firstFrame: number | null = null
+    let secondFrame: number | null = null
+    let cancelled = false
+
     const restore = () => {
+      if (cancelled) return true
+
       let restored = false
 
       if (snapshot.anchorEventId) {
@@ -851,16 +885,28 @@ export default function FeedPage() {
     }
 
     // Let layout settle before applying the anchor offset.
-    requestAnimationFrame(() => {
+    firstFrame = requestAnimationFrame(() => {
+      if (cancelled) return
       const firstPassDone = restore()
-      requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        if (cancelled) return
         const secondPassDone = restore()
         if (firstPassDone || secondPassDone) {
           restoreCompletedRef.current = true
         }
       })
     })
-  }, [eose, feedLoading, feedScopeKey, resumeFeedPosition, visibleEvents])
+
+    return () => {
+      cancelled = true
+      if (firstFrame !== null) {
+        cancelAnimationFrame(firstFrame)
+      }
+      if (secondFrame !== null) {
+        cancelAnimationFrame(secondFrame)
+      }
+    }
+  }, [eose, feedScopeKey, feedSurfaceLoading, resumeFeedPosition, visibleEvents])
 
   const checkEvent      = useEventFilterCheck()
   const semanticResults = useSemanticFiltering(visibleEvents)
@@ -1250,7 +1296,7 @@ export default function FeedPage() {
             )}
 
             <div className="mt-3">
-              {feedLoading && !heroEvent ? (
+              {feedSurfaceLoading && !heroEvent ? (
                 <FeedSkeleton type="hero" />
               ) : heroEvent ? (
                 <div data-feed-event-id={heroEvent.id}>
@@ -1274,7 +1320,7 @@ export default function FeedPage() {
             </div>
 
             <div className="mt-4">
-              {feedLoading && secondaryEvents.length === 0 ? (
+              {feedSurfaceLoading && secondaryEvents.length === 0 ? (
                 <div className="space-y-3">
                   {Array.from({ length: 3 }, (_, i) => (
                     <FeedSkeleton key={i} type="card" />
@@ -1328,6 +1374,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
   const followStatus = useFollowStatus(event.pubkey)
   const { ref: visibilityRef, visible: storyPreviewVisible } = useVisibilityOnce<HTMLDivElement>()
   const filterResult = mergeResults(checkEvent(event, profile ?? undefined), semanticResult)
+  const entryDelay = Math.min(index, 5) * 0.04
   const comment = parseCommentEvent(event)
   const {
     article,
@@ -1363,7 +1410,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
           type:    'spring',
           stiffness: 280,
           damping:   28,
-          delay:   index * 0.04,
+          delay:   entryDelay,
         }}
         className="
           app-panel
@@ -1481,16 +1528,31 @@ interface RichStoryMediaProps {
 
 const FEED_INLINE_MEDIA_CIRCUIT_OPEN_EVENT = 'paper:feed-inline-media-circuit-open'
 const FEED_INLINE_MEDIA_FAILURE_THRESHOLD = 3
+const FEED_INLINE_MEDIA_CIRCUIT_COOLDOWN_MS = 5 * 60 * 1000
 let feedInlineMediaAutoplayFailures = 0
 let feedInlineMediaAutoplayCircuitOpen = false
+let feedInlineMediaAutoplayCircuitOpenedAt = 0
+
+function isFeedInlineMediaAutoplayCircuitOpen(): boolean {
+  if (!feedInlineMediaAutoplayCircuitOpen) return false
+  if (Date.now() - feedInlineMediaAutoplayCircuitOpenedAt < FEED_INLINE_MEDIA_CIRCUIT_COOLDOWN_MS) {
+    return true
+  }
+
+  feedInlineMediaAutoplayCircuitOpen = false
+  feedInlineMediaAutoplayFailures = 0
+  feedInlineMediaAutoplayCircuitOpenedAt = 0
+  return false
+}
 
 function recordFeedInlineMediaAutoplayFailure(): void {
-  if (feedInlineMediaAutoplayCircuitOpen) return
+  if (isFeedInlineMediaAutoplayCircuitOpen()) return
 
   feedInlineMediaAutoplayFailures += 1
   if (feedInlineMediaAutoplayFailures < FEED_INLINE_MEDIA_FAILURE_THRESHOLD) return
 
   feedInlineMediaAutoplayCircuitOpen = true
+  feedInlineMediaAutoplayCircuitOpenedAt = Date.now()
   window.dispatchEvent(new Event(FEED_INLINE_MEDIA_CIRCUIT_OPEN_EVENT))
 }
 
@@ -1532,7 +1594,7 @@ function RichStoryMedia({
   }, [video?.id])
 
   useEffect(() => {
-    if (feedInlineMediaAutoplayCircuitOpen) {
+    if (isFeedInlineMediaAutoplayCircuitOpen()) {
       setAutoplayFailed(true)
       return undefined
     }
@@ -1586,7 +1648,7 @@ function RichStoryMedia({
     !youTubeId &&
     !vimeoId &&
     !peertubeEmbed &&
-    !feedInlineMediaAutoplayCircuitOpen &&
+    !isFeedInlineMediaAutoplayCircuitOpen() &&
     !autoplayFailed,
   )
   const { ref: mediaRef, visible: mediaVisible } = useVisibilityOnce<HTMLDivElement>({

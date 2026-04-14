@@ -893,6 +893,16 @@ async function _queryEventsFts(
   limit:    number,
   options:  EventQueryOptions = {},
 ): Promise<NostrEvent[]> {
+  const scored = await _queryEventsFtsScored(filter, ftsQuery, limit, options)
+  return scored.map(result => result.item)
+}
+
+async function _queryEventsFtsScored(
+  filter:   NostrFilter,
+  ftsQuery: string,
+  limit:    number,
+  options:  EventQueryOptions = {},
+): Promise<ScoredSearchResult<NostrEvent>[]> {
   // ftsQuery is already sanitized — it is the first bind parameter (MATCH ?)
   const conditions: string[] = []
   const bind: unknown[]      = [ftsQuery]
@@ -933,8 +943,9 @@ async function _queryEventsFts(
 
   // events_fts.rank is the BM25 score (negative float — lower = more relevant)
   // ORDER BY rank ASC: most relevant first; created_at DESC breaks ties by recency
-  const rows = await dbQuery<{ raw: string }>(`
-    SELECT   e.raw
+  const rows = await dbQuery<EventFtsRow>(`
+    SELECT   e.raw,
+             -events_fts.rank AS lexical_score
     FROM     events_fts
     ${joins.join('\n    ')}
     WHERE    events_fts MATCH ?
@@ -945,7 +956,7 @@ async function _queryEventsFts(
     LIMIT    ?
   `, [...bind, limit])
 
-  return _parseRaw(rows)
+  return parseScoredEventRows(rows)
 }
 
 // ── Dedicated Search Functions ───────────────────────────────
@@ -958,7 +969,32 @@ export interface SearchEventsOptions {
   limit?:   number
 }
 
-export interface SemanticCandidateOptions extends SearchEventsOptions {}
+export type SemanticCandidateOptions = SearchEventsOptions
+
+export interface ScoredSearchResult<T> {
+  item: T
+  score: number
+}
+
+interface EventFtsRow {
+  raw: string
+  lexical_score: number
+}
+
+function parseScoredEventRows(rows: EventFtsRow[]): ScoredSearchResult<NostrEvent>[] {
+  return rows.flatMap((row) => {
+    try {
+      const event = JSON.parse(row.raw) as NostrEvent
+      const score = Number(row.lexical_score)
+      return [{
+        item: event,
+        score: Number.isFinite(score) ? score : 0,
+      }]
+    } catch {
+      return []
+    }
+  })
+}
 
 /**
  * Full-text search over event content (NIP-50 local path).
@@ -972,6 +1008,14 @@ export async function searchEvents(
   query: string,
   opts:  SearchEventsOptions = {},
 ): Promise<NostrEvent[]> {
+  const scored = await searchEventsWithScores(query, opts)
+  return scored.map(result => result.item)
+}
+
+export async function searchEventsWithScores(
+  query: string,
+  opts:  SearchEventsOptions = {},
+): Promise<ScoredSearchResult<NostrEvent>[]> {
   const parsed = parseSearchQuery(query)
   const limit = Math.min(opts.limit ?? 50, 500)
   const filter = {
@@ -982,14 +1026,15 @@ export async function searchEvents(
   }
 
   if (parsed.localQuery !== null) {
-    return _queryEventsFts(filter, parsed.localQuery, limit, {
+    return _queryEventsFtsScored(filter, parsed.localQuery, limit, {
       nip05Domains: parsed.domains,
     })
   }
   if (parsed.domains.length > 0) {
-    return _queryEventsStandard(filter, limit, {
+    const items = await _queryEventsStandard(filter, limit, {
       nip05Domains: parsed.domains,
     })
+    return items.map(item => ({ item, score: 0 }))
   }
 
   return []
@@ -1005,6 +1050,14 @@ export async function searchProfiles(
   query: string,
   limit = 20,
 ): Promise<Profile[]> {
+  const scored = await searchProfilesWithScores(query, limit)
+  return scored.map(result => result.item)
+}
+
+export async function searchProfilesWithScores(
+  query: string,
+  limit = 20,
+): Promise<ScoredSearchResult<Profile>[]> {
   const parsed = parseSearchQuery(query)
   const cappedLimit = Math.min(limit, 200)
   const domainWhere = parsed.domains.length > 0
@@ -1016,21 +1069,24 @@ export async function searchProfiles(
   }
 
   const rows = parsed.localQuery !== null
-    ? await dbQuery<DBProfile>(`
+    ? await dbQuery<DBProfile & { lexical_score: number }>(`
       SELECT   p.pubkey, p.name, p.display_name, p.picture,
                p.event_id, p.banner, p.about, p.website,
                p.nip05, p.nip05_domain, p.nip05_verified,
                p.nip05_verified_at, p.nip05_last_checked_at,
                p.lud06, p.lud16, p.bot, p.birthday_json,
-               p.external_identities, p.updated_at, p.raw
+               p.external_identities, p.updated_at, p.raw,
+               -bm25(profiles_fts, 10, 10, 1, 1) AS lexical_score
       FROM     profiles_fts
       JOIN     profiles p ON p.rowid = profiles_fts.rowid
       WHERE    profiles_fts MATCH ?
                ${domainWhere}
-      ORDER BY profiles_fts.rank,
+      ORDER BY bm25(profiles_fts, 10, 10, 1, 1),
                p.updated_at DESC
       LIMIT    ?
-    `, [parsed.localQuery, ...parsed.domains, cappedLimit]).catch(() => [] as DBProfile[])
+    `, [parsed.localQuery, ...parsed.domains, cappedLimit]).catch(
+      () => [] as Array<DBProfile & { lexical_score: number }>,
+    )
     : await dbQuery<DBProfile>(`
       SELECT   p.pubkey, p.name, p.display_name, p.picture,
                p.event_id, p.banner, p.about, p.website,
@@ -1045,7 +1101,14 @@ export async function searchProfiles(
     `, [...parsed.domains, cappedLimit]).catch(() => [] as DBProfile[])
   // .catch: profiles_fts may not exist yet on older DBs — degrade gracefully
 
-  return rows.map(rowToProfile)
+  return rows.map((row) => {
+    const profile = rowToProfile(row)
+    const score = 'lexical_score' in row ? Number(row.lexical_score) : 0
+    return {
+      item: profile,
+      score: Number.isFinite(score) ? score : 0,
+    }
+  })
 }
 
 /** Recent event candidates for semantic reranking. */
@@ -1094,6 +1157,144 @@ export async function listSemanticProfileCandidates(
   return rows.map(rowToProfile)
 }
 
+/**
+ * Returns profiles ranked by how many distinct followers appear in the local
+ * `follows` table (a proxy for social popularity within the user's cached
+ * network).  If fewer than `minResults` followed profiles exist in the cache
+ * the result is padded with the most-recently-updated profiles.
+ */
+export async function listProfilesByFollowerCount(
+  limit = 10,
+  minResults = 3,
+): Promise<Profile[]> {
+  const cappedLimit = Math.min(limit, 200)
+
+  const rows = await dbQuery<DBProfile & { follower_count: number }>(`
+    SELECT   p.pubkey, p.name, p.display_name, p.picture,
+             p.event_id, p.banner, p.about, p.website,
+             p.nip05, p.nip05_domain, p.nip05_verified,
+             p.nip05_verified_at, p.nip05_last_checked_at,
+             p.lud06, p.lud16, p.bot, p.birthday_json,
+             p.external_identities, p.updated_at, p.raw,
+             COUNT(f.follower) AS follower_count
+    FROM     profiles p
+    INNER JOIN follows f ON f.followee = p.pubkey
+    GROUP BY p.pubkey
+    ORDER BY follower_count DESC
+    LIMIT    ?
+  `, [cappedLimit]).catch(() => [] as (DBProfile & { follower_count: number })[])
+
+  if (rows.length >= minResults) {
+    return rows.map(rowToProfile)
+  }
+
+  // Fallback: not enough follow-data cached yet — use recency
+  const fallback = await dbQuery<DBProfile>(`
+    SELECT   p.pubkey, p.name, p.display_name, p.picture,
+             p.event_id, p.banner, p.about, p.website,
+             p.nip05, p.nip05_domain, p.nip05_verified,
+             p.nip05_verified_at, p.nip05_last_checked_at,
+             p.lud06, p.lud16, p.bot, p.birthday_json,
+             p.external_identities, p.updated_at, p.raw
+    FROM     profiles p
+    ORDER BY p.updated_at DESC
+    LIMIT    ?
+  `, [cappedLimit]).catch(() => [] as DBProfile[])
+
+  return fallback.map(rowToProfile)
+}
+
+export interface SuggestedProfileCandidate {
+  profile: Profile
+  mutualCount: number
+  followerCount: number
+}
+
+/**
+ * Suggest profiles using a local friends-of-friends graph:
+ * - mutualCount: number of people you follow who also follow the candidate
+ * - followerCount: overall cached popularity in follows table
+ */
+export async function listSuggestedProfiles(
+  viewerPubkey: string,
+  limit = 10,
+): Promise<SuggestedProfileCandidate[]> {
+  if (!viewerPubkey) return []
+
+  const cappedLimit = Math.min(Math.max(limit, 1), 100)
+  const rows = await dbQuery<DBProfile & {
+    mutual_count: number
+    follower_count: number
+  }>(`
+    SELECT   p.pubkey, p.name, p.display_name, p.picture,
+             p.event_id, p.banner, p.about, p.website,
+             p.nip05, p.nip05_domain, p.nip05_verified,
+             p.nip05_verified_at, p.nip05_last_checked_at,
+             p.lud06, p.lud16, p.bot, p.birthday_json,
+             p.external_identities, p.updated_at, p.raw,
+             COUNT(DISTINCT vf.followee) AS mutual_count,
+             COUNT(DISTINCT pop.follower) AS follower_count
+    FROM     follows vf
+    JOIN     follows ff
+      ON     ff.follower = vf.followee
+    JOIN     profiles p
+      ON     p.pubkey = ff.followee
+    LEFT JOIN follows already
+      ON     already.follower = ?
+      AND    already.followee = ff.followee
+    LEFT JOIN follows pop
+      ON     pop.followee = ff.followee
+    WHERE    vf.follower = ?
+      AND    ff.followee <> ?
+      AND    already.followee IS NULL
+    GROUP BY p.pubkey
+    ORDER BY mutual_count DESC,
+             follower_count DESC,
+             p.updated_at DESC
+    LIMIT    ?
+  `, [viewerPubkey, viewerPubkey, viewerPubkey, cappedLimit]).catch(() => [] as Array<
+    DBProfile & { mutual_count: number; follower_count: number }
+  >)
+
+  if (rows.length >= Math.min(4, cappedLimit)) {
+    return rows.map((row) => ({
+      profile: rowToProfile(row),
+      mutualCount: Number(row.mutual_count) || 0,
+      followerCount: Number(row.follower_count) || 0,
+    }))
+  }
+
+  // Fallback for sparse local graph: still provide strong account suggestions.
+  const popularFallback = await dbQuery<DBProfile & { follower_count: number }>(`
+    SELECT   p.pubkey, p.name, p.display_name, p.picture,
+             p.event_id, p.banner, p.about, p.website,
+             p.nip05, p.nip05_domain, p.nip05_verified,
+             p.nip05_verified_at, p.nip05_last_checked_at,
+             p.lud06, p.lud16, p.bot, p.birthday_json,
+             p.external_identities, p.updated_at, p.raw,
+             COUNT(DISTINCT f.follower) AS follower_count
+    FROM     profiles p
+    INNER JOIN follows f ON f.followee = p.pubkey
+    LEFT JOIN follows already
+      ON     already.follower = ?
+      AND    already.followee = p.pubkey
+    WHERE    p.pubkey <> ?
+      AND    already.followee IS NULL
+    GROUP BY p.pubkey
+    ORDER BY follower_count DESC,
+             p.updated_at DESC
+    LIMIT    ?
+  `, [viewerPubkey, viewerPubkey, cappedLimit]).catch(() => [] as Array<
+    DBProfile & { follower_count: number }
+  >)
+
+  return popularFallback.map((row) => ({
+    profile: rowToProfile(row),
+    mutualCount: 0,
+    followerCount: Number(row.follower_count) || 0,
+  }))
+}
+
 export interface RecentHashtagStat {
   tag: string
   usageCount: number
@@ -1101,7 +1302,7 @@ export interface RecentHashtagStat {
   latestCreatedAt: number
 }
 
-export interface RecentTaggedEventsOptions extends SearchEventsOptions {}
+export type RecentTaggedEventsOptions = SearchEventsOptions
 
 function escapeSqlLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, match => `\\${match}`)

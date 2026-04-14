@@ -113,6 +113,10 @@ vi.mock('./NoteContent', () => ({
   ),
 }))
 
+vi.mock('@/components/nostr/EventMetricsRow', () => ({
+  EventMetricsRow: () => null,
+}))
+
 // Mock fetch for OG data
 global.fetch = vi.fn()
 

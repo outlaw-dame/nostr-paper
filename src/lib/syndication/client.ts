@@ -32,9 +32,13 @@ export async function fetchSyndicationFeed(url: string): Promise<SyndicationFeed
   if (existing) return existing
 
   const promise = doFetch(url).then((result) => {
-    evictIfNeeded()
-    cache.set(url, result)
     inflight.delete(url)
+
+    if (result !== null) {
+      cache.set(url, result)
+      evictIfNeeded()
+    }
+
     return result
   })
 

@@ -8,7 +8,7 @@ import {
 import { useApp } from '@/contexts/app-context'
 import { getFollows, queryEvents } from '@/lib/db/nostr'
 import { isEventExpired } from '@/lib/nostr/expiration'
-import { getNDK } from '@/lib/nostr/ndk'
+import { getNDK, waitForCachedEvents } from '@/lib/nostr/ndk'
 import {
   collectStoryGroups,
   STORY_LOOKBACK_SECONDS,
@@ -158,7 +158,20 @@ export function useStoriesRail(enabled = true): UseStoriesRailResult {
         const raw = ndkEvent.rawEvent() as unknown as NostrEvent
         if (!isValidEvent(raw) || isEventExpired(raw)) return
 
-        setEvents((current) => dedupeEvents([raw, ...current]).slice(0, MAX_STORY_EVENT_COUNT))
+        void (async () => {
+          try {
+            await waitForCachedEvents([raw.id])
+            if (signal.aborted) return
+
+            const [persisted] = await queryEvents({ ids: [raw.id], limit: 1 })
+            if (signal.aborted) return
+
+            setEvents((current) => dedupeEvents([persisted ?? raw, ...current]).slice(0, MAX_STORY_EVENT_COUNT))
+          } catch {
+            if (signal.aborted) return
+            setEvents((current) => dedupeEvents([raw, ...current]).slice(0, MAX_STORY_EVENT_COUNT))
+          }
+        })()
       })
     }
 

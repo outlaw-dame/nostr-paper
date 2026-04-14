@@ -42,6 +42,10 @@ export function useTagTimelineSemanticFeed(
     () => JSON.stringify(kinds ?? []),
     [kinds],
   )
+  const normalizedKinds = useMemo(
+    () => (kinds && kinds.length > 0 ? [...kinds] : []),
+    [kindsKey],
+  )
   const specKey = useMemo(
     () => JSON.stringify(spec),
     [spec],
@@ -63,7 +67,7 @@ export function useTagTimelineSemanticFeed(
     void (async () => {
       try {
         const candidates = await listSemanticEventCandidates(semanticQuery, {
-          ...(kinds && kinds.length > 0 ? { kinds } : {}),
+          ...(normalizedKinds.length > 0 ? { kinds: normalizedKinds } : {}),
           limit: MAX_SEMANTIC_CANDIDATES,
         })
         if (controller.signal.aborted) return
@@ -117,7 +121,7 @@ export function useTagTimelineSemanticFeed(
     return () => {
       controller.abort()
     }
-  }, [kinds, kindsKey, semanticQuery, spec, specKey])
+  }, [kindsKey, normalizedKinds, semanticQuery, spec, specKey])
 
   return {
     events,

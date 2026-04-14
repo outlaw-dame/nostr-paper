@@ -1,6 +1,7 @@
-import { renderToStaticMarkup } from 'react-dom/server'
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SecondaryCard } from './FeedPage'
 import type { FilterCheckResult } from '@/lib/filters/types'
 import type { NostrEvent } from '@/types'
@@ -181,6 +182,42 @@ const allowResult: FilterCheckResult = {
 }
 
 describe('SecondaryCard', () => {
+  let container: HTMLDivElement | null = null
+  let root: Root | null = null
+
+  afterEach(async () => {
+    if (root) {
+      await act(async () => {
+        root?.unmount()
+      })
+    }
+    container?.remove()
+    root = null
+    container = null
+  })
+
+  async function renderCard(event: NostrEvent): Promise<string> {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    await act(async () => {
+      root?.render(
+        <MemoryRouter>
+          <SecondaryCard
+            event={event}
+            index={0}
+            checkEvent={() => allowResult}
+            semanticResult={allowResult}
+            feedInlineAutoplayEnabled
+          />
+        </MemoryRouter>,
+      )
+    })
+
+    return container.innerHTML
+  }
+
   it('renders article metadata and OG image in story cards', () => {
     const event = baseEvent({
       kind: Kind.LongFormContent,
@@ -188,22 +225,12 @@ describe('SecondaryCard', () => {
       content: 'https://techcrunch.com/example-story',
     })
 
-    const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <SecondaryCard
-          event={event}
-          index={0}
-          checkEvent={() => allowResult}
-          semanticResult={allowResult}
-          feedInlineAutoplayEnabled
-        />
-      </MemoryRouter>,
-    )
-
-    expect(html).toContain('TechCrunch Funding Round')
-    expect(html).toContain('By Sara Perez • techcrunch.com')
-    expect(html).toContain('A concise OG description for the funding round.')
-    expect(html).toContain('src="https://techcrunch.com/hero.jpg"')
+    return renderCard(event).then((html) => {
+      expect(html).toContain('TechCrunch Funding Round')
+      expect(html).toContain('By Sara Perez • techcrunch.com')
+      expect(html).toContain('A concise OG description for the funding round.')
+      expect(html).toContain('src="https://techcrunch.com/hero.jpg"')
+    })
   })
 
   it('renders video story previews and external bylines for video cards', () => {
@@ -223,20 +250,10 @@ describe('SecondaryCard', () => {
       ],
     })
 
-    const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <SecondaryCard
-          event={event}
-          index={0}
-          checkEvent={() => allowResult}
-          semanticResult={allowResult}
-          feedInlineAutoplayEnabled
-        />
-      </MemoryRouter>,
-    )
-
-    expect(html).toContain('src="https://video.example.com/poster.jpg"')
-    expect(html).toContain('>Video<')
-    expect(html).toContain('By Studio Channel • youtube.com')
+    return renderCard(event).then((html) => {
+      expect(html).toContain('src="https://video.example.com/poster.jpg"')
+      expect(html).toContain('>Video<')
+      expect(html).toContain('By Studio Channel • youtube.com')
+    })
   })
 })

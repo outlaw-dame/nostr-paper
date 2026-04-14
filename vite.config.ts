@@ -1412,6 +1412,15 @@ export default defineConfig(({ mode }) => {
       globals: true,
       environment: 'jsdom',
       setupFiles: ['./src/test-setup.ts'],
+      include: ['src/**/*.{test,spec}.ts', 'src/**/*.{test,spec}.tsx'],
+      exclude: ['**/node_modules/**', '**/*.ui.test.ts', '**/*.ui.test.tsx'],
+      pool: 'forks',
+      poolOptions: {
+        forks: {
+          minForks: 1,
+          maxForks: 1,
+        },
+      },
       coverage: {
         provider: 'v8',
         reporter: ['text', 'json', 'html'],

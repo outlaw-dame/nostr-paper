@@ -80,10 +80,14 @@ const OUTBOX_RELAYS = [
   'wss://purplepag.es',  // NIP-65 relay list lookups
 ] as const
 
-const ENABLE_OUTBOX_MODEL = import.meta.env.PROD
+const ENABLE_OUTBOX_MODEL = import.meta.env.VITE_DISABLE_OUTBOX_MODEL !== 'true'
 
 export function getDefaultRelayUrls(): string[] {
   return [...DEFAULT_RELAYS]
+}
+
+export function getOutboxRelayUrls(): string[] {
+  return [...OUTBOX_RELAYS]
 }
 
 // ── SQLite Cache Adapter ─────────────────────────────────────
@@ -94,6 +98,13 @@ class SQLiteCacheAdapter implements NDKCacheAdapter {
   readonly locking = true
 
   private readonly inflightEventWrites = new Map<string, Promise<void>>()
+
+  async waitForEvents(eventIds: string[]): Promise<void> {
+    const uniqueIds = [...new Set(eventIds)]
+    await Promise.all(
+      uniqueIds.map((eventId) => this.inflightEventWrites.get(eventId)?.catch(() => {}) ?? Promise.resolve()),
+    )
+  }
 
   async query(subscription: NDKSubscription): Promise<NDKEvent[]> {
     const filter = subscription.filter as NostrFilter
@@ -165,10 +176,15 @@ class SQLiteCacheAdapter implements NDKCacheAdapter {
 // ── NDK Singleton ────────────────────────────────────────────
 
 let _ndk: NDK | null = null
+const cacheAdapter = new SQLiteCacheAdapter()
 
 export function getNDK(): NDK {
   if (!_ndk) throw new Error('NDK not initialized — call initNDK() first')
   return _ndk
+}
+
+export async function waitForCachedEvents(eventIds: string[]): Promise<void> {
+  await cacheAdapter.waitForEvents(eventIds)
 }
 
 export interface InitNDKOptions {
@@ -215,7 +231,7 @@ export async function initNDK(options: InitNDKOptions = {}): Promise<NDK> {
     explicitRelayUrls:  relays,
     outboxRelayUrls:    [...OUTBOX_RELAYS],
     enableOutboxModel:  ENABLE_OUTBOX_MODEL,
-    cacheAdapter:       new SQLiteCacheAdapter(),
+    cacheAdapter,
     ...(signer !== undefined ? { signer } : {}),
     // Autoconnect is disabled — we control connection timing
     autoConnectUserRelays:  false,
@@ -331,4 +347,26 @@ export function removeRelayFromPool(url: string): void {
 export function getPoolRelayUrls(): string[] {
   if (!_ndk) return []
   return Array.from(_ndk.pool.relays.keys())
+}
+
+/**
+ * Force a reconnect cycle for a relay already known to the pool.
+ * Returns true when a retry attempt was scheduled.
+ */
+export function retryRelayConnection(url: string): boolean {
+  if (!_ndk || !isValidRelayURL(url)) return false
+
+  const existingRelay = _ndk.pool.relays.get(url)
+  if (!existingRelay) return false
+
+  existingRelay.disconnect()
+  _ndk.pool.removeRelay(url)
+  const relay = new NDKRelay(url, _ndk.relayAuthDefaultPolicy, _ndk)
+  _ndk.pool.addRelay(relay, true)
+  return true
+}
+
+export function canRetryRelayConnection(url: string): boolean {
+  if (!_ndk || !isValidRelayURL(url)) return false
+  return _ndk.pool.relays.has(url)
 }

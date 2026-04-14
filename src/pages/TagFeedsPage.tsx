@@ -354,7 +354,7 @@ export default function TagFeedsPage() {
     setProfileSearchResults([])
     setProfileSearchLoading(false)
     setFormError(null)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    window.scrollTo({ top: 0 })
   }
 
   function handleDelete(feed: SavedTagFeed): void {

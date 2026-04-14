@@ -63,6 +63,7 @@ type ImageClassifier = (
 type CachedMediaModerationDecision = {
   fingerprint: string
   decision: Omit<MediaModerationDecision, 'id'>
+  skipped?: boolean
 }
 
 const moderationStore = createStore('nostr-paper-media-moderation', 'decisions')
@@ -207,14 +208,17 @@ async function classifyDocument(
 ): Promise<MediaModerationDecision> {
   const classifierInputUrl = resolveClassifierInputUrl(document.url)
   if (!classifierInputUrl) {
-    return evaluateMediaModerationScores(
-      document.id,
-      emptyMediaModerationScores(),
-      {
-        nsfwModel: null,
-        violenceModel: null,
-      },
-    )
+    return {
+      ...evaluateMediaModerationScores(
+        document.id,
+        emptyMediaModerationScores(),
+        {
+          nsfwModel: null,
+          violenceModel: null,
+        },
+      ),
+      skipped: true,
+    }
   }
 
   const [nsfwClassifier, violenceClassifier] = await Promise.all([
@@ -271,6 +275,7 @@ async function moderateDocuments(documents: MediaModerationDocument[]): Promise<
       decisions.set(document.id, {
         id: document.id,
         ...entry.decision,
+        ...(entry.skipped ? { skipped: true } : {}),
       })
     } else {
       missing.push(document)
@@ -294,6 +299,7 @@ async function moderateDocuments(documents: MediaModerationDocument[]): Promise<
             violenceModel: decision.violenceModel,
             policyVersion: decision.policyVersion,
           },
+          ...(decision.skipped ? { skipped: true } : {}),
         } satisfies CachedMediaModerationDecision,
       ],
     ], moderationStore).catch(() => {})

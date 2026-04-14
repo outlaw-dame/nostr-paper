@@ -650,6 +650,13 @@ export interface MediaModerationDecision {
   nsfwModel: string | null
   violenceModel: string | null
   policyVersion: string
+  /**
+   * True when the image URL could not be resolved to a classifiable input
+   * (e.g. no media proxy configured for cross-origin URLs). The decision
+   * defaults to 'allow' (fail-open), but callers can surface a "not checked"
+   * indicator rather than silently treating it as a clean pass.
+   */
+  skipped?: boolean
 }
 
 export type MediaModerationWorkerRequest =

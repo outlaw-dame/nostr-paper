@@ -1,0 +1,40 @@
+{
+	"folders": [
+		{
+			"name": "nostr-paper",
+			"path": "."
+		}
+	],
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			"/^python3 -V && python3 -c \"import fastapi, uvicorn, pydantic, torch, transformers; print\\('deps-ok'\\)\"$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/Users/damonoutlaw/Downloads/nostr-paper/.venv/bin/python": true,
+			"set": true,
+			"uniq": true,
+			"/^python3 -c \"\nwith open\\('/Users/damonoutlaw/Downloads/nostr-paper/src/components/cards/HeroCard\\.tsx', 'r'\\) as f:\n    lines = f\\.readlines\\(\\)\n\n# Remove line 203 \\(0-indexed: 202\\) — stale outer motion\\.div\nprint\\('Line 202:', repr\\(lines\\[202\\]\\)\\)\nprint\\('Line 203:', repr\\(lines\\[203\\]\\)\\)\nprint\\('Line 223:', repr\\(lines\\[223\\]\\)\\)\n\"$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^python3 -c \"\nwith open\\('/Users/damonoutlaw/Downloads/nostr-paper/src/components/cards/HeroCard\\.tsx', 'r'\\) as f:\n    lines = f\\.readlines\\(\\)\n\n# Remove stale line 202 \\(0-indexed\\) and fix </div> at 223\ndel lines\\[202\\]  # removes stale outer <motion\\.div>\n\n# Now line 223 is at index 222 \\(shifted by 1\\)\nlines\\[222\\] = '          </motion\\.div>\\\\n'\n\nwith open\\('/Users/damonoutlaw/Downloads/nostr-paper/src/components/cards/HeroCard\\.tsx', 'w'\\) as f:\n    f\\.writelines\\(lines\\)\nprint\\('Done'\\)\n\"$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"npm run -s typecheck": true,
+			"npm run typecheck": true,
+			"npx tsc": true,
+			"git -C /Users/damonoutlaw/Downloads/nostr-paper": true,
+			"npm exec": true,
+			"./node_modules/.bin/vitest": true,
+			"./node_modules/.bin/tsc": true,
+			"npm run -s test": true,
+			"npm run -s type-check": true,
+			"npx vitest": true,
+			"git remote": true,
+			"git add": true,
+			"git commit": true
+		}
+	}
+}

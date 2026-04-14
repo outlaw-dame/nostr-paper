@@ -100,9 +100,13 @@ export async function fetchOGData(url: string): Promise<OGData | null> {
     if (!safe) return null
     return doFetch(url)
   })().then(result => {
-    evictIfNeeded()
-    cache.set(url, result)
     inflight.delete(url)
+
+    if (result !== null) {
+      cache.set(url, result)
+      evictIfNeeded()
+    }
+
     return result
   })
 

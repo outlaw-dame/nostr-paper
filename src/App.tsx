@@ -74,6 +74,7 @@ const TagFeedsPage = lazy(() => import('@/pages/TagFeedsPage'))
 const FiltersPage  = lazy(() => import('@/pages/FiltersPage'))
 const RelaysPage   = lazy(() => import('@/pages/RelaysPage'))
 const TranslationsPage = lazy(() => import('@/pages/TranslationsPage'))
+const FeedControlsPage = lazy(() => import('@/pages/FeedControlsPage'))
 const ActivityPage = lazy(() => import('@/pages/ActivityPage'))
 const OnboardPage  = lazy(() => import('@/pages/OnboardPage'))
 const ExplorePage  = lazy(() => import('@/pages/ExplorePage'))
@@ -177,6 +178,7 @@ function InnerApp() {
             <Route path="/settings/appearance" element={<AppearancePage />} />
             <Route path="/settings/moderation" element={<ModerationPage />} />
             <Route path="/settings/tag-feeds"  element={<TagFeedsPage />} />
+            <Route path="/settings/feed-controls" element={<FeedControlsPage />} />
             <Route path="/settings/translations" element={<TranslationsPage />} />
             <Route path="/settings/moderation/filters" element={<FiltersPage />} />
             <Route path="/settings/relays"     element={<RelaysPage />} />

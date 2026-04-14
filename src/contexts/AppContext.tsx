@@ -15,7 +15,9 @@ import { bootstrap } from '@/lib/bootstrap'
 import { AppContext, type AppAction, type AppState } from '@/contexts/app-context'
 import { syncCurrentUserContactList } from '@/lib/nostr/contacts'
 import { refreshNip05Verifications } from '@/lib/nostr/nip05'
+import { publishCurrentUserRelayList, syncCurrentUserRelayList } from '@/lib/nostr/relayList'
 import { getCurrentUser, performLogout, STORAGE_KEY_PUBKEY } from '@/lib/nostr/ndk'
+import { RELAY_SETTINGS_UPDATED_EVENT } from '@/lib/relay/relaySettings'
 import { markBootStage, recordBootFailure, recordBootSuccess } from '@/lib/runtime/startupDiagnostics'
 
 const shouldRunDevNip05Sweep = import.meta.env.VITE_ENABLE_DEV_NIP05_SWEEP === 'true'
@@ -136,6 +138,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
               if (signal.aborted) return
               console.warn('[App] Kind-3 contact list sync degraded:', error)
             })
+
+            void syncCurrentUserRelayList(signal).catch((error: unknown) => {
+              if (signal.aborted) return
+              console.warn('[App] Kind-10002 relay list sync degraded:', error)
+            })
           } else if (!signal.aborted) {
             // No signer — check for read-only pubkey saved from OnboardPage
             const savedPubkey = localStorage.getItem(STORAGE_KEY_PUBKEY)
@@ -171,6 +178,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     return () => abortRef.current?.abort()
   }, [])
+
+  useEffect(() => {
+    if (!state.currentUser?.pubkey) return
+
+    const controller = new AbortController()
+
+    const publishRelayList = () => {
+      void publishCurrentUserRelayList({ signal: controller.signal }).catch((error: unknown) => {
+        if (controller.signal.aborted) return
+        console.warn('[App] Kind-10002 relay list publish degraded:', error)
+      })
+    }
+
+    window.addEventListener(RELAY_SETTINGS_UPDATED_EVENT, publishRelayList)
+
+    return () => {
+      controller.abort()
+      window.removeEventListener(RELAY_SETTINGS_UPDATED_EVENT, publishRelayList)
+    }
+  }, [state.currentUser?.pubkey])
 
   return (
     <AppContext.Provider value={{ ...state, dispatch, logout }}>

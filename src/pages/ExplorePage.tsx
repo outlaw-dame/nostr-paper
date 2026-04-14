@@ -2,7 +2,7 @@
  * ExplorePage
  *
  * Combined explore + search screen. When idle (no query typed), shows trending
- * topics from the local cache and recently-active accounts. When the user types,
+ * topics from the local cache plus account discovery lanes. When the user types,
  * the same inline search results used by SearchPage appear in place.
  *
  * The FeedPage search button navigates here so tapping it lands on content
@@ -31,6 +31,8 @@ import { useMuteList } from '@/hooks/useMuteList'
 import { useHideNsfwTaggedPosts } from '@/hooks/useHideNsfwTaggedPosts'
 import { useTrendingTopics } from '@/hooks/useTrendingTopics'
 import { usePopularProfiles } from '@/hooks/usePopularProfiles'
+import { useSuggestedProfiles } from '@/hooks/useSuggestedProfiles'
+import { useSemanticFollowPacks } from '@/hooks/useSemanticFollowPacks'
 import {
   getExploreFollowPackLabel,
   getExploreFollowPackSummary,
@@ -94,8 +96,10 @@ export default function ExplorePage() {
 
   const { isMuted, loading: muteListLoading } = useMuteList()
   const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
-  const { topics, loading: topicsLoading } = useTrendingTopics(24)
+  const [topicsWindow, setTopicsWindow] = useState<'today' | 'week'>('week')
+  const { topics, loading: topicsLoading } = useTrendingTopics(24, topicsWindow)
   const { packs: followPackCandidates, loading: followPackLoading } = useExploreFollowPacks(18)
+  const { profiles: suggestedProfiles, loading: suggestedLoading } = useSuggestedProfiles(currentUser?.pubkey, 8)
   const { profiles: popularProfiles, loading: popularLoading } = usePopularProfiles(8)
 
   useEffect(() => {
@@ -188,6 +192,10 @@ export default function ExplorePage() {
     ),
     [allowedFollowPackIds, currentUser?.pubkey, followPackCandidates, followPackModerationIds, followedPubkeys, isMuted],
   )
+  const {
+    packs: semanticFollowPacks,
+    semanticApplied: followPackSemanticApplied,
+  } = useSemanticFollowPacks(visibleFollowPacks, currentUser?.pubkey)
 
   const handleFollowPack = useCallback(async (pack: RankedExploreFollowPack) => {
     if (!currentUser) {
@@ -289,10 +297,15 @@ export default function ExplorePage() {
           <ExploreContent
             topics={topics}
             topicsLoading={topicsLoading}
-            followPacks={visibleFollowPacks}
+            topicsWindow={topicsWindow}
+            onTopicsWindowChange={setTopicsWindow}
+            followPacks={semanticFollowPacks}
+            followPackSemanticApplied={followPackSemanticApplied}
             followPacksLoading={followPackLoading || followPackModerationLoading}
             canBulkFollow={Boolean(currentUser)}
             onFollowPack={handleFollowPack}
+            suggestedProfiles={suggestedProfiles}
+            suggestedLoading={suggestedLoading}
             popularProfiles={popularProfiles}
             popularLoading={popularLoading}
           />
@@ -338,19 +351,29 @@ export default function ExplorePage() {
 function ExploreContent({
   topics,
   topicsLoading,
+  topicsWindow,
+  onTopicsWindowChange,
   followPacks,
+  followPackSemanticApplied,
   followPacksLoading,
   canBulkFollow,
   onFollowPack,
+  suggestedProfiles,
+  suggestedLoading,
   popularProfiles,
   popularLoading,
 }: {
   topics: RecentHashtagStat[]
   topicsLoading: boolean
+  topicsWindow: 'today' | 'week'
+  onTopicsWindowChange: (w: 'today' | 'week') => void
   followPacks: RankedExploreFollowPack[]
+  followPackSemanticApplied: boolean
   followPacksLoading: boolean
   canBulkFollow: boolean
   onFollowPack: (pack: RankedExploreFollowPack) => Promise<void>
+  suggestedProfiles: Array<{ profile: Profile; reason: string }>
+  suggestedLoading: boolean
   popularProfiles: Profile[]
   popularLoading: boolean
 }) {
@@ -359,7 +382,31 @@ function ExploreContent({
 
       {/* Trending topics */}
       <section>
-        <h2 className="section-kicker px-1 mb-3">Trending Topics</h2>
+        <div className="flex items-center justify-between px-1 mb-3">
+          <div>
+            <h2 className="section-kicker">Trending Topics</h2>
+            <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">
+              Local cache blend: popularity, diversity, freshness, and momentum
+            </p>
+          </div>
+          <div className="flex items-center gap-1 rounded-full bg-[rgb(var(--color-fill)/0.10)] p-0.5">
+            {(['today', 'week'] as const).map((w) => (
+              <button
+                key={w}
+                onClick={() => onTopicsWindowChange(w)}
+                className={`
+                  px-3 py-1 rounded-full text-[12px] font-medium transition-all
+                  ${topicsWindow === w
+                    ? 'bg-[rgb(var(--color-bg))] text-[rgb(var(--color-label))] shadow-sm'
+                    : 'text-[rgb(var(--color-label-secondary))]'
+                  }
+                `}
+              >
+                {w === 'today' ? 'Today' : '7 Days'}
+              </button>
+            ))}
+          </div>
+        </div>
         {topicsLoading ? (
           <div className="flex flex-wrap gap-2">
             {Array.from({ length: 12 }).map((_, i) => (
@@ -405,7 +452,14 @@ function ExploreContent({
       </section>
 
       <section>
-        <h2 className="section-kicker px-1 mb-3">Follow Packs</h2>
+        <div className="px-1 mb-3">
+          <h2 className="section-kicker">Follow Packs</h2>
+          <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">
+            {followPackSemanticApplied
+              ? 'Relay-discovered packs ranked by overlap, freshness, and semantic affinity'
+              : 'Relay-discovered packs ranked for your network overlap'}
+          </p>
+        </div>
         {followPacksLoading ? (
           <div className="space-y-3">
             {Array.from({ length: 3 }).map((_, i) => (
@@ -436,9 +490,47 @@ function ExploreContent({
         )}
       </section>
 
+      <section>
+        <div className="px-1 mb-3">
+          <h2 className="section-kicker">Suggested Accounts</h2>
+          <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">
+              Social graph + semantic affinity from your posts, profile, and candidate bios
+          </p>
+        </div>
+        {suggestedLoading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-[72px] rounded-ios-xl bg-[rgb(var(--color-fill)/0.08)] animate-pulse" />
+            ))}
+          </div>
+        ) : suggestedProfiles.length > 0 ? (
+          <div className="space-y-3">
+            {suggestedProfiles.map((item, i) => (
+              <motion.div
+                key={item.profile.pubkey}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.18, delay: i * 0.04 }}
+              >
+                <ProfileResult profile={item.profile} subtitle={item.reason} />
+              </motion.div>
+            ))}
+          </div>
+        ) : (
+          <p className="px-1 text-[14px] text-[rgb(var(--color-label-tertiary))]">
+            Connect a signer and sync your follows to unlock social graph suggestions.
+          </p>
+        )}
+      </section>
+
       {/* Popular accounts */}
       <section>
-        <h2 className="section-kicker px-1 mb-3">Popular Accounts</h2>
+        <div className="px-1 mb-3">
+          <h2 className="section-kicker">Popular Accounts</h2>
+          <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">
+            Consistently followed accounts in your local graph
+          </p>
+        </div>
         {popularLoading ? (
           <div className="space-y-3">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -454,7 +546,7 @@ function ExploreContent({
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.18, delay: i * 0.04 }}
               >
-                <ProfileResult profile={profile} />
+                <ProfileResult profile={profile} subtitle="Popular in your local graph" />
               </motion.div>
             ))}
           </div>
@@ -621,7 +713,13 @@ function ExploreFollowPackCard({
   )
 }
 
-function ProfileResult({ profile }: { profile: Profile }) {
+function ProfileResult({
+  profile,
+  subtitle,
+}: {
+  profile: Profile
+  subtitle?: string
+}) {
   const about = profile.about ? sanitizeText(profile.about).slice(0, 180) : ''
 
   return (
@@ -630,6 +728,12 @@ function ProfileResult({ profile }: { profile: Profile }) {
       className="app-panel block rounded-ios-xl p-4 card-elevated"
     >
       <AuthorRow pubkey={profile.pubkey} profile={profile} />
+
+      {subtitle && (
+        <p className="mt-2 text-[13px] text-[rgb(var(--color-label-secondary))]">
+          {subtitle}
+        </p>
+      )}
 
       {profile.nip05 && profile.nip05Verified && (
         <p className="mt-2 text-[13px] text-[rgb(var(--color-label-secondary))]">

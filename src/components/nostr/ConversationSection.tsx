@@ -2,6 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { EventPreviewCard } from '@/components/nostr/EventPreviewCard'
 import { useConversationThread } from '@/hooks/useConversationThread'
 import {
+  buildReplyTree,
+  collectDefaultCollapsedIds,
+  countDescendants,
+  type ReplyTreeNode,
+} from '@/lib/nostr/conversationTree'
+import {
   getConversationRootReference,
   parseCommentEvent,
   parseTextNoteReply,
@@ -13,77 +19,6 @@ import { Kind } from '@/types'
 interface ConversationSectionProps {
   event: NostrEvent
   className?: string
-}
-
-interface ReplyTreeNode {
-  event: NostrEvent
-  children: ReplyTreeNode[]
-}
-
-function sortChronologically(events: NostrEvent[]): NostrEvent[] {
-  return [...events].sort((a, b) => (
-    a.created_at - b.created_at || a.id.localeCompare(b.id)
-  ))
-}
-
-function getReplyParentEventId(reply: NostrEvent): string | null {
-  if (reply.kind === Kind.ShortNote) {
-    return parseTextNoteReply(reply)?.parentEventId ?? null
-  }
-  if (reply.kind === Kind.Comment) {
-    return parseCommentEvent(reply)?.parentEventId ?? null
-  }
-  return null
-}
-
-function sortTree(nodes: ReplyTreeNode[]): ReplyTreeNode[] {
-  return [...nodes]
-    .sort((a, b) => (
-      a.event.created_at - b.event.created_at || a.event.id.localeCompare(b.event.id)
-    ))
-    .map((node) => ({
-      event: node.event,
-      children: sortTree(node.children),
-    }))
-}
-
-function buildReplyTree(replies: NostrEvent[]): ReplyTreeNode[] {
-  const sortedReplies = sortChronologically(replies)
-  const byId = new Map<string, ReplyTreeNode>()
-  for (const reply of sortedReplies) {
-    byId.set(reply.id, { event: reply, children: [] })
-  }
-
-  const roots: ReplyTreeNode[] = []
-  for (const reply of sortedReplies) {
-    const node = byId.get(reply.id)
-    if (!node) continue
-
-    const parentId = getReplyParentEventId(reply)
-    const parentNode = parentId ? byId.get(parentId) : undefined
-    if (!parentNode || parentId === reply.id) {
-      roots.push(node)
-      continue
-    }
-
-    parentNode.children.push(node)
-  }
-
-  return sortTree(roots)
-}
-
-function countDescendants(node: ReplyTreeNode): number {
-  return node.children.reduce((acc, child) => acc + 1 + countDescendants(child), 0)
-}
-
-function collectDefaultCollapsedIds(nodes: ReplyTreeNode[], depth = 0, set = new Set<string>()): Set<string> {
-  for (const node of nodes) {
-    if (node.children.length > 0 && depth >= 1) {
-      set.add(node.event.id)
-    }
-    collectDefaultCollapsedIds(node.children, depth + 1, set)
-  }
-  return set
 }
 
 function ReplyTreeItem({
@@ -104,6 +39,19 @@ function ReplyTreeItem({
   return (
     <div className={depth > 0 ? 'ml-4 border-l border-[rgb(var(--color-fill)/0.14)] pl-3' : ''}>
       <EventPreviewCard event={node.event} compact />
+      {node.detached && (
+        <div className="mt-1.5">
+          <span
+            title="Detached reply"
+            aria-label="Detached reply"
+            className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg-secondary))] text-[rgb(var(--color-label-tertiary))]"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden>
+              <circle cx="5" cy="5" r="1.5" fill="currentColor" />
+            </svg>
+          </span>
+        </div>
+      )}
 
       {hasChildren && (
         <div className="mt-2 space-y-2">
@@ -153,7 +101,9 @@ export function ConversationSection({
 
   const hasNestedReplies = useMemo(
     () => replies.some((reply) => {
-      const parentId = getReplyParentEventId(reply)
+      const parentId = reply.kind === Kind.ShortNote
+        ? parseTextNoteReply(reply)?.parentEventId
+        : parseCommentEvent(reply)?.parentEventId
       return Boolean(parentId && reply.id !== parentId && replies.some((candidate) => candidate.id === parentId))
     }),
     [replies],

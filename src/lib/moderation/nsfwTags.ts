@@ -1,7 +1,22 @@
 import { extractEventHashtags } from '@/lib/feed/tagTimeline'
 import type { NostrEvent } from '@/types'
 
-const NSFW_HASHTAGS = new Set(['nsfw'])
+// All values must be lowercase — extractEventHashtags normalises t-tags to lowercase.
+// 'nsfw' is the canonical NIP tag; the rest are common variants used across clients.
+const NSFW_HASHTAGS = new Set([
+  'nsfw',
+  'adult',
+  'explicit',
+  'porn',
+  'pornography',
+  'hentai',
+  'lewd',
+  'nude',
+  'nudity',
+  'erotica',
+  'mature',
+  'onlyfans',
+])
 
 export function hasNsfwHashtag(event: NostrEvent): boolean {
   return extractEventHashtags(event).some((tag) => NSFW_HASHTAGS.has(tag))

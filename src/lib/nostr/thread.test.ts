@@ -102,6 +102,44 @@ describe('parseTextNoteReply', () => {
       parentRelayHint: 'wss://relay2.example.com/',
     })
   })
+
+  it('prefers reply marker for parent when unmarked mention tags are present', () => {
+    const reply = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 1_720_000_300,
+      tags: [
+        ['e', '1'.repeat(64), 'wss://relay.example.com', 'root', '2'.repeat(64)],
+        ['e', '9'.repeat(64), 'wss://relay-mention.example.com'],
+        ['e', '3'.repeat(64), 'wss://relay.example.com', 'reply', '4'.repeat(64)],
+      ],
+      content: 'Reply with mention',
+    })
+
+    expect(parseTextNoteReply(reply)).toMatchObject({
+      rootEventId: '1'.repeat(64),
+      parentEventId: '3'.repeat(64),
+      parentAuthorPubkey: '4'.repeat(64),
+    })
+  })
+
+  it('uses trailing unmarked e tag as parent fallback when reply marker is missing', () => {
+    const reply = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 1_720_000_400,
+      tags: [
+        ['e', '1'.repeat(64), 'wss://relay.example.com', 'root', '2'.repeat(64)],
+        ['e', '3'.repeat(64), 'wss://relay-parent.example.com', '', '4'.repeat(64)],
+      ],
+      content: 'Reply missing reply marker',
+    })
+
+    expect(parseTextNoteReply(reply)).toMatchObject({
+      rootEventId: '1'.repeat(64),
+      parentEventId: '3'.repeat(64),
+      parentRelayHint: 'wss://relay-parent.example.com/',
+      parentAuthorPubkey: '4'.repeat(64),
+    })
+  })
 })
 
 describe('parseCommentEvent', () => {
