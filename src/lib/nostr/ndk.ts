@@ -138,11 +138,11 @@ class SQLiteCacheAdapter implements NDKCacheAdapter {
     const rawEvent = event.rawEvent() as unknown as NostrEvent
     const existing = this.inflightEventWrites.get(rawEvent.id)
     if (existing) {
-      await existing.catch(() => {})
       return
     }
 
-    // Serialize cache writes to keep DB worker pending queue bounded under relay bursts.
+    // Serialize writes in the background so relay intake stays responsive.
+    // Consumers that require a completed write use waitForCachedEvents().
     const writePromise = this.eventWriteQueue
       .catch(() => undefined)
       .then(() => insertEvent(rawEvent))
@@ -156,7 +156,6 @@ class SQLiteCacheAdapter implements NDKCacheAdapter {
 
     this.inflightEventWrites.set(rawEvent.id, writePromise)
     this.eventWriteQueue = writePromise
-    await writePromise
   }
 
   async fetchProfile(pubkey: string): Promise<NDKCacheEntry<NDKUserProfile> | null> {
