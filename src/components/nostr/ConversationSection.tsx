@@ -98,7 +98,7 @@ export function ConversationSection({
   className = '',
   section = 'all',
 }: ConversationSectionProps) {
-  const { rootEvent, replies, loading, rootLoading, error } = useConversationThread(event)
+  const { rootEvent, replies, loading, rootLoading, error, threadingMode } = useConversationThread(event)
   const rootReference = getConversationRootReference(event)
   const noteReply = parseTextNoteReply(event)
   const comment = parseCommentEvent(event)
@@ -178,9 +178,21 @@ export function ConversationSection({
       {(section === 'all' || section === 'replies') && showRepliesBlock && (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-              {label}
-            </p>
+            <div className="inline-flex items-center gap-2">
+              <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+                {label}
+              </p>
+              {threadingMode !== 'standard' && (
+                <span
+                  className="inline-flex items-center rounded-full border border-[rgb(var(--color-fill)/0.16)] bg-[rgb(var(--color-bg-secondary))] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.06em] text-[rgb(var(--color-label-tertiary))]"
+                  title={threadingMode === 'numbered'
+                    ? 'Built with numbered thread reconstruction'
+                    : 'Built with mixed NIP-10 and numbered thread reconstruction'}
+                >
+                  {threadingMode === 'numbered' ? 'Numbered Thread' : 'Mixed Threading'}
+                </span>
+              )}
+            </div>
             {hasNestedReplies && (
               <div className="flex items-center gap-2">
                 <button

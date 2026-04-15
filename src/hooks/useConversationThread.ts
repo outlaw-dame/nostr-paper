@@ -22,6 +22,7 @@ interface ConversationThreadState {
   loading: boolean
   rootLoading: boolean
   error: string | null
+  threadingMode: 'standard' | 'numbered' | 'mixed'
 }
 
 function sameRootAddress(value: string | undefined, expected: string | undefined): boolean {
@@ -81,11 +82,13 @@ function augmentWithNumberedThreadHeuristic(
   rootReference: NonNullable<ReturnType<typeof getConversationRootReference>>,
   replies: NostrEvent[],
   numberedCandidates: NostrEvent[],
-): NostrEvent[] {
-  if (anchorEvent.kind !== Kind.ShortNote || !rootReference.eventId) return replies
+): { events: NostrEvent[]; usedHeuristic: boolean } {
+  if (anchorEvent.kind !== Kind.ShortNote || !rootReference.eventId) {
+    return { events: replies, usedHeuristic: false }
+  }
 
   const anchorMarker = parseNumberedThreadMarker(anchorEvent.content)
-  if (!anchorMarker) return replies
+  if (!anchorMarker) return { events: replies, usedHeuristic: false }
 
   const sequencePool = dedupeById([anchorEvent, ...numberedCandidates])
     .map((event) => ({ event, marker: parseNumberedThreadMarker(event.content) }))
@@ -98,7 +101,7 @@ function augmentWithNumberedThreadHeuristic(
       || a.event.id.localeCompare(b.event.id)
     ))
 
-  if (sequencePool.length <= 1) return replies
+  if (sequencePool.length <= 1) return { events: replies, usedHeuristic: false }
 
   const preferredByIndex = new Map<number, NostrEvent>()
   for (const entry of sequencePool) {
@@ -108,6 +111,7 @@ function augmentWithNumberedThreadHeuristic(
   }
 
   const merged = new Map<string, NostrEvent>(replies.map((reply) => [reply.id, reply]))
+  let usedHeuristic = false
 
   for (const entry of sequencePool) {
     const candidate = entry.event
@@ -135,9 +139,25 @@ function augmentWithNumberedThreadHeuristic(
     }
 
     merged.set(candidate.id, synthetic)
+    usedHeuristic = true
   }
 
-  return [...merged.values()]
+  return { events: [...merged.values()], usedHeuristic }
+}
+
+function getThreadingMode(event: NostrEvent, replies: NostrEvent[], usedNumberedHeuristic: boolean): ConversationThreadState['threadingMode'] {
+  if (!usedNumberedHeuristic) return 'standard'
+
+  const standardCount = replies.filter((reply) => {
+    if (reply.kind !== Kind.ShortNote) return false
+    const parsed = parseTextNoteReply(reply)
+    return Boolean(parsed?.rootEventId)
+  }).length
+
+  const numberedCount = replies.filter((reply) => Boolean(parseNumberedThreadMarker(reply.content))).length
+
+  if (standardCount > 0 && numberedCount > 0) return 'mixed'
+  return event.kind === Kind.ShortNote ? 'numbered' : 'mixed'
 }
 
 function buildReplyFilters(rootReference: ReturnType<typeof getConversationRootReference>) {
@@ -229,7 +249,7 @@ function collectFrontierIds(
 async function queryConversationReplies(
   event: NostrEvent,
   rootReference: NonNullable<ReturnType<typeof getConversationRootReference>>,
-): Promise<NostrEvent[]> {
+): Promise<{ replies: NostrEvent[]; usedNumberedHeuristic: boolean }> {
   const events = await queryReplyCandidates(rootReference)
   const numberedCandidates = await queryNumberedThreadCandidates(event)
 
@@ -260,8 +280,11 @@ async function queryConversationReplies(
     filtered,
     numberedCandidates,
   )
-  const deduped = dedupeById(heuristicAugmented)
-  return rankThreadReplies(event, deduped)
+  const deduped = dedupeById(heuristicAugmented.events)
+  return {
+    replies: rankThreadReplies(event, deduped),
+    usedNumberedHeuristic: heuristicAugmented.usedHeuristic,
+  }
 }
 
 export function useConversationThread(event: NostrEvent | null | undefined): ConversationThreadState {
@@ -305,12 +328,14 @@ export function useConversationThread(event: NostrEvent | null | undefined): Con
   const [replies, setReplies] = useState<NostrEvent[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [threadingMode, setThreadingMode] = useState<ConversationThreadState['threadingMode']>('standard')
 
   useEffect(() => {
     if (!event || !rootReference || (!rootReference.eventId && !rootReference.address)) {
       setReplies([])
       setLoading(false)
       setError(null)
+      setThreadingMode('standard')
       return
     }
 
@@ -318,13 +343,14 @@ export function useConversationThread(event: NostrEvent | null | undefined): Con
     const { signal } = controller
 
     const loadLocal = async () => {
-      const localReplies = await queryConversationReplies(event, rootReference)
+      const localResult = await queryConversationReplies(event, rootReference)
       if (signal.aborted) return
 
-      setReplies(localReplies)
+      setReplies(localResult.replies)
       setLoading(false)
       setError(null)
-      return localReplies
+      setThreadingMode(getThreadingMode(event, localResult.replies, localResult.usedNumberedHeuristic))
+      return localResult.replies
     }
 
     const fetchFromRelays = async () => {
@@ -402,8 +428,8 @@ export function useConversationThread(event: NostrEvent | null | undefined): Con
         )
       }
 
-      const initialReplies = await queryConversationReplies(event, rootReference)
-      let frontierIds = collectFrontierIds(initialReplies, rootReference)
+      const initialResult = await queryConversationReplies(event, rootReference)
+      let frontierIds = collectFrontierIds(initialResult.replies, rootReference)
       if (rootReference.eventId) {
         frontierIds = [rootReference.eventId, ...frontierIds]
       }
@@ -465,8 +491,8 @@ export function useConversationThread(event: NostrEvent | null | undefined): Con
           )
         }
 
-        const refreshedReplies = await queryConversationReplies(event, rootReference)
-        const nextIds = collectFrontierIds(refreshedReplies, rootReference)
+        const refreshedResult = await queryConversationReplies(event, rootReference)
+        const nextIds = collectFrontierIds(refreshedResult.replies, rootReference)
         const seenFrontier = new Set(frontierIds)
         for (const id of nextIds) {
           if (!seenFrontier.has(id)) {
@@ -503,5 +529,6 @@ export function useConversationThread(event: NostrEvent | null | undefined): Con
     loading,
     rootLoading: rootEventState.loading || rootAddressState.loading,
     error,
+    threadingMode,
   }
 }
