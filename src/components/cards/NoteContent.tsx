@@ -42,6 +42,11 @@ type ContentToken =
   | { type: 'nostr';  value: string }
   | { type: 'newline' }
 
+function normalizeBridgeType(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  return value.trim().toLowerCase().replace(/[\s-]+/g, '_')
+}
+
 function tryParseBridgeContent(content: string): string {
   const trimmed = content.trim()
 
@@ -69,12 +74,26 @@ function tryParseBridgeContent(content: string): string {
 
   try {
     const data = JSON.parse(trimmed)
+    const normalizedType = normalizeBridgeType(data?.type)
 
     // Handle "zone_presence" (Holepunch/Keet/P2P Gateway status)
-    if (data && data.type === 'zone_presence') {
+    if (data && normalizedType === 'zone_presence') {
       const role = typeof data.role === 'string' ? data.role : 'Node'
       const cpu = data.metrics?.cpuPct
       return `📡 Zone Presence: ${role}${cpu !== undefined ? ` (CPU: ${cpu}%)` : ''}`
+    }
+
+    // Handle swarm device records (custom kind 30078 payloads)
+    if (data && normalizedType === 'swarm_device_record') {
+      const deviceName = typeof data.name === 'string'
+        ? data.name
+        : typeof data.deviceName === 'string'
+          ? data.deviceName
+          : typeof data.deviceId === 'string'
+            ? data.deviceId
+            : 'Unknown device'
+      const status = typeof data.status === 'string' ? data.status : 'active'
+      return `🧩 Swarm Device: ${deviceName} (${status})`
     }
 
     // Handle common chat-bridge JSON format (e.g. YouTube/Twitch bridges)
@@ -83,24 +102,31 @@ function tryParseBridgeContent(content: string): string {
       return `${data.u}: ${data.m}`
     }
 
-      // Handle gateway grant requests
-      if (data && data.type === 'gateway_grant_request') {
-        return 'Gateway Grant Request: ' + (data.requestId ?? 'pending...')
-      }
+    // Handle gateway grant requests
+    if (data && normalizedType === 'gateway_grant_request') {
+      return 'Gateway Grant Request: ' + (data.requestId ?? 'pending...')
+    }
 
-      // Handle grant list responses
-      if (data && data.action === 'list_grants') {
-        const count = Array.isArray(data.availableCameras) ? data.availableCameras.length : 0
-        const deviceText = count !== 1 ? 's' : ''
-        return 'Available Cameras: ' + count + ' device' + deviceText
-      }
+    // Handle device gateway grant request variants
+    if (data && (normalizedType === 'device_gateway_grant_request' || normalizedType === 'device_gateway_grant_status')) {
+      const requestId = typeof data.requestId === 'string' ? data.requestId : 'pending...'
+      const shortId = requestId === 'pending...' ? requestId : requestId.slice(0, 8) + '...'
+      return 'Device Gateway Grant: ' + shortId
+    }
 
-      // Handle device status updates
-      if (data && data.toDevicePk && data.requestId) {
-        const type = data.type || 'update'
-        const shortId = data.requestId.slice(0, 8)
-        return 'Device ' + type + ': ' + shortId + '...'
-      }
+    // Handle grant list responses
+    if (data && data.action === 'list_grants') {
+      const count = Array.isArray(data.availableCameras) ? data.availableCameras.length : 0
+      const deviceText = count !== 1 ? 's' : ''
+      return 'Available Cameras: ' + count + ' device' + deviceText
+    }
+
+    // Handle device status updates
+    if (data && data.toDevicePk && typeof data.requestId === 'string') {
+      const type = normalizedType || 'update'
+      const shortId = data.requestId.slice(0, 8)
+      return 'Device ' + type + ': ' + shortId + '...'
+    }
   } catch {
     // Not JSON, return original content
   }
