@@ -110,10 +110,14 @@ function augmentWithNumberedThreadHeuristic(
     }
   }
 
+  const preferredSequence = [...preferredByIndex.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([index, event]) => ({ index, event }))
+
   const merged = new Map<string, NostrEvent>(replies.map((reply) => [reply.id, reply]))
   let usedHeuristic = false
 
-  for (const entry of sequencePool) {
+  for (const entry of preferredSequence) {
     const candidate = entry.event
     if (candidate.id === anchorEvent.id || candidate.id === rootReference.eventId) continue
 
@@ -124,7 +128,7 @@ function augmentWithNumberedThreadHeuristic(
       continue
     }
 
-    const previousByIndex = preferredByIndex.get(entry.marker.index - 1)
+    const previousByIndex = preferredByIndex.get(entry.index - 1)
     const parent = previousByIndex && previousByIndex.id !== candidate.id
       ? previousByIndex
       : anchorEvent
