@@ -376,7 +376,7 @@ export default function NotePage() {
                 {comment.content.trim().length > 0 && (
                   <NoteContent content={comment.content} className="mt-4" allowTranslation enableMarkdown />
                 )}
-                <QuotePreviewList event={event} showHeader={false} className="mt-5" />
+                <QuotePreviewList event={event} showHeader={false} className="mt-5" compact />
               </>
             ) : userStatus ? (
               <UserStatusBody event={event} className="mt-4" />
@@ -392,7 +392,7 @@ export default function NotePage() {
                 {attachments.length > 0 && (
                   <NoteMediaAttachments attachments={attachments} className="mt-5" />
                 )}
-                <QuotePreviewList event={event} showHeader={false} className="mt-5" />
+                <QuotePreviewList event={event} showHeader={false} className="mt-5" compact />
               </>
             )}
 

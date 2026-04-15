@@ -296,7 +296,7 @@ export function ExpandedNote({ event, profile, onClose }: ExpandedNoteProps) {
                         enableMarkdown
                       />
                     )}
-                    <QuotePreviewList event={event} className="mt-5" />
+                    <QuotePreviewList event={event} className="mt-5" compact />
                   </>
                 ) : userStatus ? (
                   <UserStatusBody event={event} className="mt-4" />
@@ -318,7 +318,7 @@ export function ExpandedNote({ event, profile, onClose }: ExpandedNoteProps) {
                     {attachments.length > 0 && (
                       <NoteMediaAttachments attachments={attachments} className="mt-5" />
                     )}
-                    <QuotePreviewList event={event} className="mt-5" />
+                    <QuotePreviewList event={event} className="mt-5" compact />
                   </>
                 )}
 

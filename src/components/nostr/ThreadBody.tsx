@@ -30,7 +30,7 @@ export function ThreadBody({ event, className = '' }: ThreadBodyProps) {
         <NoteContent content={thread.content} allowTranslation enableMarkdown />
       )}
 
-      <QuotePreviewList event={event} />
+      <QuotePreviewList event={event} compact />
     </div>
   )
 }
