@@ -2063,6 +2063,8 @@ export async function getEventEngagementSummary(
  * vacuum pass. Safe to call periodically in the background.
  */
 export async function runMaintenance(): Promise<void> {
+  const QUICK_CHECK_INTERVAL_SECONDS = 24 * 60 * 60
+  const QUICK_CHECK_LAST_RUN_KEY = 'nostr-paper:db:quick-check-last-run'
   const cutoffSeconds = Math.floor(Date.now() / 1000) - 86_400
 
   await dbRun(
@@ -2077,6 +2079,32 @@ export async function runMaintenance(): Promise<void> {
   if (mode === 2) {
     await dbRun('PRAGMA incremental_vacuum(100)')
   }
+
+  // Periodically validate database integrity without running it every maintenance pass.
+  const shouldRunQuickCheck = (() => {
+    if (typeof localStorage === 'undefined') return false
+    const lastRunRaw = localStorage.getItem(QUICK_CHECK_LAST_RUN_KEY)
+    const lastRun = Number(lastRunRaw ?? '0')
+    if (!Number.isFinite(lastRun) || lastRun <= 0) return true
+    return (Math.floor(Date.now() / 1000) - lastRun) >= QUICK_CHECK_INTERVAL_SECONDS
+  })()
+
+  if (shouldRunQuickCheck) {
+    try {
+      const quickCheckRows = await dbQuery<{ quick_check?: string; integrity_check?: string; value?: string }>('PRAGMA quick_check')
+      const status = quickCheckRows[0]?.quick_check ?? quickCheckRows[0]?.integrity_check ?? quickCheckRows[0]?.value ?? 'ok'
+      if (status !== 'ok') {
+        console.warn('[DB] Integrity check reported issues:', status)
+      }
+    } finally {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(QUICK_CHECK_LAST_RUN_KEY, String(Math.floor(Date.now() / 1000)))
+      }
+    }
+  }
+
+  // Bound WAL growth during long sessions with frequent writes.
+  await dbRun('PRAGMA wal_checkpoint(PASSIVE)')
 
   await dbRun('PRAGMA optimize')
 }

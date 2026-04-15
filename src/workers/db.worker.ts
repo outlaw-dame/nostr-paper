@@ -818,7 +818,8 @@ self.addEventListener('message', async (e: MessageEvent<DBWorkerRequest>) => {
       case 'transaction': {
         if (!_db) throw new Error('DB not initialized')
         const ops = (e.data as Extract<DBWorkerRequest, { type: 'transaction' }>).payload
-        _db.exec('BEGIN')
+        // Reserve the write lock up front to avoid mid-transaction lock escalation.
+        _db.exec('BEGIN IMMEDIATE')
         try {
           for (const op of ops) {
             _db.exec({ sql: op.sql, ...(op.bind !== undefined ? { bind: op.bind } : {}) })
