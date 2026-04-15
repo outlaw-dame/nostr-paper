@@ -108,6 +108,7 @@ class SQLiteCacheAdapter implements NDKCacheAdapter {
   readonly locking = true
 
   private readonly inflightEventWrites = new Map<string, Promise<void>>()
+  private eventWriteQueue: Promise<void> = Promise.resolve()
 
   async waitForEvents(eventIds: string[]): Promise<void> {
     const uniqueIds = [...new Set(eventIds)]
@@ -141,7 +142,10 @@ class SQLiteCacheAdapter implements NDKCacheAdapter {
       return
     }
 
-    const writePromise = insertEvent(rawEvent)
+    // Serialize cache writes to keep DB worker pending queue bounded under relay bursts.
+    const writePromise = this.eventWriteQueue
+      .catch(() => undefined)
+      .then(() => insertEvent(rawEvent))
       .then(() => undefined)
       .catch((error) => {
         console.warn('[NDK cache] Event write degraded:', error)
@@ -151,6 +155,7 @@ class SQLiteCacheAdapter implements NDKCacheAdapter {
       })
 
     this.inflightEventWrites.set(rawEvent.id, writePromise)
+    this.eventWriteQueue = writePromise
     await writePromise
   }
 

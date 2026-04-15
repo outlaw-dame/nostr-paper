@@ -15,9 +15,10 @@
 import type { DBWorkerRequest, DBWorkerResponse } from '@/types'
 import { withRetry } from '@/lib/retry'
 
-const QUERY_TIMEOUT_MS = 8_000    // 8s base query timeout (5s was too tight for iOS on complex FTS queries)
+const QUERY_TIMEOUT_MS = 8_000    // 8s base timeout for read queries (FTS/local filters)
+const WRITE_TIMEOUT_MS = 20_000   // writes can queue behind reads during relay bursts
 const INIT_TIMEOUT_MS  = 25_000   // 25s for WASM init (iOS WASM load + migrations can be slow)
-const MAX_QUEUE_TIMEOUT_SLOP_MS = 3_000  // 3ms per pending query (was 10s slop)
+const MAX_QUEUE_TIMEOUT_SLOP_MS = 12_000 // add bounded slop for queued requests under pressure
 
 // ── Worker Singleton ─────────────────────────────────────────
 
@@ -122,7 +123,7 @@ function send<T>(
   return new Promise((resolve, reject) => {
     const id = seq++
     const w = getWorker()
-    const effectiveTimeoutMs = timeoutMs + Math.min(pending.size * 100, MAX_QUEUE_TIMEOUT_SLOP_MS)
+    const effectiveTimeoutMs = timeoutMs + Math.min(pending.size * 200, MAX_QUEUE_TIMEOUT_SLOP_MS)
 
     const timer = setTimeout(() => {
       pending.delete(id)
@@ -194,7 +195,7 @@ export async function dbRun(
   const result = await send<{ changes: number }>({
     type: 'run',
     payload: bind !== undefined ? { sql, bind } : { sql },
-  })
+  }, WRITE_TIMEOUT_MS)
   return result.changes
 }
 
@@ -206,7 +207,7 @@ export async function dbTransaction(
   operations: Array<{ sql: string; bind?: unknown[] }>
 ): Promise<void> {
   if (operations.length === 0) return
-  await send({ type: 'transaction', payload: operations })
+  await send({ type: 'transaction', payload: operations }, WRITE_TIMEOUT_MS)
 }
 
 /** Close the worker and database cleanly */
