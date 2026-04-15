@@ -57,7 +57,13 @@ function QuoteReferenceCard({
   }
 
   if (targetEvent && !moderationLoading && blocked) {
-    return null
+    return (
+      <div className="rounded-[18px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg-secondary))] p-3">
+        <p className="text-[14px] text-[rgb(var(--color-label-secondary))]">
+          Quoted event unavailable.
+        </p>
+      </div>
+    )
   }
 
   if (targetEvent) {
