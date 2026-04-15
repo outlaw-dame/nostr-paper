@@ -50,12 +50,15 @@ const RECOMMENDED_FAST_READ_RELAYS = [
   'wss://nos.lol',
   'wss://relay.primal.net',
   'wss://relay.damus.io',
+  'wss://relay.mostr.pub',
 ] as const
 
 const RECOMMENDED_RELIABLE_WRITE_RELAYS = [
   'wss://relay.damus.io',
   'wss://relay.snort.social',
   'wss://relay.primal.net',
+  'wss://relay.momostr.pink',
+  'wss://ditto.pub/relay',
 ] as const
 
 const CURATED_RELAY_RECOMMENDATIONS = [
@@ -70,6 +73,18 @@ const CURATED_RELAY_RECOMMENDATIONS = [
   {
     url: 'wss://relay.primal.net',
     reason: 'High-traffic relay often used for fast read/write propagation.',
+  },
+  {
+    url: 'wss://relay.momostr.pink',
+    reason: 'Useful community relay for broader propagation across Mostr-adjacent clients.',
+  },
+  {
+    url: 'wss://relay.mostr.pub',
+    reason: 'Mostr public relay commonly used in mobile-first relay sets.',
+  },
+  {
+    url: 'wss://ditto.pub/relay',
+    reason: 'Ditto relay endpoint for compatibility with Ditto-centric relay graphs.',
   },
   {
     url: 'wss://relay.nostr.band',

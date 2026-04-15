@@ -36,6 +36,9 @@ import { initRelayOptimizer, getRelayOptimizer } from '@/lib/nostr/relay-optimiz
 const DEFAULT_RELAYS = [
   'wss://relay.damus.io',
   'wss://nos.lol',
+  'wss://relay.momostr.pink',
+  'wss://relay.mostr.pub',
+  'wss://ditto.pub/relay',
   'wss://nostr.wine',
   'wss://relay.snort.social',
   'wss://relay.primal.net',
@@ -43,16 +46,12 @@ const DEFAULT_RELAYS = [
   'wss://relay.nostr.band',
   'wss://search.nos.today',
   'wss://nostr.fmt.wiz.biz',
-  'wss://relay.mostr.pub',
   'wss://relay.nos.social',
   'wss://news.nos.social',
   'wss://relay.nostr.net',
 ] as const
 
-const BLOCKED_RELAY_URLS = new Set([
-  // This endpoint currently returns HTTP 200 to websocket upgrades and triggers reconnect churn.
-  'wss://ditto.pub/relay/',
-])
+const BLOCKED_RELAY_URLS = new Set<string>()
 
 function normalizeRelayCandidate(url: string): string {
   return url.trim().replace(/\/+$/, '/')
