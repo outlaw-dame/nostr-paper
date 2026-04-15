@@ -104,11 +104,14 @@ function getConfiguredRelayPreferences(): RelayPreference[] {
 
 function normalizeRelayKey(url: string): string {
   try {
-    const parsed = new URL(url)
+    const parsed = new URL(url.trim())
+    parsed.hash = ''
+    parsed.search = ''
+    parsed.pathname = parsed.pathname.replace(/\/+$/g, '')
     if (parsed.pathname === '/') parsed.pathname = ''
-    return parsed.toString()
+    return parsed.toString().replace(/\/+$/g, '')
   } catch {
-    return url.replace(/\/+$/g, '')
+    return url.trim().replace(/\/+$/g, '')
   }
 }
 
@@ -472,6 +475,21 @@ export default function RelaysPage() {
     () => entries.map(({ url, read, write }) => ({ url, read, write })),
     [entries],
   )
+  const existingRelayKeys = useMemo(
+    () => new Set(entries.map((entry) => normalizeRelayKey(entry.url))),
+    [entries],
+  )
+  const pendingAddUrl = useMemo(() => {
+    const trimmed = addUrl.trim()
+    if (!trimmed) return null
+    const candidate = /^wss?:\/\//i.test(trimmed) ? trimmed : `wss://${trimmed}`
+    if (!isValidRelayURL(candidate)) return null
+    return candidate
+  }, [addUrl])
+  const pendingRelayAlreadyAdded = useMemo(() => {
+    if (!pendingAddUrl) return false
+    return existingRelayKeys.has(normalizeRelayKey(pendingAddUrl))
+  }, [existingRelayKeys, pendingAddUrl])
 
   const connectedCount = useMemo(
     () => entries.filter(e => isConnected(e.status)).length,
@@ -557,7 +575,7 @@ export default function RelaysPage() {
       return
     }
 
-    if (entries.some(e => e.url === url)) {
+    if (existingRelayKeys.has(normalizeRelayKey(url))) {
       setAddError('Relay is already in your list.')
       return
     }
@@ -742,13 +760,13 @@ export default function RelaysPage() {
 
   const handleAddRecommendedRelay = useCallback((url: string) => {
     if (!isValidRelayURL(url)) return
-    if (entries.some(entry => entry.url === url)) return
+    if (existingRelayKeys.has(normalizeRelayKey(url))) return
 
     const newPreferences = [...relayPreferences, { url, read: true, write: true }]
     addRelayToPool(url)
     setStoredRelayPreferences(newPreferences)
     setEntries(getRelayEntries(newPreferences))
-  }, [entries, relayPreferences])
+  }, [existingRelayKeys, relayPreferences])
 
   // ── Reset to defaults ──────────────────────────────────────
   const handleReset = () => {
@@ -877,6 +895,11 @@ export default function RelaysPage() {
             </div>
             {addError && (
               <p className="text-[13px] text-[rgb(var(--color-system-red))]">{addError}</p>
+            )}
+            {!addError && pendingRelayAlreadyAdded && (
+              <p className="text-[12px] text-[rgb(var(--color-system-orange,255_149_0))]">
+                This relay is already added.
+              </p>
             )}
             <p className="text-[12px] text-[rgb(var(--color-label-tertiary))] leading-relaxed">
               Use WebSocket Secure (wss://) URLs only. Changes take effect immediately
