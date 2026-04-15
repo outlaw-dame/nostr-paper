@@ -82,6 +82,25 @@ function tryParseBridgeContent(content: string): string {
     if (data && typeof data === 'object' && typeof data.m === 'string' && typeof data.u === 'string') {
       return `${data.u}: ${data.m}`
     }
+
+      // Handle gateway grant requests
+      if (data && data.type === 'gateway_grant_request') {
+        return 'Gateway Grant Request: ' + (data.requestId ?? 'pending...')
+      }
+
+      // Handle grant list responses
+      if (data && data.action === 'list_grants') {
+        const count = Array.isArray(data.availableCameras) ? data.availableCameras.length : 0
+        const deviceText = count !== 1 ? 's' : ''
+        return 'Available Cameras: ' + count + ' device' + deviceText
+      }
+
+      // Handle device status updates
+      if (data && data.toDevicePk && data.requestId) {
+        const type = data.type || 'update'
+        const shortId = data.requestId.slice(0, 8)
+        return 'Device ' + type + ': ' + shortId + '...'
+      }
   } catch {
     // Not JSON, return original content
   }
