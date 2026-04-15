@@ -29,8 +29,10 @@ import {
 } from '@/lib/db/blossom'
 import { isValidBlossomUrl } from '@/lib/blossom/validate'
 import type { BlossomServer } from '@/types'
+import { Kind } from '@/types'
 
 export const BLOSSOM_SERVER_LIST_KIND = 10063
+export const NIP96_FILE_SERVER_LIST_KIND = Kind.FileServerPreference
 
 // ── Relay → Local ────────────────────────────────────────────
 
@@ -45,9 +47,9 @@ export async function fetchServerListFromRelays(
   try { ndk = getNDK() } catch { return [] }
 
   const events = await ndk.fetchEvents({
-    kinds:   [BLOSSOM_SERVER_LIST_KIND],
+    kinds:   [BLOSSOM_SERVER_LIST_KIND, NIP96_FILE_SERVER_LIST_KIND as unknown as typeof BLOSSOM_SERVER_LIST_KIND],
     authors: [pubkey],
-    limit:   1,
+    limit:   4,
   })
 
   // Take the most recent event
@@ -109,13 +111,23 @@ export async function publishServerList(): Promise<void> {
 
   const servers = await getBlossomServers()
 
-  const event     = new NDKEvent(ndk)
-  event.kind      = BLOSSOM_SERVER_LIST_KIND
-  event.content   = ''
-  event.tags      = await withOptionalClientTag(servers.map(s => ['server', s.url]))
+  const tags = await withOptionalClientTag(servers.map(s => ['server', s.url]))
 
-  await event.sign()
-  await event.publish()
+  const blossomEvent = new NDKEvent(ndk)
+  blossomEvent.kind = BLOSSOM_SERVER_LIST_KIND
+  blossomEvent.content = ''
+  blossomEvent.tags = tags
+
+  await blossomEvent.sign()
+  await blossomEvent.publish()
+
+  const nip96Event = new NDKEvent(ndk)
+  nip96Event.kind = NIP96_FILE_SERVER_LIST_KIND
+  nip96Event.content = ''
+  nip96Event.tags = tags
+
+  await nip96Event.sign()
+  await nip96Event.publish()
 }
 
 // ── Convenience Wrappers ─────────────────────────────────────

@@ -151,6 +151,7 @@ export const Kind = {
   // Blossom / media
   HttpAuth:          27235,  // NIP-98 HTTP Auth
   FileMetadata:      1063,   // NIP-94 File Metadata
+  FileServerPreference: 10096, // NIP-96 preferred file servers
   BlossomServerList: 10063,  // BUD-03 User Server List
 } as const
 

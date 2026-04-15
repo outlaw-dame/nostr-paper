@@ -7,6 +7,7 @@ import {
   parseCommentEvent,
   parseTextNoteReply,
 } from '@/lib/nostr/thread'
+import { rankThreadReplies } from '@/lib/nostr/threadRelevance'
 import { withRetry } from '@/lib/retry'
 import { useAddressableEvent } from '@/hooks/useAddressableEvent'
 import { useEvent } from '@/hooks/useEvent'
@@ -20,12 +21,6 @@ interface ConversationThreadState {
   loading: boolean
   rootLoading: boolean
   error: string | null
-}
-
-function sortChronologically(events: NostrEvent[]): NostrEvent[] {
-  return [...events].sort((a, b) => (
-    a.created_at - b.created_at || a.id.localeCompare(b.id)
-  ))
 }
 
 function sameRootAddress(value: string | undefined, expected: string | undefined): boolean {
@@ -164,7 +159,8 @@ async function queryConversationReplies(
         return parsed.rootEventId === rootReference.eventId
       })
 
-  return sortChronologically(dedupeById(filtered))
+  const deduped = dedupeById(filtered)
+  return rankThreadReplies(event, deduped)
 }
 
 export function useConversationThread(event: NostrEvent | null | undefined): ConversationThreadState {

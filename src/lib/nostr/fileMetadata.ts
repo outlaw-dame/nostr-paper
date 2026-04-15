@@ -154,8 +154,16 @@ export function buildFileMetadataTags(metadata: Nip94Tags): string[][] {
   if (metadata.magnet) tags.push(['magnet', metadata.magnet])
   if (metadata.torrentInfoHash) tags.push(['i', metadata.torrentInfoHash])
   if (metadata.blurhash) tags.push(['blurhash', metadata.blurhash])
-  if (metadata.thumb) tags.push(['thumb', metadata.thumb])
-  if (metadata.image) tags.push(['image', metadata.image])
+  if (metadata.thumb) {
+    tags.push(metadata.thumbHash
+      ? ['thumb', metadata.thumb, metadata.thumbHash]
+      : ['thumb', metadata.thumb])
+  }
+  if (metadata.image) {
+    tags.push(metadata.imageHash
+      ? ['image', metadata.image, metadata.imageHash]
+      : ['image', metadata.image])
+  }
   if (metadata.summary) tags.push(['summary', metadata.summary])
   if (metadata.alt) tags.push(['alt', metadata.alt])
   for (const fallback of metadata.fallbacks ?? []) {

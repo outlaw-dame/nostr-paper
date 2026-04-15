@@ -16,6 +16,7 @@ import { useState, useCallback } from 'react'
 import { sha256File }          from '@/lib/blossom/hash'
 import { createNIP98Auth }     from '@/lib/blossom/auth'
 import { blossomBlobUrl, blossomUpload, BlossomError } from '@/lib/blossom/client'
+import { discoverNip96Server, nip96Upload } from '@/lib/blossom/nip96'
 import { getBlossomServers, cacheBlob } from '@/lib/db/blossom'
 import {
   deriveMediaDimensions,
@@ -73,7 +74,24 @@ export function useBlossomUpload() {
             method:  'PUT',
             payload: sha256,
           })
-          const blob = await blossomUpload(server.url, file, sha256, auth)
+          let blob: BlossomBlob | null = null
+
+          try {
+            blob = await blossomUpload(server.url, file, sha256, auth)
+          } catch (blossomErr) {
+            const nip96 = await discoverNip96Server(server.url)
+            if (!nip96) throw blossomErr
+
+            const nip96Auth = await createNIP98Auth(ndk, {
+              url: nip96.apiUrl,
+              method: 'POST',
+              payload: sha256,
+            })
+
+            blob = await nip96Upload(nip96, file, nip96Auth, sha256)
+          }
+
+          if (!blob) throw new Error('Media upload failed unexpectedly.')
 
           if (!firstBlob) firstBlob = blob
           successfulServers.push(server.url)
