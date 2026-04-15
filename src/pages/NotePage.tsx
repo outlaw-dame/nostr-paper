@@ -51,7 +51,7 @@ import { parseNip51ListEvent } from '@/lib/nostr/lists'
 import { parseLongFormEvent } from '@/lib/nostr/longForm'
 import { buildNoteMetaTags, buildNoteTitle } from '@/lib/nostr/meta'
 import { decodeEventReference } from '@/lib/nostr/nip21'
-import { getNDK } from '@/lib/nostr/ndk'
+import { getNDK, waitForCachedEvents } from '@/lib/nostr/ndk'
 import { parsePollEvent, parsePollVoteEvent } from '@/lib/nostr/polls'
 import { parseReactionEvent } from '@/lib/nostr/reaction'
 import { parseReportEvent } from '@/lib/nostr/report'
@@ -171,6 +171,9 @@ export default function NotePage() {
         }
 
         await fetchFromRelays()
+        if (signal.aborted) return
+
+        await waitForCachedEvents([noteId])
         if (signal.aborted) return
 
         const fetched = await loadLocal()

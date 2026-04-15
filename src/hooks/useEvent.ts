@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getEvent } from '@/lib/db/nostr'
-import { getNDK } from '@/lib/nostr/ndk'
+import { getNDK, waitForCachedEvents } from '@/lib/nostr/ndk'
 import { withRetry } from '@/lib/retry'
 import { isValidHex32 } from '@/lib/security/sanitize'
 import type { NostrEvent } from '@/types'
@@ -65,6 +65,9 @@ export function useEvent(eventId: string | null | undefined): UseEventState {
         }
 
         await fetchFromRelays()
+        if (signal.aborted) return
+
+        await waitForCachedEvents([resolvedEventId])
         if (signal.aborted) return
 
         const refreshed = await loadLocal()
