@@ -491,13 +491,32 @@ export interface DBBlossomBlob {
 }
 
 /** Upload state machine */
+export interface BlossomUploadDiagnostic {
+  server: string
+  transport: 'blossom' | 'nip96'
+  success: boolean
+  message?: string
+}
+
 export type BlossomUploadState =
   | { status: 'idle' }
   | { status: 'hashing' }
-  | { status: 'uploading'; server: string; serverIndex: number; serverCount: number }
+  | {
+      status: 'uploading'
+      server: string
+      serverIndex: number
+      serverCount: number
+      diagnostics?: BlossomUploadDiagnostic[]
+    }
   | { status: 'publishing' }
-  | { status: 'done';     blob: BlossomBlob; successfulServers: string[]; warning?: string }
-  | { status: 'error';    error: string }
+  | {
+      status: 'done'
+      blob: BlossomBlob
+      successfulServers: string[]
+      warning?: string
+      diagnostics?: BlossomUploadDiagnostic[]
+    }
+  | { status: 'error'; error: string; diagnostics?: BlossomUploadDiagnostic[] }
 
 // ── Zap Types (NIP-57) ───────────────────────────────────────
 

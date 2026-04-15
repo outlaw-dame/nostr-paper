@@ -27,6 +27,11 @@ export interface ParsedThreadEvent {
   content: string
 }
 
+export interface NumberedThreadMarker {
+  index: number
+  total: number
+}
+
 export interface ParsedTextNoteReply {
   id: string
   pubkey: string
@@ -471,6 +476,28 @@ export function parseThreadEvent(event: NostrEvent): ParsedThreadEvent | null {
     ...(title ? { title } : {}),
     content: normalizePlainTextContent(event.content),
   }
+}
+
+/**
+ * Parse numbered thread markers commonly used by clients, e.g.:
+ * - "Thread 1/4"
+ * - "1/4"
+ * - "🧵 2/8"
+ */
+export function parseNumberedThreadMarker(content: string): NumberedThreadMarker | null {
+  if (typeof content !== 'string' || content.length === 0) return null
+
+  const matches = content.matchAll(/(?:\bthread\b\s*)?(\d{1,3})\s*\/\s*(\d{1,3})(?!\d)/gi)
+  for (const match of matches) {
+    const index = Number(match[1])
+    const total = Number(match[2])
+    if (!Number.isInteger(index) || !Number.isInteger(total)) continue
+    if (total < 2 || total > 200) continue
+    if (index < 1 || index > total) continue
+    return { index, total }
+  }
+
+  return null
 }
 
 export function parseTextNoteReply(event: NostrEvent): ParsedTextNoteReply | null {

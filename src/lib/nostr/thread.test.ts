@@ -4,6 +4,7 @@ import {
   getConversationRootReference,
   isThreadComment,
   parseCommentEvent,
+  parseNumberedThreadMarker,
   parseTextNoteReply,
   parseThreadEvent,
 } from './thread'
@@ -34,6 +35,19 @@ describe('parseThreadEvent', () => {
       title: 'GM',
       content: 'Good morning',
     })
+  })
+})
+
+describe('parseNumberedThreadMarker', () => {
+  it('parses thread counters like "Thread 1/4" and "🧵 2/8"', () => {
+    expect(parseNumberedThreadMarker('🧵 Thread 1/4 once i have an implementation')).toEqual({ index: 1, total: 4 })
+    expect(parseNumberedThreadMarker('🧵 2/8 continuing this thought')).toEqual({ index: 2, total: 8 })
+  })
+
+  it('ignores invalid counters', () => {
+    expect(parseNumberedThreadMarker('Thread 0/4')).toBeNull()
+    expect(parseNumberedThreadMarker('Thread 5/4')).toBeNull()
+    expect(parseNumberedThreadMarker('not a thread marker')).toBeNull()
   })
 })
 

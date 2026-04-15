@@ -4,6 +4,7 @@ import { queryEvents } from '@/lib/db/nostr'
 import { getNDK } from '@/lib/nostr/ndk'
 import {
   getConversationRootReference,
+  parseNumberedThreadMarker,
   parseCommentEvent,
   parseTextNoteReply,
 } from '@/lib/nostr/thread'
@@ -30,6 +31,8 @@ function sameRootAddress(value: string | undefined, expected: string | undefined
 const REPLY_QUERY_LIMIT = 200
 const MAX_FETCH_ITERATIONS = 4
 const MAX_FRONTIER_IDS = 48
+const NUMBERED_THREAD_QUERY_LIMIT = 200
+const NUMBERED_THREAD_WINDOW_SECONDS = 14 * 24 * 60 * 60
 
 function dedupeById(events: NostrEvent[]): NostrEvent[] {
   const seen = new Set<string>()
@@ -44,6 +47,97 @@ function dedupeById(events: NostrEvent[]): NostrEvent[] {
 
 function dedupeStrings(values: string[]): string[] {
   return [...new Set(values)]
+}
+
+function buildNumberedThreadAuthorFilter(event: NostrEvent) {
+  const marker = parseNumberedThreadMarker(event.content)
+  if (!marker || event.kind !== Kind.ShortNote) return null
+
+  return {
+    kinds: [Kind.ShortNote],
+    authors: [event.pubkey],
+    since: Math.max(0, event.created_at - NUMBERED_THREAD_WINDOW_SECONDS),
+    until: event.created_at + NUMBERED_THREAD_WINDOW_SECONDS,
+    limit: NUMBERED_THREAD_QUERY_LIMIT,
+  }
+}
+
+async function queryNumberedThreadCandidates(event: NostrEvent): Promise<NostrEvent[]> {
+  const marker = parseNumberedThreadMarker(event.content)
+  const filter = buildNumberedThreadAuthorFilter(event)
+  if (!marker || !filter) return []
+
+  const candidates = await queryEvents(filter)
+  return candidates
+    .filter((candidate) => candidate.kind === Kind.ShortNote && candidate.pubkey === event.pubkey)
+    .filter((candidate) => {
+      const candidateMarker = parseNumberedThreadMarker(candidate.content)
+      return Boolean(candidateMarker && candidateMarker.total === marker.total)
+    })
+}
+
+function augmentWithNumberedThreadHeuristic(
+  anchorEvent: NostrEvent,
+  rootReference: NonNullable<ReturnType<typeof getConversationRootReference>>,
+  replies: NostrEvent[],
+  numberedCandidates: NostrEvent[],
+): NostrEvent[] {
+  if (anchorEvent.kind !== Kind.ShortNote || !rootReference.eventId) return replies
+
+  const anchorMarker = parseNumberedThreadMarker(anchorEvent.content)
+  if (!anchorMarker) return replies
+
+  const sequencePool = dedupeById([anchorEvent, ...numberedCandidates])
+    .map((event) => ({ event, marker: parseNumberedThreadMarker(event.content) }))
+    .filter((entry): entry is { event: NostrEvent; marker: NonNullable<ReturnType<typeof parseNumberedThreadMarker>> } => (
+      Boolean(entry.marker && entry.marker.total === anchorMarker.total)
+    ))
+    .sort((a, b) => (
+      a.marker.index - b.marker.index
+      || a.event.created_at - b.event.created_at
+      || a.event.id.localeCompare(b.event.id)
+    ))
+
+  if (sequencePool.length <= 1) return replies
+
+  const preferredByIndex = new Map<number, NostrEvent>()
+  for (const entry of sequencePool) {
+    if (!preferredByIndex.has(entry.marker.index)) {
+      preferredByIndex.set(entry.marker.index, entry.event)
+    }
+  }
+
+  const merged = new Map<string, NostrEvent>(replies.map((reply) => [reply.id, reply]))
+
+  for (const entry of sequencePool) {
+    const candidate = entry.event
+    if (candidate.id === anchorEvent.id || candidate.id === rootReference.eventId) continue
+
+    const existing = merged.get(candidate.id) ?? candidate
+    const parsedExisting = parseTextNoteReply(existing)
+    if (parsedExisting?.rootEventId === rootReference.eventId) {
+      merged.set(candidate.id, existing)
+      continue
+    }
+
+    const previousByIndex = preferredByIndex.get(entry.marker.index - 1)
+    const parent = previousByIndex && previousByIndex.id !== candidate.id
+      ? previousByIndex
+      : anchorEvent
+
+    const synthetic: NostrEvent = {
+      ...existing,
+      tags: [
+        ...existing.tags,
+        ['e', rootReference.eventId, '', 'root', anchorEvent.pubkey],
+        ['e', parent.id, '', 'reply', parent.pubkey],
+      ],
+    }
+
+    merged.set(candidate.id, synthetic)
+  }
+
+  return [...merged.values()]
 }
 
 function buildReplyFilters(rootReference: ReturnType<typeof getConversationRootReference>) {
@@ -137,6 +231,7 @@ async function queryConversationReplies(
   rootReference: NonNullable<ReturnType<typeof getConversationRootReference>>,
 ): Promise<NostrEvent[]> {
   const events = await queryReplyCandidates(rootReference)
+  const numberedCandidates = await queryNumberedThreadCandidates(event)
 
   const filtered = rootReference.kind === Kind.ShortNote && rootReference.eventId
     ? events.filter((candidate) => {
@@ -159,7 +254,13 @@ async function queryConversationReplies(
         return parsed.rootEventId === rootReference.eventId
       })
 
-  const deduped = dedupeById(filtered)
+  const heuristicAugmented = augmentWithNumberedThreadHeuristic(
+    event,
+    rootReference,
+    filtered,
+    numberedCandidates,
+  )
+  const deduped = dedupeById(heuristicAugmented)
   return rankThreadReplies(event, deduped)
 }
 
@@ -236,6 +337,7 @@ export function useConversationThread(event: NostrEvent | null | undefined): Con
 
       const baseFilters = buildReplyFilters(rootReference)
       if (baseFilters.length === 0) return
+      const numberedFilter = buildNumberedThreadAuthorFilter(event)
       const optimizer = getRelayOptimizer()
       const recordMetric = (relay: string, latency: number, success: boolean) => {
         if (!optimizer) return
@@ -267,6 +369,34 @@ export function useConversationThread(event: NostrEvent | null | undefined): Con
             maxAttempts: 2,
             baseDelayMs: 1_000,
             maxDelayMs: 3_000,
+            signal,
+          },
+        )
+      }
+
+      if (numberedFilter) {
+        await withRetry(
+          async () => {
+            if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+            const start = performance.now()
+            try {
+              await ndk.fetchEvents(numberedFilter)
+              const latency = performance.now() - start
+              ndk.pool.relays.forEach((relay) => {
+                recordMetric(relay.url, latency, true)
+              })
+            } catch (err) {
+              const latency = performance.now() - start
+              ndk.pool.relays.forEach((relay) => {
+                recordMetric(relay.url, latency, false)
+              })
+              throw err
+            }
+          },
+          {
+            maxAttempts: 2,
+            baseDelayMs: 800,
+            maxDelayMs: 2_500,
             signal,
           },
         )
