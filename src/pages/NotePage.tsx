@@ -56,6 +56,10 @@ import { parsePollEvent, parsePollVoteEvent } from '@/lib/nostr/polls'
 import { parseReactionEvent } from '@/lib/nostr/reaction'
 import { parseReportEvent } from '@/lib/nostr/report'
 import { getQuotePostBody, parseRepostEvent } from '@/lib/nostr/repost'
+import { HighlightBody } from '@/components/nostr/HighlightBody'
+import { parseHighlightEvent } from '@/lib/nostr/highlight'
+import { HighlightBody } from '@/components/nostr/HighlightBody'
+import { parseHighlightEvent } from '@/lib/nostr/highlight'
 import { parseUserStatusEvent } from '@/lib/nostr/status'
 import { parseCommentEvent, parseThreadEvent } from '@/lib/nostr/thread'
 import { parseVideoEvent } from '@/lib/nostr/video'
@@ -306,6 +310,7 @@ export default function NotePage() {
   const thread = parseThreadEvent(event)
   const comment = parseCommentEvent(event)
   const userStatus = parseUserStatusEvent(event)
+  const highlight = parseHighlightEvent(event)
   const unsupportedKind = !isNostrPaperSupportedKind(event.kind)
     || (event.kind === Kind.Poll && !poll)
     || (event.kind === Kind.PollVote && !pollVote)
@@ -380,6 +385,8 @@ export default function NotePage() {
               </>
             ) : userStatus ? (
               <UserStatusBody event={event} className="mt-4" />
+            ) : highlight ? (
+              <HighlightBody event={event} className="mt-4" />
             ) : nip51List ? (
               <ListBody event={event} className="mt-4" />
             ) : unsupportedKind ? (

@@ -138,6 +138,7 @@ export const Kind = {
   ProfileBadges:     30008,
   BadgeDefinition:   30009,
   RelayList:         10002,
+  Highlight:         9802,  // NIP-84 Highlights
   ZapRequest:        9734,
   Zap:               9735,
   NWCInfo:           13194,

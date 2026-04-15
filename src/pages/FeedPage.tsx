@@ -148,6 +148,15 @@ const DEFAULT_SECTIONS: FeedRailSection[] = [
     },
   },
   {
+    id:     'highlights',
+    label:  'Highlights',
+    summary: 'Passages your network found worth preserving.',
+    filter: {
+      kinds: [Kind.Highlight],
+      limit: 30,
+    },
+  },
+  {
     id:     'bitcoin',
     label:  'Bitcoin',
     summary: 'Bitcoin discussion and market signal.',
@@ -181,6 +190,24 @@ const DEFAULT_SECTIONS: FeedRailSection[] = [
       ],
       '#t': ['nostr'],
       limit: 30,
+    },
+  },
+  {
+    id:     'reads',
+    label:  'Reads',
+    summary: 'Long-form articles from your network.',
+    filter: {
+      kinds: [Kind.LongFormContent],
+      limit: 24,
+    },
+  },
+  {
+    id:     'curations',
+    label:  'Curations',
+    summary: 'Handpicked reading lists and topic sets.',
+    filter: {
+      kinds: [Kind.ArticleCurationSet, Kind.VideoCurationSet, Kind.BookmarkSet],
+      limit: 24,
     },
   },
 ]
