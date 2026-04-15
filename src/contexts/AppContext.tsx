@@ -12,6 +12,7 @@ import React, {
   type ReactNode,
 } from 'react'
 import { bootstrap } from '@/lib/bootstrap'
+import { runMaintenance } from '@/lib/db/nostr'
 import { AppContext, type AppAction, type AppState } from '@/contexts/app-context'
 import { syncCurrentUserContactList } from '@/lib/nostr/contacts'
 import { refreshNip05Verifications } from '@/lib/nostr/nip05'
@@ -21,6 +22,8 @@ import { RELAY_SETTINGS_UPDATED_EVENT } from '@/lib/relay/relaySettings'
 import { markBootStage, recordBootFailure, recordBootSuccess } from '@/lib/runtime/startupDiagnostics'
 
 const shouldRunDevNip05Sweep = import.meta.env.VITE_ENABLE_DEV_NIP05_SWEEP === 'true'
+const DB_MAINTENANCE_INTERVAL_MS = 6 * 60 * 60 * 1000
+const DB_MAINTENANCE_INITIAL_DELAY_MS = 90 * 1000
 
 const initialState: AppState = {
   status:      'idle',
@@ -178,6 +181,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     return () => abortRef.current?.abort()
   }, [])
+
+  useEffect(() => {
+    if (!state.bootstrap?.dbReady) return
+
+    let cancelled = false
+
+    const run = async () => {
+      if (cancelled) return
+      try {
+        await runMaintenance()
+      } catch (error) {
+        if (cancelled) return
+        console.warn('[App] DB maintenance degraded:', error)
+      }
+    }
+
+    const initialTimer = window.setTimeout(() => {
+      void run()
+    }, DB_MAINTENANCE_INITIAL_DELAY_MS)
+
+    const intervalTimer = window.setInterval(() => {
+      void run()
+    }, DB_MAINTENANCE_INTERVAL_MS)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(initialTimer)
+      window.clearInterval(intervalTimer)
+    }
+  }, [state.bootstrap?.dbReady])
 
   useEffect(() => {
     if (!state.currentUser?.pubkey) return

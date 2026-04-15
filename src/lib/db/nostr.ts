@@ -2070,7 +2070,13 @@ export async function runMaintenance(): Promise<void> {
     [cutoffSeconds],
   )
 
-  // Incremental vacuum reclaims free pages without locking the DB
-  await dbRun('PRAGMA incremental_vacuum(100)')
+  const autoVacuum = await dbQuery<{ auto_vacuum?: number; value?: number }>('PRAGMA auto_vacuum')
+  const mode = autoVacuum[0]?.auto_vacuum ?? autoVacuum[0]?.value ?? 0
+
+  // Incremental vacuum works only when auto_vacuum=INCREMENTAL.
+  if (mode === 2) {
+    await dbRun('PRAGMA incremental_vacuum(100)')
+  }
+
   await dbRun('PRAGMA optimize')
 }

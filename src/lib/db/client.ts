@@ -89,6 +89,23 @@ export class DBError extends Error {
 // Distributive omit preserves the discriminated union structure
 type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never
 
+function normalizeSqlHead(sql: string): string {
+  return sql
+    .replace(/^\s*\/\*[\s\S]*?\*\//, '')
+    .replace(/^\s*--.*$/gm, '')
+    .trimStart()
+    .toUpperCase()
+}
+
+function isReadOnlySql(sql: string): boolean {
+  const normalized = normalizeSqlHead(sql)
+  return (
+    normalized.startsWith('SELECT')
+    || normalized.startsWith('PRAGMA')
+    || normalized.startsWith('EXPLAIN')
+  )
+}
+
 function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return promise
   if (signal.aborted) {
@@ -181,6 +198,9 @@ export async function dbQuery<T = Record<string, unknown>>(
   sql: string,
   bind?: unknown[],
 ): Promise<T[]> {
+  if (!isReadOnlySql(sql)) {
+    throw new DBError('dbQuery only accepts read-only SQL statements')
+  }
   return send<T[]>({ type: 'exec', payload: bind !== undefined ? { sql, bind } : { sql } })
 }
 
