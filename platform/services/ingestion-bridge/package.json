@@ -1,0 +1,30 @@
+{
+  "name": "@nostr-paper/ingestion-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Strfry to Redis Streams ingestion bridge for Nostr Paper platform",
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "dependencies": {
+    "ioredis": "^5.4.1",
+    "nostr-tools": "^2.7.1",
+    "pino": "^9.3.2",
+    "ws": "^8.18.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
