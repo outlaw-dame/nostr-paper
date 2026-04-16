@@ -1,0 +1,35 @@
+version: '3.9'
+
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: nostr
+      POSTGRES_PASSWORD: nostr
+      POSTGRES_DB: nostr_search
+    ports:
+      - "5432:5432"
+
+  strfry:
+    image: ghcr.io/hoytech/strfry:latest
+    ports:
+      - "7777:7777"
+    volumes:
+      - ./strfry.conf:/etc/strfry.conf
+
+  bridge:
+    build: ../services/ingestion-bridge
+    depends_on:
+      - redis
+      - strfry
+
+  search:
+    build: ../services/search-api
+    depends_on:
+      - postgres
+      - redis
