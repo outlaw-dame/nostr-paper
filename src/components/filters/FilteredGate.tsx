@@ -4,7 +4,7 @@
  * Wraps any content node with keyword-filter awareness:
  *
  *   action === null  → renders children unchanged
- *   action === 'hide' → renders nothing (event is removed from the feed)
+ *   action === 'hide' / 'block' → renders nothing (event is removed)
  *   action === 'warn' → renders a collapsed pill with the matched filter
  *                        term and a "Show anyway" expand toggle
  *
@@ -63,7 +63,7 @@ export function FilteredGate({ result, children, eventId, className = '' }: Filt
   if (!result.action) return <>{children}</>
 
   // Hard hide — remove from DOM completely
-  if (result.action === 'hide') return null
+  if (result.action === 'hide' || result.action === 'block') return null
 
   // Warn — show a pill; tap to reveal
   const primaryMatch = result.matches[0]

@@ -127,11 +127,11 @@ export function parseHighlightEvent(event: NostrEvent): ParsedHighlight | null {
     pubkey:        event.pubkey,
     createdAt:     event.created_at,
     excerpt,
-    sourceUrl,
-    sourceCoordinate,
-    sourceEventId,
-    context,
-    comment,
+    ...(sourceUrl !== undefined ? { sourceUrl } : {}),
+    ...(sourceCoordinate !== undefined ? { sourceCoordinate } : {}),
+    ...(sourceEventId !== undefined ? { sourceEventId } : {}),
+    ...(context !== undefined ? { context } : {}),
+    ...(comment !== undefined ? { comment } : {}),
     attributedPubkeys,
   }
 }

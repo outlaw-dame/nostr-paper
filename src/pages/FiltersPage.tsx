@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'motion/react'
 import { useKeywordFilters } from '@/hooks/useKeywordFilters'
+import { SYSTEM_FILTER_GROUPS, SYSTEM_KEYWORD_FILTERS, type SystemFilterGroup } from '@/lib/filters/systemFilters'
 import type { CreateFilterInput, FilterAction, FilterScope, KeywordFilter } from '@/lib/filters/types'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -39,8 +40,15 @@ const SCOPE_DESCRIPTIONS: Record<FilterScope, string> = {
 }
 
 const ACTION_LABELS: Record<FilterAction, string> = {
-  hide: 'Hide',
-  warn: 'Warn',
+  warn:  'Warn',
+  hide:  'Hide',
+  block: 'Block',
+}
+
+const ACTION_DESCRIPTIONS: Record<FilterAction, string> = {
+  warn:  'Show content with a dismissible warning label',
+  hide:  'Collapse content behind a "Show anyway" toggle',
+  block: 'Drop at ingest — never stored or shown in any feed',
 }
 
 // ── Blank form state ──────────────────────────────────────────────────────────
@@ -148,12 +156,16 @@ function FilterRow({ filter, onToggle, onEdit, onDelete }: FilterRowProps) {
               text-[11px] font-semibold px-1.5 py-0.5 rounded-full uppercase tracking-wide
             "
             style={{
-              backgroundColor: filter.action === 'hide'
-                ? 'rgb(var(--color-system-red) / 0.12)'
-                : 'rgb(var(--color-system-yellow) / 0.15)',
-              color: filter.action === 'hide'
+              backgroundColor: filter.action === 'block'
+                ? 'rgb(var(--color-system-red) / 0.18)'
+                : filter.action === 'hide'
+                  ? 'rgb(var(--color-system-red) / 0.12)'
+                  : 'rgb(var(--color-system-yellow) / 0.15)',
+              color: filter.action === 'block'
                 ? 'rgb(var(--color-system-red))'
-                : 'rgb(160 120 0)',
+                : filter.action === 'hide'
+                  ? 'rgb(var(--color-system-red))'
+                  : 'rgb(160 120 0)',
             }}
           >
             {ACTION_LABELS[filter.action]}
@@ -204,6 +216,34 @@ function FilterRow({ filter, onToggle, onEdit, onDelete }: FilterRowProps) {
         </svg>
       </button>
     </motion.div>
+  )
+}
+
+function SystemRuleGroupCard({ group }: { group: SystemFilterGroup }) {
+  return (
+    <div className="rounded-ios-xl border border-[rgb(var(--color-fill)/0.08)] bg-[rgb(var(--color-bg))] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="text-[14px] font-semibold text-[rgb(var(--color-label))]">
+              {group.title}
+            </h3>
+            <span className="rounded-full bg-[rgb(var(--color-system-red)/0.12)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[rgb(var(--color-system-red))]">
+              Block
+            </span>
+            <span className="rounded-full bg-[rgb(var(--color-system-purple)/0.10)] px-2 py-0.5 text-[11px] font-medium text-[rgb(var(--color-system-purple))]">
+              semantic
+            </span>
+          </div>
+          <p className="mt-1 text-[12px] leading-relaxed text-[rgb(var(--color-label-secondary))]">
+            {group.description}
+          </p>
+        </div>
+        <span className="shrink-0 rounded-full bg-[rgb(var(--color-fill)/0.10)] px-2 py-1 text-[11px] font-medium text-[rgb(var(--color-label-secondary))]">
+          {group.filters.length}
+        </span>
+      </div>
+    </div>
   )
 }
 
@@ -310,7 +350,7 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
             Action
           </p>
           <div className="flex rounded-[10px] overflow-hidden bg-[rgb(var(--color-fill)/0.08)]">
-            {(['warn', 'hide'] as FilterAction[]).map(a => (
+            {(['warn', 'hide', 'block'] as FilterAction[]).map(a => (
               <button
                 key={a}
                 type="button"
@@ -318,9 +358,11 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
                 className={`
                   flex-1 py-2 text-[13px] font-medium transition-colors duration-150
                   ${form.action === a
-                    ? a === 'hide'
+                    ? a === 'block'
                       ? 'bg-[rgb(var(--color-system-red))] text-white'
-                      : 'bg-[rgb(var(--color-system-yellow)/0.90)] text-black'
+                      : a === 'hide'
+                        ? 'bg-[rgb(var(--color-system-orange))] text-white'
+                        : 'bg-[rgb(var(--color-system-yellow)/0.90)] text-black'
                     : 'text-[rgb(var(--color-label-secondary))]'
                   }
                 `}
@@ -330,7 +372,7 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
             ))}
           </div>
           <p className="text-[11px] text-[rgb(var(--color-label-tertiary))] mt-1">
-            {form.action === 'hide' ? 'Remove from feed' : 'Collapse with reveal'}
+            {ACTION_DESCRIPTIONS[form.action]}
           </p>
         </div>
 
@@ -423,8 +465,8 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
           </button>
         </label>
 
-        {/* Semantic */}
-        <label className="flex items-start gap-3">
+        {/* Semantic — not applicable to 'block' (ingest-layer is sync only) */}
+        <label className={`flex items-start gap-3 ${form.action === 'block' ? 'opacity-40 pointer-events-none' : ''}`}>
           <div className="mt-0.5 flex-1">
             <p className="text-[14px] font-medium text-[rgb(var(--color-label))]">
               Semantic matching
@@ -437,21 +479,23 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
               </span>
             </p>
             <p className="text-[12px] text-[rgb(var(--color-label-tertiary))] mt-0.5">
-              Also matches related concepts — &ldquo;violence&rdquo; catches &ldquo;assault&rdquo;,
-              &ldquo;shooting&rdquo;, &ldquo;conflict&rdquo;. Uses the on-device embedding model.
+              {form.action === 'block'
+                ? 'Not available for Block — ingest filtering is text-only.'
+                : 'Also matches related concepts — \u201cviolence\u201d catches \u201cassault\u201d, \u201cshooting\u201d, \u201cconflict\u201d. Uses the on-device embedding model.'}
             </p>
           </div>
           <button
             type="button"
             role="switch"
-            aria-checked={form.semantic}
+            aria-checked={form.action !== 'block' && form.semantic}
             onClick={() => set('semantic', !form.semantic)}
+            disabled={form.action === 'block'}
             className="
               shrink-0 mt-0.5 w-11 h-6 rounded-full
               transition-colors duration-200
             "
             style={{
-              backgroundColor: form.semantic
+              backgroundColor: form.action !== 'block' && form.semantic
                 ? 'rgb(var(--color-system-purple))'
                 : 'rgb(var(--color-fill-secondary) / 0.3)',
             }}
@@ -459,7 +503,7 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
             <motion.span
               layout
               className="block w-5 h-5 rounded-full bg-white shadow-sm"
-              animate={{ x: form.semantic ? '22px' : '2px' }}
+              animate={{ x: form.action !== 'block' && form.semantic ? '22px' : '2px' }}
               transition={{ type: 'spring', stiffness: 500, damping: 35 }}
             />
           </button>
@@ -486,7 +530,7 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
           {form.scope === 'hashtag' && (
             <>#hashtag tags only (exact, case-insensitive)</>
           )}
-          {form.semantic && (
+          {form.semantic && form.action !== 'block' && (
             <>
               {' '}
               <span className="text-[rgb(var(--color-system-purple))]">
@@ -540,6 +584,7 @@ export default function FiltersPage() {
   const [saving, setSaving]           = useState(false)
   const [saveError, setSaveError]     = useState<string | null>(null)
   const [flashMessage, setFlashMessage] = useState<string | null>(null)
+  const systemRuleCount = SYSTEM_KEYWORD_FILTERS.length
 
   const handleSave = useCallback(async (
     data: CreateFilterInput,
@@ -610,7 +655,7 @@ export default function FiltersPage() {
         <div className="px-4 flex items-center justify-between">
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            onClick={() => navigate('/settings/moderation')}
             className="flex items-center gap-1 text-[#007AFF] active:opacity-60"
           >
             <svg width="8" height="14" viewBox="0 0 8 14" fill="none" aria-hidden="true">
@@ -649,11 +694,12 @@ export default function FiltersPage() {
         )}
 
         {/* Summary strip */}
-        {!loading && filters.length > 0 && (
+        {!loading && (
           <div className="px-4 pb-3">
             <p className="text-[13px] text-[rgb(var(--color-label-secondary))]">
-              {activeCount} active filter{activeCount !== 1 ? 's' : ''}
+              {activeCount} active custom filter{activeCount !== 1 ? 's' : ''}
               {expiredCount > 0 && ` · ${expiredCount} expired`}
+              {systemRuleCount > 0 && ` · ${systemRuleCount} system rules always on`}
             </p>
           </div>
         )}
@@ -703,7 +749,7 @@ export default function FiltersPage() {
           )}
         </AnimatePresence>
 
-        {/* Filter list */}
+        {/* Custom filter list */}
         {loading ? (
           <div className="px-4 space-y-3">
             {[1, 2].map(i => (
@@ -718,29 +764,61 @@ export default function FiltersPage() {
           >
             <p className="text-[40px] mb-3">🔕</p>
             <p className="text-[17px] font-semibold text-[rgb(var(--color-label))] mb-1">
-              No filters yet
+              No custom filters yet
             </p>
             <p className="text-[14px] text-[rgb(var(--color-label-secondary))] max-w-xs mx-auto leading-relaxed">
-              Add words, phrases, or #hashtags to hide or warn on matching posts, profiles, and bios.
+              System rules are already active. Add your own words, phrases, or #hashtags to add custom warn, hide, or block behavior.
             </p>
           </motion.div>
         ) : (
-          <div className="mx-4 rounded-ios-2xl bg-[rgb(var(--color-bg-secondary))] overflow-hidden">
-            <AnimatePresence initial={false}>
-              {sorted.map((filter, i) => (
-                <div key={filter.id}>
-                  {i > 0 && (
-                    <div className="mx-4 h-px bg-[rgb(var(--color-fill)/0.08)]" />
-                  )}
-                  <FilterRow
-                    filter={filter}
-                    onToggle={handleToggle}
-                    onEdit={handleEdit}
-                    onDelete={handleDelete}
-                  />
-                </div>
+          <>
+            <div className="px-4 pb-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-tertiary))]">
+                Custom Filters
+              </p>
+            </div>
+            <div className="mx-4 rounded-ios-2xl bg-[rgb(var(--color-bg-secondary))] overflow-hidden">
+              <AnimatePresence initial={false}>
+                {sorted.map((filter, i) => (
+                  <div key={filter.id}>
+                    {i > 0 && (
+                      <div className="mx-4 h-px bg-[rgb(var(--color-fill)/0.08)]" />
+                    )}
+                    <FilterRow
+                      filter={filter}
+                      onToggle={handleToggle}
+                      onEdit={handleEdit}
+                      onDelete={handleDelete}
+                    />
+                  </div>
+                ))}
+              </AnimatePresence>
+            </div>
+          </>
+        )}
+
+        {/* System rules */}
+        {!loading && systemRuleCount > 0 && (
+          <div className="px-4 pt-6">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-tertiary))]">
+                  System Rules
+                </p>
+                <p className="mt-1 max-w-[38rem] text-[13px] leading-relaxed text-[rgb(var(--color-label-secondary))]">
+                  These built-in rules are read-only and always enforced. Exact matches block at ingest, and semantic matches are hidden across the app.
+                </p>
+              </div>
+              <span className="shrink-0 rounded-full bg-[rgb(var(--color-fill)/0.10)] px-2.5 py-1 text-[11px] font-medium text-[rgb(var(--color-label-secondary))]">
+                {systemRuleCount}
+              </span>
+            </div>
+
+            <div className="mt-3 space-y-3">
+              {SYSTEM_FILTER_GROUPS.map((group) => (
+                <SystemRuleGroupCard key={group.id} group={group} />
               ))}
-            </AnimatePresence>
+            </div>
           </div>
         )}
 

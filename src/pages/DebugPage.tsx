@@ -6,6 +6,7 @@ import {
   readLastBootFailureForDebug,
   readLastBootSuccessForDebug,
 } from '@/lib/runtime/startupDiagnostics'
+import { isThreadInspectorEnabled, setThreadInspectorEnabled } from '@/lib/runtime/debugSettings'
 
 function formatTime(timestamp: number): string {
   try {
@@ -67,6 +68,7 @@ async function shareOrDownloadDiagnostics(payload: string): Promise<'shared' | '
 export default function DebugPage() {
   const navigate = useNavigate()
   const [refreshTick, setRefreshTick] = useState(0)
+  const [threadInspectorEnabled, setThreadInspectorState] = useState(() => isThreadInspectorEnabled())
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
   const [exportStatus, setExportStatus] = useState<'idle' | 'shared' | 'downloaded' | 'failed'>('idle')
   const copyTimerRef = useRef<number | null>(null)
@@ -136,6 +138,40 @@ export default function DebugPage() {
       </div>
 
       <div className="space-y-8 pb-10 pt-2">
+        <section>
+          <h2 className="section-kicker px-1 mb-3">Developer Options</h2>
+          <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
+                  Thread Inspector Overlay
+                </p>
+                <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
+                  Show event id, kind, signature preview, and reply linkage on note screens and preview cards.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={threadInspectorEnabled}
+                onClick={() => {
+                  const next = !threadInspectorEnabled
+                  setThreadInspectorState(next)
+                  setThreadInspectorEnabled(next)
+                }}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors ${threadInspectorEnabled
+                  ? 'border-[rgb(var(--color-system-green)/0.5)] bg-[rgb(var(--color-system-green)/0.28)]'
+                  : 'border-[rgb(var(--color-fill)/0.24)] bg-[rgb(var(--color-fill)/0.14)]'
+                }`}
+              >
+                <span
+                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${threadInspectorEnabled ? 'translate-x-6' : 'translate-x-1'}`}
+                />
+              </button>
+            </div>
+          </div>
+        </section>
+
         <section>
           <h2 className="section-kicker px-1 mb-3">Diagnostics</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-4">

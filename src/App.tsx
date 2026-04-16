@@ -17,6 +17,7 @@ import { AppProvider } from '@/contexts/AppContext'
 import { useApp } from '@/contexts/app-context'
 import { ComposeSheet } from '@/components/compose/ComposeSheet'
 import { BootSplash } from '@/components/layout/BootSplash'
+import { MusicPresencePublisher } from '@/components/nostr/MusicPresencePublisher'
 import { UpdateBanner } from '@/components/ui/UpdateBanner'
 import { ErrorScreen } from '@/components/ui/ErrorScreen'
 import { OfflineBanner } from '@/components/ui/OfflineBanner'
@@ -75,6 +76,7 @@ const FiltersPage  = lazy(() => import('@/pages/FiltersPage'))
 const RelaysPage   = lazy(() => import('@/pages/RelaysPage'))
 const TranslationsPage = lazy(() => import('@/pages/TranslationsPage'))
 const FeedControlsPage = lazy(() => import('@/pages/FeedControlsPage'))
+const SyndicationFeedsPage = lazy(() => import('@/pages/SyndicationFeedsPage'))
 const ActivityPage = lazy(() => import('@/pages/ActivityPage'))
 const OnboardPage  = lazy(() => import('@/pages/OnboardPage'))
 const ExplorePage  = lazy(() => import('@/pages/ExplorePage'))
@@ -189,6 +191,7 @@ function InnerApp() {
             <Route path="/settings/moderation" element={<ModerationPage />} />
             <Route path="/settings/tag-feeds"  element={<TagFeedsPage />} />
             <Route path="/settings/feed-controls" element={<FeedControlsPage />} />
+            <Route path="/settings/syndication" element={<SyndicationFeedsPage />} />
             <Route path="/settings/translations" element={<TranslationsPage />} />
             <Route path="/settings/moderation/filters" element={<FiltersPage />} />
             <Route path="/settings/relays"     element={<RelaysPage />} />
@@ -200,6 +203,7 @@ function InnerApp() {
       </Suspense>
 
       <ComposeSheet />
+      <MusicPresencePublisher />
     </>
   )
 }

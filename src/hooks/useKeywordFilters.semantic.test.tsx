@@ -5,43 +5,50 @@ import type { NostrEvent } from '@/types'
 import type { FilterCheckResult, KeywordFilter } from '@/lib/filters/types'
 import { useSemanticFiltering } from './useKeywordFilters'
 
-const mockRefs = vi.hoisted(() => {
-  const refs = {
-    currentFilters: [
-      {
-        id: 'filter-1',
-        term: 'violence',
-        action: 'hide',
-        scope: 'content',
-        wholeWord: false,
-        semantic: true,
-        enabled: true,
-        createdAt: 1,
-        expiresAt: null,
-      },
-    ] as KeywordFilter[],
-    loadFilters: vi.fn<() => Promise<KeywordFilter[]>>(),
-    rankSemanticDocuments: vi.fn(),
-  }
+interface MockRefs {
+  currentFilters: KeywordFilter[]
+  loadFilters: ReturnType<typeof vi.fn>
+  rankSemanticDocuments: ReturnType<typeof vi.fn>
+}
 
-  refs.loadFilters.mockImplementation(async () => refs.currentFilters)
-  return refs
-})
+let mockRefs: MockRefs
 
-vi.mock('@/lib/filters/storage', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/filters/storage')>('@/lib/filters/storage')
-  return {
-    ...actual,
-    loadFilters: mockRefs.loadFilters,
-    createFilter: vi.fn(),
-    updateFilter: vi.fn(),
-    deleteFilter: vi.fn(),
-  }
-})
+vi.mock('@/lib/filters/systemFilters', () => ({
+  SYSTEM_KEYWORD_FILTERS: [],
+  getEffectiveKeywordFilters: (filters: KeywordFilter[]) => filters,
+}))
+
+vi.mock('@/lib/filters/storage', () => ({
+  FILTERS_UPDATED_EVENT: 'nostr-paper:keyword-filters-updated',
+  loadFilters: (...args: unknown[]) => mockRefs.loadFilters(...args),
+  createFilter: vi.fn(),
+  updateFilter: vi.fn(),
+  deleteFilter: vi.fn(),
+}))
 
 vi.mock('@/lib/semantic/client', () => ({
-  rankSemanticDocuments: mockRefs.rankSemanticDocuments,
+  rankSemanticDocuments: (...args: unknown[]) => mockRefs.rankSemanticDocuments(...args),
 }))
+
+mockRefs = {
+  currentFilters: [
+    {
+      id: 'filter-1',
+      term: 'violence',
+      action: 'hide',
+      scope: 'content',
+      wholeWord: false,
+      semantic: true,
+      enabled: true,
+      createdAt: 1,
+      expiresAt: null,
+    },
+  ] as KeywordFilter[],
+  loadFilters: vi.fn<() => Promise<KeywordFilter[]>>(),
+  rankSemanticDocuments: vi.fn(),
+}
+
+mockRefs.loadFilters.mockImplementation(async () => mockRefs.currentFilters)
 
 interface HarnessProps {
   events: NostrEvent[]
@@ -90,6 +97,13 @@ const flush = async () => {
   await Promise.resolve()
 }
 
+const syncFilters = async () => {
+  await act(async () => {
+    window.dispatchEvent(new CustomEvent('nostr-paper:keyword-filters-updated'))
+    await flush()
+  })
+}
+
 describe('useSemanticFiltering', () => {
   let container: HTMLDivElement
   let root: Root
@@ -129,9 +143,35 @@ describe('useSemanticFiltering', () => {
       await flush()
     })
 
+    await syncFilters()
+
     expect(mockRefs.rankSemanticDocuments).toHaveBeenCalled()
     expect(latest.get('event-1')?.action).toBe('hide')
     expect(latest.get('event-1')?.matches[0]?.semantic).toBe(true)
+  })
+
+  it('applies semantic block when a block rule meets threshold', async () => {
+    mockRefs.currentFilters = [semanticFilter({ action: 'block' })]
+    mockRefs.rankSemanticDocuments.mockResolvedValue([{ id: 'event-1', score: 0.67 }])
+
+    let latest = new Map<string, FilterCheckResult>()
+
+    await act(async () => {
+      root.render(
+        <Harness
+          events={[makeEvent('event-1', 'some text')]} 
+          onResult={(result) => {
+            latest = result
+          }}
+        />,
+      )
+      await flush()
+    })
+
+    await syncFilters()
+
+    expect(latest.get('event-1')?.action).toBe('block')
+    expect(latest.get('event-1')?.matches[0]?.action).toBe('block')
   })
 
   it('ignores semantic matches below threshold', async () => {
@@ -151,6 +191,8 @@ describe('useSemanticFiltering', () => {
       )
       await flush()
     })
+
+    await syncFilters()
 
     expect(mockRefs.rankSemanticDocuments).toHaveBeenCalled()
     expect(latest.size).toBe(0)
@@ -173,6 +215,8 @@ describe('useSemanticFiltering', () => {
       )
       await flush()
     })
+
+    await syncFilters()
 
     expect(latest.get('event-1')?.action).toBe('hide')
 

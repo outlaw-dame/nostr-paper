@@ -26,6 +26,7 @@ import NDK, {
 import { getStoredRelayUrls } from '@/lib/relay/relaySettings'
 import { insertEvent, queryEvents, getProfile, getProfiles } from '@/lib/db/nostr'
 import { isValidRelayURL } from '@/lib/security/sanitize'
+import { shouldBlockEvent } from '@/lib/filters/ingestFilter'
 import type { Profile, NostrEvent, NostrFilter } from '@/types'
 
 // ── Default Relay Set ────────────────────────────────────────
@@ -137,6 +138,11 @@ class SQLiteCacheAdapter implements NDKCacheAdapter {
     const rawEvent = event.rawEvent() as unknown as NostrEvent
     const existing = this.inflightEventWrites.get(rawEvent.id)
     if (existing) {
+      return
+    }
+
+    // Ingest-layer keyword filter: drop blocked events before they reach the DB
+    if (shouldBlockEvent(rawEvent)) {
       return
     }
 

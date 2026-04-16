@@ -20,6 +20,7 @@ import {
 } from 'motion/react'
 import { useProfile } from '@/hooks/useProfile'
 import { useFollowStatus } from '@/hooks/useFollowStatus'
+import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
 import { useStoryCardPreview } from '@/hooks/useStoryCardPreview'
 import { SensitiveImage } from '@/components/media/SensitiveImage'
 import { EventMetricsRow } from '@/components/nostr/EventMetricsRow'
@@ -30,6 +31,7 @@ import { NoteContent } from './NoteContent'
 import { getQuotePostBody, getRepostPreviewText, parseQuoteTags } from '@/lib/nostr/repost'
 import { getProxyInfo, getProtocolMeta } from '@/lib/nostr/proxyTag'
 import { recordMediaUrlFailure, recordMediaUrlSuccess, shouldAttemptMediaUrl } from '@/lib/media/failureBackoff'
+import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import { sanitizeText } from '@/lib/security/sanitize'
 import type { NostrEvent } from '@/types'
 
@@ -151,14 +153,35 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
     () => (videoPlaybackPlan?.sources ?? []).filter((source) => shouldAttemptMediaUrl(source.url)),
     [videoPlaybackPlan],
   )
+  const heroPoster = videoPoster ?? primaryMedia
+
+  // ── Hero media moderation ────────────────────────────────────
+  // Classify the hero poster/image before rendering. failClosed so the
+  // gradient fallback shows during classification rather than flashing
+  // potentially explicit content.
+  const heroModerationDocument = useMemo(
+    () => buildMediaModerationDocument({
+      id: `${event.id}:hero`,
+      kind: isVideoStory ? 'video_preview' : 'image',
+      url: heroPoster ?? null,
+      updatedAt: event.created_at,
+    }),
+    [event.id, event.created_at, heroPoster, isVideoStory],
+  )
+  const { blocked: heroMediaBlocked, loading: heroModerationLoading } = useMediaModerationDocument(
+    heroModerationDocument,
+    { failClosed: true },
+  )
+
   const canAutoplayVideo = Boolean(
     video &&
     videoAutoplaySources.length > 0 &&
     !contentWarning &&
     followStatus !== false &&
-    !autoplayFailed,
+    !autoplayFailed &&
+    !heroMediaBlocked &&
+    !heroModerationLoading,
   )
-  const heroPoster = videoPoster ?? primaryMedia
 
   const dragY        = useMotionValue(0)
   // Subtle scale lift as user drags up — haptic-like feedback
@@ -246,7 +269,7 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
               />
             ))}
           </video>
-        ) : primaryMedia ? (
+        ) : primaryMedia && !heroMediaBlocked && !heroModerationLoading ? (
           <SensitiveImage
             src={primaryMedia}
             className="absolute inset-0 w-full h-full"
@@ -255,7 +278,7 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
             isUnfollowed={followStatus === false}
           />
         ) : (
-          // Text-only note: gradient background keyed to pubkey color
+          // Text-only note or media blocked/loading: gradient background keyed to pubkey color
           <div
             className="absolute inset-0"
             style={{
@@ -267,7 +290,7 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
         {/* Scrim — ensures text legibility regardless of image */}
         <div className="
           absolute inset-0
-          bg-gradient-to-t from-black/72 via-black/18 to-black/4
+          bg-gradient-to-t from-black/92 via-black/60 to-black/24
         " />
 
         {/* Glass bottom content panel */}
@@ -300,45 +323,47 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
             )}
           </motion.div>
 
-          <AuthorRow
-            pubkey={event.pubkey}
-            profile={profile}
-            timestamp={event.created_at}
-            light
-          />
-
-          {(storyAuthor || storySiteName) && (
-            <p className="mt-1 text-[13px] leading-5 text-white/82">
-              {storyAuthor && storySiteName
-                ? `By ${storyAuthor} • ${storySiteName}`
-                : storyAuthor
-                  ? `By ${storyAuthor}`
-                  : storySiteName}
-            </p>
-          )}
-
-          {displayTitle && (
-            <h2 className="
-              mt-2.5 text-white text-[24px] leading-[1.04]
-              font-semibold tracking-[-0.035em] line-clamp-3
-              [text-shadow:0_1px_4px_rgba(0,0,0,0.6)]
-            ">
-              <TwemojiText text={displayTitle} />
-            </h2>
-          )}
-
-          {previewText.length > 0 && (
-            <NoteContent
-              content={previewText}
-              compact
-              className="
-                mt-2 text-white/88 line-clamp-3
-                [text-shadow:0_1px_4px_rgba(0,0,0,0.6)]
-              "
+          <div className="mt-2 rounded-[16px] border border-white/14 bg-black/68 px-3 py-3 backdrop-blur-md">
+            <AuthorRow
+              pubkey={event.pubkey}
+              profile={profile}
+              timestamp={event.created_at}
+              light
             />
-          )}
 
-          <EventMetricsRow event={event} tone="inverse" interactive className="[text-shadow:0_1px_3px_rgba(0,0,0,0.45)]" />
+            {(storyAuthor || storySiteName) && (
+              <p className="mt-1 text-[13px] leading-5 text-white/90 [text-shadow:0_1px_3px_rgba(0,0,0,0.6)]">
+                {storyAuthor && storySiteName
+                  ? `By ${storyAuthor} • ${storySiteName}`
+                  : storyAuthor
+                    ? `By ${storyAuthor}`
+                    : storySiteName}
+              </p>
+            )}
+
+            {displayTitle && (
+              <h2 className="
+                mt-2.5 text-white text-[24px] leading-[1.04]
+                font-semibold tracking-[-0.035em] line-clamp-3
+                [text-shadow:0_1px_4px_rgba(0,0,0,0.65)]
+              ">
+                <TwemojiText text={displayTitle} />
+              </h2>
+            )}
+
+            {previewText.length > 0 && (
+              <NoteContent
+                content={previewText}
+                compact
+                className="
+                  mt-2 text-white/90 line-clamp-3
+                  [text-shadow:0_1px_4px_rgba(0,0,0,0.65)]
+                "
+              />
+            )}
+
+            <EventMetricsRow event={event} tone="inverse" interactive className="mt-2 [text-shadow:0_1px_3px_rgba(0,0,0,0.55)]" />
+          </div>
         </motion.div>
       </motion.article>
 

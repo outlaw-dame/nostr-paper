@@ -63,8 +63,8 @@ export default function ArticlePage() {
     mlDecision:    moderationDecision,
     keywordResult: keywordFilterResult,
   } = useEventCombinedModeration(event, profile)
-  const keywordGated = keywordFilterResult.action !== null && !filterOverride
-  const keywordHidden = keywordFilterResult.action === 'hide'
+  const keywordHidden = keywordFilterResult.action === 'hide' || keywordFilterResult.action === 'block'
+  const keywordGated = keywordFilterResult.action === 'warn' && !filterOverride
   const blockedByTagr = eventBlocked && (moderationDecision?.reason?.startsWith('tagr:') ?? false)
 
   // Inject <head> meta tags for article attribution and social sharing.
@@ -74,7 +74,7 @@ export default function ArticlePage() {
     [event],
   )
   usePageHead(
-    article && !moderationLoading && (!isBlocked || override) && !keywordGated
+    article && !moderationLoading && (!isBlocked || override) && !keywordGated && !keywordHidden
       ? {
           title: buildArticleTitle(article),
           tags: buildArticleMetaTags({ article, profile }),
@@ -178,7 +178,7 @@ export default function ArticlePage() {
     )
   }
 
-  if (!event || !article || ((isBlocked && !override) || keywordGated)) {
+  if (!event || !article || ((isBlocked && !override) || keywordHidden || keywordGated)) {
     return (
       <div className="min-h-dvh bg-[rgb(var(--color-bg))] px-4 pt-safe pb-safe">
         <div className="sticky top-0 z-10 bg-[rgb(var(--color-bg)/0.88)] py-4 backdrop-blur-xl">
@@ -194,11 +194,13 @@ export default function ArticlePage() {
           <h1 className="text-[28px] font-semibold tracking-[-0.03em] text-[rgb(var(--color-label))]">
             {isBlocked || keywordHidden ? 'Content hidden' : keywordGated ? 'Content warning' : 'Article unavailable'}
           </h1>
-          {isBlocked || keywordGated ? (
+          {isBlocked || keywordHidden || keywordGated ? (
             <>
               <p className="mt-3 text-[16px] leading-7 text-[rgb(var(--color-label-secondary))]">
                 {isBlocked
                   ? 'This article was hidden by your content filters or mute list.'
+                  : keywordHidden
+                    ? 'This article was blocked by your system keyword filters.'
                   : 'This article matched your keyword filters.'}
               </p>
               {!isBlocked && keywordFilterResult.matches[0]?.term ? (
@@ -211,16 +213,18 @@ export default function ArticlePage() {
                   Blocked by Tagr.
                 </p>
               ) : null}
-              <button
-                type="button"
-                onClick={() => {
-                  if (isBlocked) setOverride(true)
-                  if (keywordGated) setFilterOverride(true)
-                }}
-                className="mt-4 rounded-full bg-[rgb(var(--color-fill)/0.12)] px-4 py-2 text-[15px] font-medium text-[rgb(var(--color-label))]"
-              >
-                Show Anyway
-              </button>
+              {(isBlocked || keywordGated) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isBlocked) setOverride(true)
+                    if (keywordGated) setFilterOverride(true)
+                  }}
+                  className="mt-4 rounded-full bg-[rgb(var(--color-fill)/0.12)] px-4 py-2 text-[15px] font-medium text-[rgb(var(--color-label))]"
+                >
+                  Show Anyway
+                </button>
+              )}
             </>
           ) : error ? (
             <p className="mt-3 text-[16px] leading-7 text-[rgb(var(--color-label-secondary))]">

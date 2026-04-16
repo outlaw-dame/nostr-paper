@@ -11,6 +11,7 @@ import type { FilterAction, FilterScope, KeywordFilter } from '@/lib/filters/typ
 const ACTION_LABELS: Record<FilterAction, string> = {
   hide: 'Hide',
   warn: 'Warn',
+  block: 'Block',
 }
 
 const SCOPE_LABELS: Record<FilterScope, string> = {
@@ -132,7 +133,7 @@ export default function ModerationPage() {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            onClick={() => navigate('/settings')}
             className="
               app-panel-muted
               h-10 w-10 rounded-full

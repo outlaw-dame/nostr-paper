@@ -51,6 +51,7 @@ import { filterNsfwTaggedEvents } from '@/lib/moderation/nsfwTags'
 import { formatNip05Identifier } from '@/lib/nostr/nip05'
 import { parsePollEvent } from '@/lib/nostr/polls'
 import { parseSearchQuery, warmSearchRelays } from '@/lib/nostr/search'
+import { extractEventHashtags } from '@/lib/feed/tagTimeline'
 import { parseCommentEvent, parseThreadEvent } from '@/lib/nostr/thread'
 import { sanitizeText } from '@/lib/security/sanitize'
 import { parseVideoEvent } from '@/lib/nostr/video'
@@ -94,7 +95,12 @@ export default function ExplorePage() {
     semanticError,
   } = useSearch({ kinds: SEARCHABLE_KINDS, localLimit: 40, relayLimit: 40 })
 
-  const { isMuted, loading: muteListLoading } = useMuteList()
+  const {
+    isMuted,
+    mutedWords,
+    mutedHashtags,
+    loading: muteListLoading,
+  } = useMuteList()
   const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
   const [topicsWindow, setTopicsWindow] = useState<'today' | 'week'>('week')
   const { topics, loading: topicsLoading } = useTrendingTopics(24, topicsWindow)
@@ -169,10 +175,27 @@ export default function ExplorePage() {
 
   const visibleEvents = useMemo(
     () => filterNsfwTaggedEvents(
-      events.filter(e => !isMuted(e.pubkey) && (!eventModerationIds.has(e.id) || allowedEventIds.has(e.id))),
+      events.filter((event) => {
+        if (isMuted(event.pubkey)) return false
+        if (eventModerationIds.has(event.id) && !allowedEventIds.has(event.id)) return false
+
+        if (mutedWords.size > 0) {
+          const lower = event.content.toLowerCase()
+          for (const word of mutedWords) {
+            if (lower.includes(word)) return false
+          }
+        }
+
+        if (mutedHashtags.size > 0) {
+          const tags = extractEventHashtags(event)
+          if (tags.some((tag) => mutedHashtags.has(tag))) return false
+        }
+
+        return true
+      }),
       hideNsfwTaggedPosts,
     ),
-    [allowedEventIds, eventModerationIds, events, hideNsfwTaggedPosts, isMuted],
+    [allowedEventIds, eventModerationIds, events, hideNsfwTaggedPosts, isMuted, mutedWords, mutedHashtags],
   )
   const visibleProfiles = useMemo(
     () => profiles.filter(p => !isMuted(p.pubkey) && (!profileModerationIds.has(p.pubkey) || allowedProfileIds.has(p.pubkey))),

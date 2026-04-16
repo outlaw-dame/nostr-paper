@@ -17,11 +17,14 @@ interface ScriptEntry {
 }
 
 const ENGLISH_STOPWORDS = new Set([
-  'a', 'about', 'all', 'and', 'are', 'as', 'at', 'be', 'but', 'by',
-  'for', 'from', 'have', 'how', 'i', 'in', 'is', 'it', 'just', 'more',
-  'new', 'not', 'of', 'on', 'or', 'our', 'that', 'the', 'their', 'there',
-  'they', 'this', 'to', 'was', 'we', 'what', 'when', 'where', 'who', 'why',
-  'with', 'you', 'your',
+  'a', 'about', 'all', 'am', 'an', 'and', 'are', 'as', 'at', 'be',
+  'been', 'but', 'by', 'can', 'could', 'did', 'do', 'does', 'for',
+  'from', 'had', 'has', 'have', 'he', 'her', 'him', 'his', 'how',
+  'i', 'if', 'in', 'is', 'it', 'its', 'just', 'me', 'more', 'my',
+  'new', 'no', 'not', 'of', 'on', 'or', 'our', 'she', 'so', 'than',
+  'that', 'the', 'their', 'them', 'there', 'these', 'they', 'this',
+  'those', 'to', 'up', 'us', 'was', 'we', 'were', 'what', 'when',
+  'where', 'who', 'why', 'will', 'with', 'would', 'you', 'your',
 ])
 
 // Order matters: Japanese (hiragana/katakana) must come before CJK so a
@@ -153,7 +156,7 @@ export function looksLikeShortAsciiSnippet(text: string): boolean {
     .split(' ')
     .filter(Boolean)
 
-  if (words.length === 0 || words.length > 6) return false
+  if (words.length === 0 || words.length > 12) return false
 
   const letterCount = words.join('').replace(/[^a-z]/g, '').length
   return letterCount >= 2 && letterCount <= 32

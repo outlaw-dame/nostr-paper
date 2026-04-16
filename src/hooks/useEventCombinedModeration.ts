@@ -18,6 +18,7 @@ import { useMemo } from 'react'
 import { mergeResults, useEventFilterCheck, useSemanticFiltering } from '@/hooks/useKeywordFilters'
 import { useEventModeration } from '@/hooks/useModeration'
 import { useMuteList } from '@/hooks/useMuteList'
+import { extractEventHashtags } from '@/lib/feed/tagTimeline'
 import type { ModerationDecision } from '@/types'
 import type { FilterCheckResult } from '@/lib/filters/types'
 import type { NostrEvent, Profile } from '@/types'
@@ -37,7 +38,8 @@ export interface EventCombinedModerationResult {
   muteListLoading:  boolean
 
   /**
-   * Aggregate blocked flag: true when mlBlocked OR isMutedAuthor.
+  * Aggregate blocked flag: true when mlBlocked, author mute, word mute, or
+  * hashtag mute from the local NIP-51 mute list.
    * Does NOT fold in keywordResult — keyword gating (warn vs hide) is
    * rendered separately so the page can show a collapsible warning.
    */
@@ -71,7 +73,8 @@ export function useEventCombinedModeration(
   const checkEvent = useEventFilterCheck()
 
   // ── Subsystem 4: async semantic embedding filter ───────────────────────────
-  const semanticResults = useSemanticFiltering(event ? [event] : [])
+  const semanticInput = useMemo(() => (event ? [event] : []), [event])
+  const semanticResults = useSemanticFiltering(semanticInput)
 
   // Merge synchronous + semantic results
   const keywordResult = useMemo<FilterCheckResult>(() => {
@@ -83,11 +86,29 @@ export function useEventCombinedModeration(
   }, [event, profile, checkEvent, semanticResults])
 
   // ── Subsystem 5: NIP-51 mute list ─────────────────────────────────────────
-  const { isMuted, loading: muteListLoading } = useMuteList()
+  const {
+    isMuted,
+    mutedWords,
+    mutedHashtags,
+    loading: muteListLoading,
+  } = useMuteList()
   const isMutedAuthor = event ? isMuted(event.pubkey) : false
+  const isMutedByWord = useMemo(() => {
+    if (!event || mutedWords.size === 0) return false
+    const lower = event.content.toLowerCase()
+    for (const word of mutedWords) {
+      if (lower.includes(word)) return true
+    }
+    return false
+  }, [event, mutedWords])
+  const isMutedByHashtag = useMemo(() => {
+    if (!event || mutedHashtags.size === 0) return false
+    const tags = extractEventHashtags(event)
+    return tags.some((tag) => mutedHashtags.has(tag))
+  }, [event, mutedHashtags])
 
   // ── Aggregate ──────────────────────────────────────────────────────────────
-  const blocked = mlBlocked || isMutedAuthor
+  const blocked = mlBlocked || isMutedAuthor || isMutedByWord || isMutedByHashtag
   const loading = mlLoading || muteListLoading
 
   return {

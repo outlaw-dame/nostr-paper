@@ -120,6 +120,8 @@ function augmentWithNumberedThreadHeuristic(
   for (const entry of preferredSequence) {
     const candidate = entry.event
     if (candidate.id === anchorEvent.id || candidate.id === rootReference.eventId) continue
+    // Skip any candidate occupying the same index slot as the anchor (e.g. a duplicate "1/6" event)
+    if (entry.index === anchorMarker.index) continue
 
     const existing = merged.get(candidate.id) ?? candidate
     const parsedExisting = parseTextNoteReply(existing)

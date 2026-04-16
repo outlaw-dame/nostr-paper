@@ -55,6 +55,11 @@ vi.mock('@/hooks/useFollowStatus', () => ({
   useFollowStatus: () => true,
 }))
 
+vi.mock('@/hooks/useMediaModeration', () => ({
+  useMediaModerationDocument: () => ({ blocked: false, loading: false, decision: null, error: null }),
+  useMediaModerationDocuments: () => ({ decisions: new Map(), allowedIds: new Set(), blockedIds: new Set(), loading: false, error: null }),
+}))
+
 vi.mock('@/hooks/useLinkPreview', () => ({
   useLinkPreview: (url: string | null | undefined) => {
     if (url?.includes('techcrunch.com')) {

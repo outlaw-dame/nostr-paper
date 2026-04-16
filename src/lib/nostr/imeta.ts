@@ -142,10 +142,19 @@ function inferMimeTypeFromUrl(url: string): string | undefined {
         return 'image/webp'
       case 'avif':
         return 'image/avif'
+      case 'apng':
+        return 'image/apng'
+      case 'jxl':
+        return 'image/jxl'
+      case 'svg':
+        return 'image/svg+xml'
       case 'mp4':
+      case 'm4v':
         return 'video/mp4'
       case 'webm':
         return 'video/webm'
+      case 'mkv':
+        return 'video/x-matroska'
       case 'mov':
         return 'video/quicktime'
       case 'mp3':
@@ -154,12 +163,65 @@ function inferMimeTypeFromUrl(url: string): string | undefined {
         return 'audio/ogg'
       case 'flac':
         return 'audio/flac'
+      case 'opus':
+        return 'audio/opus'
       default:
         return undefined
     }
   } catch {
     return undefined
   }
+}
+
+/**
+ * Quality rank for image MIME types — lower number = higher preference.
+ * AVIF: best compression + HDR, all modern browsers (Chrome 85+, Firefox 93+, Safari 16+).
+ * WebP: great compression + animation, all modern browsers.
+ * PNG: lossless, universal.
+ * JPEG: universal baseline.
+ * Animated GIF: large, legacy — demoted below PNG/JPEG for static content.
+ * Unknown types rank lowest but are still attempted.
+ */
+const IMAGE_FORMAT_RANK: Record<string, number> = {
+  'image/avif':    0,
+  'image/jxl':     1,
+  'image/webp':    2,
+  'image/apng':    3,
+  'image/png':     4,
+  'image/jpeg':    5,
+  'image/gif':     6,
+  'image/svg+xml': 7,
+}
+
+function imageFormatRank(url: string): number {
+  const mime = inferMimeTypeFromUrl(url)
+  return mime !== undefined ? (IMAGE_FORMAT_RANK[mime] ?? 8) : 9
+}
+
+/**
+ * Returns all image candidate URLs for a media attachment, sorted by format
+ * quality (AVIF > WebP > PNG > JPEG > GIF) with duplicates removed.
+ * Suitable for building a \<picture\> source list or a JS-retry queue.
+ */
+export function getOrderedImageCandidates(
+  attachment: Nip92MediaAttachment,
+): Array<{ url: string; type?: string }> {
+  const allUrls: string[] = [
+    ...(attachment.image ? [attachment.image] : []),
+    ...(attachment.imageFallbacks ?? []),
+    ...(attachment.thumb ? [attachment.thumb] : []),
+  ]
+
+  const seen = new Set<string>()
+  const unique = allUrls.filter((u) => {
+    if (seen.has(u)) return false
+    seen.add(u)
+    return true
+  })
+
+  return unique
+    .sort((a, b) => imageFormatRank(a) - imageFormatRank(b))
+    .map((url) => ({ url, type: inferMimeTypeFromUrl(url) }))
 }
 
 function inferAttachmentMimeType(attachment: Nip92MediaAttachment): string | undefined {
@@ -361,6 +423,10 @@ export function parseImetaMediaAttachment(tag: string[]): Nip92MediaAttachment |
   if (!url || validFieldCount === 0) {
     return null
   }
+
+  // Sort image candidates by format quality (AVIF > WebP > PNG > JPEG > GIF)
+  // so the best-quality option is always selected as the primary preview.
+  images.sort((a, b) => imageFormatRank(a) - imageFormatRank(b))
 
   const [image, ...imageFallbacks] = images
 

@@ -59,8 +59,9 @@ import { getQuotePostBody, parseRepostEvent } from '@/lib/nostr/repost'
 import { HighlightBody } from '@/components/nostr/HighlightBody'
 import { parseHighlightEvent } from '@/lib/nostr/highlight'
 import { parseUserStatusEvent } from '@/lib/nostr/status'
-import { parseCommentEvent, parseThreadEvent } from '@/lib/nostr/thread'
+import { parseCommentEvent, parseNumberedThreadMarker, parseTextNoteReply, parseThreadEvent } from '@/lib/nostr/thread'
 import { parseVideoEvent } from '@/lib/nostr/video'
+import { isThreadInspectorEnabled } from '@/lib/runtime/debugSettings'
 import { withRetry } from '@/lib/retry'
 import { Kind, type NostrEvent } from '@/types'
 
@@ -86,8 +87,8 @@ export default function NotePage() {
     mlDecision:   moderationDecision,
     keywordResult: keywordFilterResult,
   } = useEventCombinedModeration(event, profile)
-  const keywordGated = keywordFilterResult.action !== null && !filterOverride
-  const keywordHidden = keywordFilterResult.action === 'hide'
+  const keywordHidden = keywordFilterResult.action === 'hide' || keywordFilterResult.action === 'block'
+  const keywordGated = keywordFilterResult.action === 'warn' && !filterOverride
   const blockedByTagr = eventBlocked && (moderationDecision?.reason?.startsWith('tagr:') ?? false)
 
   // First image attachment URL — used as og:image
@@ -102,7 +103,7 @@ export default function NotePage() {
   }, [event])
 
   usePageHead(
-    event && !moderationLoading && (!isBlocked || override) && !keywordGated
+    event && !moderationLoading && (!isBlocked || override) && !keywordGated && !keywordHidden
       ? {
           title: buildNoteTitle(event, profile),
           tags: buildNoteMetaTags({ event, profile, imageUrl: ogImageUrl }),
@@ -226,7 +227,7 @@ export default function NotePage() {
     )
   }
 
-  if (!event || ((isBlocked && !override) || keywordGated)) {
+  if (!event || ((isBlocked && !override) || keywordHidden || keywordGated)) {
     return (
       <div className="min-h-dvh bg-[rgb(var(--color-bg))] px-4 pt-safe pb-safe">
         <div className="sticky top-0 z-10 bg-[rgb(var(--color-bg)/0.88)] py-4 backdrop-blur-xl">
@@ -242,11 +243,13 @@ export default function NotePage() {
           <h1 className="text-[28px] font-semibold tracking-[-0.03em] text-[rgb(var(--color-label))]">
             {isBlocked || keywordHidden ? 'Content hidden' : keywordGated ? 'Content warning' : 'Note unavailable'}
           </h1>
-          {isBlocked || keywordGated ? (
+          {isBlocked || keywordHidden || keywordGated ? (
             <>
               <p className="mt-3 text-[16px] leading-7 text-[rgb(var(--color-label-secondary))]">
                 {isBlocked
                   ? 'This note was hidden by your content filters or mute list.'
+                  : keywordHidden
+                    ? 'This note was blocked by your system keyword filters.'
                   : 'This note matched your keyword filters.'}
               </p>
               {!isBlocked && keywordFilterResult.matches[0]?.term ? (
@@ -259,16 +262,18 @@ export default function NotePage() {
                   Blocked by Tagr.
                 </p>
               ) : null}
-              <button
-                type="button"
-                onClick={() => {
-                  if (isBlocked) setOverride(true)
-                  if (keywordGated) setFilterOverride(true)
-                }}
-                className="mt-4 rounded-full bg-[rgb(var(--color-fill)/0.12)] px-4 py-2 text-[15px] font-medium text-[rgb(var(--color-label))]"
-              >
-                Show Anyway
-              </button>
+              {(isBlocked || keywordGated) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isBlocked) setOverride(true)
+                    if (keywordGated) setFilterOverride(true)
+                  }}
+                  className="mt-4 rounded-full bg-[rgb(var(--color-fill)/0.12)] px-4 py-2 text-[15px] font-medium text-[rgb(var(--color-label))]"
+                >
+                  Show Anyway
+                </button>
+              )}
             </>
           ) : error ? (
             <>
@@ -309,6 +314,9 @@ export default function NotePage() {
   const comment = parseCommentEvent(event)
   const userStatus = parseUserStatusEvent(event)
   const highlight = parseHighlightEvent(event)
+  const numberedMarker = parseNumberedThreadMarker(event.content)
+  const parsedReply = parseTextNoteReply(event)
+  const threadInspectorEnabled = isThreadInspectorEnabled()
   const unsupportedKind = !isNostrPaperSupportedKind(event.kind)
     || (event.kind === Kind.Poll && !poll)
     || (event.kind === Kind.PollVote && !pollVote)
@@ -347,6 +355,20 @@ export default function NotePage() {
               large
               actions
             />
+
+            {threadInspectorEnabled && (
+              <div className="mt-3 rounded-[12px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg-secondary))] px-3 py-2 font-mono text-[11px] leading-5 text-[rgb(var(--color-label-secondary))]">
+                <p>kind={event.kind}</p>
+                <p>id={event.id}</p>
+                <p>sig={event.sig}</p>
+                {numberedMarker && (
+                  <p>marker={numberedMarker.index}/{numberedMarker.total}</p>
+                )}
+                {parsedReply?.rootEventId && (
+                  <p>root={parsedReply.rootEventId} parent={parsedReply.parentEventId}</p>
+                )}
+              </div>
+            )}
 
             {repost ? (
               <RepostBody event={event} className="mt-4" />

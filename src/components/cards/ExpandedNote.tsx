@@ -316,7 +316,7 @@ export function ExpandedNote({ event, profile, onClose }: ExpandedNoteProps) {
                       />
                     )}
                     {attachments.length > 0 && (
-                      <NoteMediaAttachments attachments={attachments} className="mt-5" />
+                      <NoteMediaAttachments attachments={attachments} className="mt-5" isSensitive={contentWarning !== null} sensitiveReason={contentWarning?.reason ?? null} />
                     )}
                     <QuotePreviewList event={event} className="mt-5" compact />
                   </>

@@ -75,8 +75,8 @@ export function evaluateMediaModerationScores(
   scores: MediaModerationScores,
   models: { nsfwModel: string | null; violenceModel: string | null },
 ): MediaModerationDecision {
-  const isExplicitAdultContent = scores.nsfw >= 0.96
-  const isGraphicViolence = scores.violence >= 0.97
+  const isExplicitAdultContent = scores.nsfw >= 0.85
+  const isGraphicViolence = scores.violence >= 0.90
 
   let reason: MediaModerationDecision['reason'] = null
   if (isExplicitAdultContent) {

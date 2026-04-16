@@ -10,7 +10,28 @@ import { UserStatusBody } from '@/components/nostr/UserStatusBody'
 import { BlossomServerManager } from '@/components/blossom/BlossomServerManager'
 import { getFeedResumeEnabled, setFeedResumeEnabled } from '@/lib/feed/resumeSettings'
 import { getFeedInlineMediaAutoplayEnabled, setFeedInlineMediaAutoplayEnabled } from '@/lib/ui/zenSettings'
+import {
+  MUSIC_PRESENCE_SETTINGS_UPDATED_EVENT,
+  getMusicPresenceAutopublishEnabled,
+  setMusicPresenceAutopublishEnabled,
+} from '@/lib/nostr/musicPresence'
 import { getNDK } from '@/lib/nostr/ndk'
+import { clearMusicStatus } from '@/lib/nostr/status'
+import {
+  getSpotifyClientId,
+  setSpotifyClientId,
+  getSpotifyTokens,
+  clearSpotifyTokens,
+  initiateSpotifyAuth,
+  handleSpotifyCallback,
+} from '@/lib/music/spotifyAuth'
+import {
+  isAppleMusicConfigured,
+  getAppleMusicDeveloperTokenStatus,
+  getAppleMusicUserToken,
+  authorizeAppleMusic,
+  unauthorizeAppleMusic,
+} from '@/lib/music/appleMusicAuth'
 import { withRetry } from '@/lib/retry'
 import { sanitizeName, sanitizeText } from '@/lib/security/sanitize'
 import { checkSmall100Health } from '@/lib/translation/engines/small100'
@@ -26,6 +47,18 @@ export default function SettingsPage() {
   const tagFeedScopeId = currentUser?.pubkey ?? 'anon'
   const savedTagFeeds = useSavedTagFeeds(tagFeedScopeId)
   const [clearingStatus, setClearingStatus] = useState(false)
+  const [musicAutoPublishEnabled, setMusicAutoPublishEnabledState] = useState(false)
+  const [spotifyConnected, setSpotifyConnected] = useState(() => getSpotifyTokens() !== null)
+  const [spotifyClientIdDraft, setSpotifyClientIdDraft] = useState(() => getSpotifyClientId())
+  const [spotifyConnecting, setSpotifyConnecting] = useState(false)
+  const [appleMusicConnected, setAppleMusicConnected] = useState(() => getAppleMusicUserToken() !== null)
+  const [appleMusicConnecting, setAppleMusicConnecting] = useState(false)
+  const [musicServicesError, setMusicServicesError] = useState<string | null>(null)
+  const appleMusicConfigured = isAppleMusicConfigured()
+  const appleMusicDeveloperTokenStatus = getAppleMusicDeveloperTokenStatus()
+  const appleMusicConfigurationIssue = appleMusicDeveloperTokenStatus.valid
+    ? null
+    : appleMusicDeveloperTokenStatus.reason
   const [resumeFeedPosition, setResumeFeedPosition] = useState(true)
   const [feedInlineAutoplayEnabled, setFeedInlineAutoplayEnabledState] = useState(true)
   const [displayNameDraft, setDisplayNameDraft] = useState('')
@@ -48,7 +81,56 @@ export default function SettingsPage() {
   useEffect(() => {
     setResumeFeedPosition(getFeedResumeEnabled(currentUser?.pubkey ?? 'anon'))
     setFeedInlineAutoplayEnabledState(getFeedInlineMediaAutoplayEnabled(currentUser?.pubkey ?? 'anon'))
+    setMusicAutoPublishEnabledState(getMusicPresenceAutopublishEnabled())
   }, [currentUser?.pubkey])
+
+  useEffect(() => {
+    const refreshMusicPresencePreference = () => {
+      setMusicAutoPublishEnabledState(getMusicPresenceAutopublishEnabled())
+    }
+
+    window.addEventListener(MUSIC_PRESENCE_SETTINGS_UPDATED_EVENT, refreshMusicPresencePreference)
+    window.addEventListener('storage', refreshMusicPresencePreference)
+    return () => {
+      window.removeEventListener(MUSIC_PRESENCE_SETTINGS_UPDATED_EVENT, refreshMusicPresencePreference)
+      window.removeEventListener('storage', refreshMusicPresencePreference)
+    }
+  }, [])
+
+  // Handle Spotify OAuth PKCE callback — Spotify redirects back here with ?code=&state=
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
+    const state = params.get('state')
+    const authError = params.get('error')
+    if (authError) {
+      setMusicServicesError('Spotify sign-in was canceled or denied. Please try again.')
+      navigate('/settings', { replace: true })
+      return
+    }
+    if (!code || !state) return
+
+    const redirectUri = window.location.origin + '/settings'
+    setSpotifyConnecting(true)
+    setMusicServicesError(null)
+
+    handleSpotifyCallback(code, state, redirectUri)
+      .then(success => {
+        setSpotifyConnected(success)
+        if (!success) {
+          setMusicServicesError('Spotify sign-in failed. Verify your Client ID and Redirect URI, then try again.')
+        }
+      })
+      .catch(() => {
+        setSpotifyConnected(false)
+        setMusicServicesError('Spotify sign-in failed due to a network or authorization error.')
+      })
+      .finally(() => {
+        setSpotifyConnecting(false)
+        navigate('/settings', { replace: true })
+      })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (location.hash) {
@@ -165,12 +247,7 @@ export default function SettingsPage() {
     if (!currentUser?.pubkey) return
     setClearingStatus(true)
     try {
-      const ndk = getNDK()
-      const event = new NDKEvent(ndk)
-      event.kind = 30315
-      event.tags = [['d', 'music']]
-      event.content = '' // Empty content clears the status
-      await withRetry(() => event.publish(), { maxAttempts: 3 })
+      await clearMusicStatus()
     } catch (e) {
       console.error('Failed to clear music status', e)
       alert('Failed to clear status. Please try again.')
@@ -219,6 +296,66 @@ export default function SettingsPage() {
     setBioDraft(value)
     setDisplayNameSaved(false)
     setDisplayNameError(null)
+  }
+
+  const handleMusicAutoPublishToggle = () => {
+    const next = !musicAutoPublishEnabled
+    setMusicAutoPublishEnabledState(next)
+    setMusicPresenceAutopublishEnabled(next)
+  }
+
+  const handleSpotifyConnect = async () => {
+    setMusicServicesError(null)
+    const clientId = (import.meta.env.VITE_SPOTIFY_CLIENT_ID as string | undefined)?.trim()
+      || spotifyClientIdDraft
+    if (!clientId) {
+      setMusicServicesError('Enter a valid Spotify Client ID before connecting.')
+      return
+    }
+    if (!import.meta.env.VITE_SPOTIFY_CLIENT_ID && spotifyClientIdDraft) {
+      setSpotifyClientId(spotifyClientIdDraft)
+    }
+    const redirectUri = window.location.origin + '/settings'
+    setSpotifyConnecting(true)
+    try {
+      await initiateSpotifyAuth(clientId, redirectUri)
+      // Page navigates away to Spotify — no further action needed here.
+    } catch {
+      setMusicServicesError('Could not start Spotify OAuth. Confirm configuration and try again.')
+      setSpotifyConnecting(false)
+    }
+  }
+
+  const handleSpotifyDisconnect = () => {
+    setMusicServicesError(null)
+    clearSpotifyTokens()
+    setSpotifyConnected(false)
+  }
+
+  const handleAppleMusicConnect = async () => {
+    setMusicServicesError(null)
+    setAppleMusicConnecting(true)
+    try {
+      const token = await authorizeAppleMusic()
+      setAppleMusicConnected(token !== null)
+      if (token === null) {
+        setMusicServicesError('Apple Music authorization was not completed.')
+      }
+    } catch {
+      setMusicServicesError('Apple Music connection failed. Please retry.')
+    } finally {
+      setAppleMusicConnecting(false)
+    }
+  }
+
+  const handleAppleMusicDisconnect = async () => {
+    setMusicServicesError(null)
+    try {
+      await unauthorizeAppleMusic()
+      setAppleMusicConnected(false)
+    } catch {
+      setMusicServicesError('Apple Music disconnect failed. Please retry.')
+    }
   }
 
   return (
@@ -338,6 +475,34 @@ export default function SettingsPage() {
         <section id="music-status">
           <h2 className="section-kicker px-1 mb-3">Music Status</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated">
+            <label className="mb-4 flex items-start gap-3">
+              <div className="mt-0.5 flex-1">
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
+                  Auto-publish now playing (NIP-38)
+                </p>
+                <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
+                  When enabled, Nostr Paper publishes your music status from browser Media Session metadata while audio is playing.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={musicAutoPublishEnabled}
+                onClick={handleMusicAutoPublishToggle}
+                className="shrink-0 mt-0.5 w-11 h-6 rounded-full transition-colors duration-200"
+                style={{
+                  backgroundColor: musicAutoPublishEnabled
+                    ? 'rgb(var(--color-system-green))'
+                    : 'rgb(var(--color-fill-secondary) / 0.3)',
+                }}
+              >
+                <span
+                  className="block w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200"
+                  style={{ transform: `translateX(${musicAutoPublishEnabled ? 22 : 2}px)` }}
+                />
+              </button>
+            </label>
+
             {musicStatus ? (
               <div className="space-y-4">
                 <UserStatusBody event={musicStatus.event} />
@@ -355,6 +520,149 @@ export default function SettingsPage() {
                 No active music status. Listening activity from compatible apps will appear here.
               </p>
             )}
+          </div>
+        </section>
+
+        {/* Connected Music Services Section */}
+        <section id="music-services">
+          <h2 className="section-kicker px-1 mb-3">Connected Music Services</h2>
+          <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-6">
+
+            {/* Browser Auto-detect */}
+            <div className="flex items-start gap-3">
+              <div className="flex-1">
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">Browser Auto-detect</p>
+                <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
+                  Passively reads what&apos;s playing via the Web Media Session API — works with Spotify Web, Apple Music, YouTube, and more with no sign-in required.
+                </p>
+              </div>
+              <span className="mt-0.5 shrink-0 rounded-full bg-[rgb(var(--color-system-green)/0.15)] px-2.5 py-0.5 text-[12px] font-medium text-[rgb(var(--color-system-green))]">
+                Always on
+              </span>
+            </div>
+
+            <div className="h-px bg-[rgb(var(--color-fill)/0.1)]" />
+
+            {/* Spotify */}
+            <div className="space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="flex-1">
+                  <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">Spotify</p>
+                  <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
+                    Shares what&apos;s playing across all your Spotify clients — desktop, mobile, and web. Uses OAuth 2.0 PKCE; no password is stored.
+                  </p>
+                </div>
+                {spotifyConnected && (
+                  <span className="mt-0.5 shrink-0 rounded-full bg-[rgb(var(--color-system-green)/0.15)] px-2.5 py-0.5 text-[12px] font-medium text-[rgb(var(--color-system-green))]">
+                    Connected
+                  </span>
+                )}
+              </div>
+
+              {!spotifyConnected ? (
+                <div className="space-y-2">
+                  {!import.meta.env.VITE_SPOTIFY_CLIENT_ID && (
+                    <div>
+                      <label className="block text-[13px] font-medium text-[rgb(var(--color-label-secondary))] mb-1">
+                        Spotify Client ID
+                      </label>
+                      <input
+                        type="text"
+                        value={spotifyClientIdDraft}
+                        onChange={e => setSpotifyClientIdDraft(e.target.value.trim())}
+                        placeholder="Paste your Spotify app Client ID"
+                        className="w-full rounded-[10px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg-secondary))] px-3 py-2 text-[14px] text-[rgb(var(--color-label))] outline-none focus:ring-2 focus:ring-[rgb(var(--color-system-blue)/0.4)]"
+                      />
+                      <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">
+                        Create a free app at{' '}
+                        <a
+                          href="https://developer.spotify.com/dashboard"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline"
+                        >
+                          developer.spotify.com/dashboard
+                        </a>
+                        {' '}and add <code>{window.location.origin}/settings</code> as a Redirect URI.
+                      </p>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => { void handleSpotifyConnect() }}
+                    disabled={spotifyConnecting || (!import.meta.env.VITE_SPOTIFY_CLIENT_ID && !spotifyClientIdDraft)}
+                    className="rounded-[14px] bg-[rgb(var(--color-system-green))] px-5 py-2.5 text-[14px] font-medium text-white disabled:opacity-40"
+                  >
+                    {spotifyConnecting ? 'Connecting…' : 'Connect Spotify'}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleSpotifyDisconnect}
+                  className="rounded-[14px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] px-5 py-2.5 text-[14px] font-medium text-[rgb(var(--color-system-red))]"
+                >
+                  Disconnect Spotify
+                </button>
+              )}
+            </div>
+
+            {musicServicesError && (
+              <p className="text-[13px] text-[rgb(var(--color-system-red))]">
+                {musicServicesError}
+              </p>
+            )}
+
+            <div className="h-px bg-[rgb(var(--color-fill)/0.1)]" />
+
+            {/* Apple Music */}
+            <div className="space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="flex-1">
+                  <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">Apple Music</p>
+                  <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
+                    {appleMusicConfigured
+                      ? 'Connect via MusicKit JS. Note: this reads music playing within this app only. For music.apple.com playback in another tab, Browser Auto-detect handles that automatically.'
+                      : appleMusicConfigurationIssue === 'expired'
+                        ? 'Apple Music developer token is expired. Rotate VITE_APPLE_MUSIC_DEVELOPER_TOKEN to re-enable sign-in.'
+                        : appleMusicConfigurationIssue === 'invalid-format'
+                          ? 'Apple Music developer token is malformed. Set a valid MusicKit JWT in VITE_APPLE_MUSIC_DEVELOPER_TOKEN.'
+                          : 'Requires a MusicKit developer token set by the app operator (VITE_APPLE_MUSIC_DEVELOPER_TOKEN). Self-hosted deployments can generate one from the Apple Developer portal.'}
+                  </p>
+                </div>
+                {appleMusicConnected && (
+                  <span className="mt-0.5 shrink-0 rounded-full bg-[rgb(var(--color-system-green)/0.15)] px-2.5 py-0.5 text-[12px] font-medium text-[rgb(var(--color-system-green))]">
+                    Connected
+                  </span>
+                )}
+              </div>
+
+              {appleMusicConfigured ? (
+                !appleMusicConnected ? (
+                  <button
+                    type="button"
+                    onClick={() => { void handleAppleMusicConnect() }}
+                    disabled={appleMusicConnecting}
+                    className="rounded-[14px] bg-[rgb(var(--color-label))] px-5 py-2.5 text-[14px] font-medium text-[rgb(var(--color-bg))] disabled:opacity-40"
+                  >
+                    {appleMusicConnecting ? 'Connecting…' : 'Connect Apple Music'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { void handleAppleMusicDisconnect() }}
+                    className="rounded-[14px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] px-5 py-2.5 text-[14px] font-medium text-[rgb(var(--color-system-red))]"
+                  >
+                    Disconnect Apple Music
+                  </button>
+                )
+              ) : (
+                <span className="inline-block rounded-full bg-[rgb(var(--color-fill-secondary)/0.2)] px-2.5 py-0.5 text-[12px] text-[rgb(var(--color-label-tertiary))]">
+                  Not configured
+                </span>
+              )}
+            </div>
+
           </div>
         </section>
 
@@ -486,6 +794,24 @@ export default function SettingsPage() {
                 </p>
                 <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
                   Review ranking formulas for trending topics, suggested accounts, and follow packs.
+                </p>
+              </div>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-[rgb(var(--color-label-tertiary))]">
+                <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate('/settings/syndication')}
+              className="flex w-full items-center justify-between text-left transition-opacity active:opacity-70"
+            >
+              <div>
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
+                  Syndication Feeds
+                </p>
+                <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
+                  Save and verify RSS, Atom, RDF, JSON Feed, and podcast links.
                 </p>
               </div>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-[rgb(var(--color-label-tertiary))]">

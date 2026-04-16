@@ -6,6 +6,10 @@ import {
   saveDiscoveryControls,
   type DiscoveryControls,
 } from '@/lib/explore/discoveryControls'
+import {
+  getShowSyndicationRankingReasons,
+  setShowSyndicationRankingReasons,
+} from '@/lib/syndication/settings'
 
 function pct(value: number): string {
   return `${Math.round(value * 100)}%`
@@ -70,6 +74,7 @@ function BoostSlider({
 export default function FeedControlsPage() {
   const navigate = useNavigate()
   const [controls, setControls] = useState<DiscoveryControls>(() => loadDiscoveryControls())
+  const [showSyndicationRankingReasons, setShowSyndicationRankingReasonsState] = useState(() => getShowSyndicationRankingReasons())
 
   const updateControls = (updater: (current: DiscoveryControls) => DiscoveryControls) => {
     setControls((current) => saveDiscoveryControls(updater(current)))
@@ -155,6 +160,34 @@ finalScore = baseScore + semanticAffinity * ${controls.followPacks.semanticBoost
             <p className="text-[13px] leading-6 text-[rgb(var(--color-label-secondary))]">
               Changes apply immediately to Explore and are saved on this device.
             </p>
+            <label className="flex items-start gap-3 rounded-[12px] border border-[rgb(var(--color-fill)/0.14)] bg-[rgb(var(--color-bg-secondary))] p-3">
+              <div className="mt-0.5 flex-1">
+                <p className="text-[13px] font-medium text-[rgb(var(--color-label))]">
+                  Syndication: show ranking reasons
+                </p>
+                <p className="mt-1 text-[12px] text-[rgb(var(--color-label-secondary))]">
+                  Opt-in to show why discovered feed results ranked where they did on the Syndication Feeds page.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={showSyndicationRankingReasons}
+                onClick={() => {
+                  const next = !showSyndicationRankingReasons
+                  setShowSyndicationRankingReasonsState(next)
+                  setShowSyndicationRankingReasons(next)
+                }}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors ${showSyndicationRankingReasons
+                  ? 'border-[rgb(var(--color-system-green)/0.5)] bg-[rgb(var(--color-system-green)/0.28)]'
+                  : 'border-[rgb(var(--color-fill)/0.24)] bg-[rgb(var(--color-fill)/0.14)]'
+                }`}
+              >
+                <span
+                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${showSyndicationRankingReasons ? 'translate-x-6' : 'translate-x-1'}`}
+                />
+              </button>
+            </label>
             <button
               type="button"
               onClick={() => setControls(resetDiscoveryControls())}

@@ -47,6 +47,8 @@ import { useSelfThreadIndex } from '@/hooks/useSelfThreadIndex'
 import { useVisibilityOnce } from '@/hooks/useVisibilityOnce'
 import { useEventFilterCheck, useSemanticFiltering, mergeResults } from '@/hooks/useKeywordFilters'
 import { recordMediaUrlFailure, recordMediaUrlSuccess, shouldAttemptMediaUrl } from '@/lib/media/failureBackoff'
+import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
+import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import { buildComposeSearch } from '@/lib/compose'
 import { type ArticleFeedSection } from '@/lib/feed/articleFeeds'
 import { collectRepostCarouselItems } from '@/lib/feed/reposts'
@@ -1158,85 +1160,9 @@ export default function FeedPage() {
           <div className="pb-6 pt-safe">
             <section className="px-1 pt-2">
               {activeSavedTagFeed ? (
-                <div className="space-y-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0 flex-1">
-                      <p className="section-kicker">Saved Feed</p>
-                      <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
-                        Exact hashtags, plain-text mentions, and semantic context around your selected topics.
-                      </p>
-                    </div>
-
-                    {headerActions}
-                  </div>
-
-                  <div className="overflow-hidden rounded-[28px] border border-[rgb(var(--color-fill)/0.1)] bg-[rgb(var(--color-bg-secondary))]">
-                    <div className="relative h-40 overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(var(--color-accent),0.2),_transparent_55%),linear-gradient(180deg,_rgba(var(--color-fill),0.14),_rgba(var(--color-fill),0.05))]">
-                      <FeedHeaderImage
-                        src={activeSavedTagFeed.banner || null}
-                        className="h-full w-full object-cover"
-                      />
-                      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,0.22))]" />
-                    </div>
-
-                    <div className="relative px-4 pb-4">
-                      <div className="-mt-10 flex items-end justify-between gap-3">
-                        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full ring-4 ring-[rgb(var(--color-bg))]">
-                          <FeedHeaderImage
-                            src={activeSavedTagFeed.avatar || null}
-                            alt={`${headerSection.label} avatar`}
-                            className="h-full w-full object-cover"
-                            fallback={(
-                              <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(145deg,rgba(var(--color-accent),0.18),rgba(var(--color-fill),0.12))] text-[rgb(var(--color-label))]">
-                                <span className="text-[28px] font-semibold">
-                                  {(headerSection.label.trim().replace(/^#/, '')[0] ?? 'F').toUpperCase()}
-                                </span>
-                              </div>
-                            )}
-                          />
-                        </div>
-
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
-                            {activeSavedTagFeed.includeTags.length} topic{activeSavedTagFeed.includeTags.length === 1 ? '' : 's'}
-                          </span>
-                          <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
-                            {activeSavedTagFeed.mode === 'all' ? 'All topics' : 'Any topic'}
-                          </span>
-                          {activeSavedTagFeed.profilePubkeys.length > 0 && (
-                            <span className="rounded-full bg-[rgb(var(--color-accent)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
-                              {activeSavedTagFeed.profilePubkeys.length} profile{activeSavedTagFeed.profilePubkeys.length === 1 ? '' : 's'}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="mt-3">
-                        <h1 className="text-[30px] font-semibold leading-[1.02] tracking-[-0.04em] text-[rgb(var(--color-label))]">
-                          <TwemojiText text={headerSection.label} />
-                        </h1>
-                        <p className="mt-2 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
-                          {sectionSummary}
-                        </p>
-                      </div>
-
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        {activeSavedTagFeed.includeTags.slice(0, 4).map((tag) => (
-                          <span
-                            key={`saved-header:${activeSavedTagFeed.id}:${tag}`}
-                            className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label))]"
-                          >
-                            #{tag}
-                          </span>
-                        ))}
-                        {savedFeedTopicOverflow > 0 && (
-                          <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
-                            +{savedFeedTopicOverflow}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1" />
+                  {headerActions}
                 </div>
               ) : (
                 <div className="flex items-start justify-between gap-4">
@@ -1284,6 +1210,78 @@ export default function FeedPage() {
                 onSelect={handleSectionChange}
               />
             </div>
+
+            {activeSavedTagFeed && (
+              <div className="mt-4 px-1">
+                <div className="overflow-hidden rounded-[28px] border border-[rgb(var(--color-fill)/0.1)] bg-[rgb(var(--color-bg-secondary))]">
+                  <div className="relative h-40 overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(var(--color-accent),0.2),_transparent_55%),linear-gradient(180deg,_rgba(var(--color-fill),0.14),_rgba(var(--color-fill),0.05))]">
+                    <FeedHeaderImage
+                      src={activeSavedTagFeed.banner || null}
+                      className="h-full w-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,0.22))]" />
+                  </div>
+
+                  <div className="relative px-4 pb-4">
+                    <div className="-mt-10 flex items-end justify-between gap-3">
+                      <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full ring-4 ring-[rgb(var(--color-bg))]">
+                        <FeedHeaderImage
+                          src={activeSavedTagFeed.avatar || null}
+                          alt={`${headerSection.label} avatar`}
+                          className="h-full w-full object-cover"
+                          fallback={(
+                            <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(145deg,rgba(var(--color-accent),0.18),rgba(var(--color-fill),0.12))] text-[rgb(var(--color-label))]">
+                              <span className="text-[28px] font-semibold">
+                                {(headerSection.label.trim().replace(/^#/, '')[0] ?? 'F').toUpperCase()}
+                              </span>
+                            </div>
+                          )}
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
+                          {activeSavedTagFeed.includeTags.length} topic{activeSavedTagFeed.includeTags.length === 1 ? '' : 's'}
+                        </span>
+                        <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
+                          {activeSavedTagFeed.mode === 'all' ? 'All topics' : 'Any topic'}
+                        </span>
+                        {activeSavedTagFeed.profilePubkeys.length > 0 && (
+                          <span className="rounded-full bg-[rgb(var(--color-accent)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
+                            {activeSavedTagFeed.profilePubkeys.length} profile{activeSavedTagFeed.profilePubkeys.length === 1 ? '' : 's'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-3">
+                      <h1 className="text-[30px] font-semibold leading-[1.02] tracking-[-0.04em] text-[rgb(var(--color-label))]">
+                        <TwemojiText text={headerSection.label} />
+                      </h1>
+                      <p className="mt-2 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
+                        {sectionSummary}
+                      </p>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {activeSavedTagFeed.includeTags.slice(0, 4).map((tag) => (
+                        <span
+                          key={`saved-header:${activeSavedTagFeed.id}:${tag}`}
+                          className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label))]"
+                        >
+                          #{tag}
+                        </span>
+                      ))}
+                      {savedFeedTopicOverflow > 0 && (
+                        <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
+                          +{savedFeedTopicOverflow}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {showArticleFeeds && activeArticleFeed && (
               <div className="mt-4 space-y-3">
@@ -1460,6 +1458,8 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
       >
         {isStoryCard && (
           <RichStoryMedia
+            eventId={event.id}
+            eventCreatedAt={event.created_at}
             isArticle={isArticleStory}
             articleImage={articlePreview}
             video={video}
@@ -1539,6 +1539,8 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
                 className="mt-3"
                 compact
                 interactive
+                isSensitive={contentWarning !== null}
+                sensitiveReason={contentWarning?.reason ?? null}
               />
             )}
             <QuotePreviewList event={event} className="mt-3" compact linked={false} maxItems={1} showHeader={false} />
@@ -1553,6 +1555,8 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
 const MemoSecondaryCard = memo(SecondaryCard)
 
 interface RichStoryMediaProps {
+  eventId: string
+  eventCreatedAt: number
   isArticle: boolean
   articleImage: string | undefined
   video: ParsedVideoEvent | null
@@ -1610,6 +1614,8 @@ function markInlineAutoplaySourcesFailed(
 }
 
 function RichStoryMedia({
+  eventId,
+  eventCreatedAt,
   isArticle,
   articleImage,
   video,
@@ -1622,6 +1628,23 @@ function RichStoryMedia({
 }: RichStoryMediaProps) {
   const enableFeedInlineMedia = import.meta.env.VITE_ENABLE_FEED_INLINE_MEDIA === 'true' && feedInlineAutoplayEnabled
   const [autoplayFailed, setAutoplayFailed] = useState(false)
+
+  // ── Rich-story media moderation ──────────────────────────────
+  // Classify the card image/poster before rendering. failClosed keeps the
+  // placeholder visible during classification instead of flashing content.
+  const richMediaModerationDocument = useMemo(
+    () => buildMediaModerationDocument({
+      id: `${eventId}:rich-story`,
+      kind: isArticle ? 'image' : 'video_preview',
+      url: (articleImage ?? videoPoster) ?? null,
+      updatedAt: eventCreatedAt,
+    }),
+    [eventId, eventCreatedAt, articleImage, videoPoster, isArticle],
+  )
+  const { blocked: richMediaBlocked, loading: richModerationLoading } = useMediaModerationDocument(
+    richMediaModerationDocument,
+    { failClosed: true },
+  )
   const filteredPlaybackSources = useMemo(
     () => (playbackSources ?? []).filter((source) => shouldAttemptMediaUrl(source.url)),
     [playbackSources],
@@ -1687,7 +1710,9 @@ function RichStoryMedia({
     !vimeoId &&
     !peertubeEmbed &&
     !isFeedInlineMediaAutoplayCircuitOpen() &&
-    !autoplayFailed,
+    !autoplayFailed &&
+    !richMediaBlocked &&
+    !richModerationLoading,
   )
   const { ref: mediaRef, visible: mediaVisible } = useVisibilityOnce<HTMLDivElement>({
     rootMargin: '320px 0px',
@@ -1698,7 +1723,14 @@ function RichStoryMedia({
 
   return (
     <div ref={mediaRef} className={`relative mb-4 overflow-hidden rounded-[18px] bg-[rgb(var(--color-surface-secondary))] ${aspectClassName}`}>
-      {enableFeedInlineMedia && mediaVisible && youTubeId ? (
+      {richMediaBlocked || richModerationLoading ? (
+        <div
+          className="h-full w-full"
+          style={{
+            background: 'linear-gradient(135deg, rgba(42, 54, 72, 0.18), rgba(42, 54, 72, 0.04))',
+          }}
+        />
+      ) : enableFeedInlineMedia && mediaVisible && youTubeId ? (
         <iframe
           src={`https://www.youtube-nocookie.com/embed/${youTubeId}?modestbranding=1&playsinline=1&rel=0`}
           className="h-full w-full"
@@ -1756,7 +1788,7 @@ function RichStoryMedia({
             />
           ))}
         </video>
-      ) : imageSrc ? (
+      ) : imageSrc && !richMediaBlocked && !richModerationLoading ? (
         <SensitiveImage
           src={imageSrc}
           className="h-full w-full"

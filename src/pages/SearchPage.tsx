@@ -34,6 +34,7 @@ import { filterNsfwTaggedEvents } from '@/lib/moderation/nsfwTags'
 import { formatNip05Identifier } from '@/lib/nostr/nip05'
 import { parsePollEvent } from '@/lib/nostr/polls'
 import { parseSearchQuery, warmSearchRelays } from '@/lib/nostr/search'
+import { extractEventHashtags } from '@/lib/feed/tagTimeline'
 import { initSemanticSearch } from '@/lib/semantic/client'
 import { parseCommentEvent, parseThreadEvent } from '@/lib/nostr/thread'
 import { sanitizeText } from '@/lib/security/sanitize'
@@ -86,7 +87,12 @@ export default function SearchPage() {
     relayLimit: 40,
   })
 
-  const { isMuted, loading: muteListLoading } = useMuteList()
+  const {
+    isMuted,
+    mutedWords,
+    mutedHashtags,
+    loading: muteListLoading,
+  } = useMuteList()
   const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
   const checkEvent = useEventFilterCheck()
 
@@ -125,10 +131,27 @@ export default function SearchPage() {
   } = useModerationDocuments(profileModerationDocuments)
   const visibleEvents = useMemo(
     () => filterNsfwTaggedEvents(
-      events.filter((event) => !isMuted(event.pubkey) && (!eventModerationIds.has(event.id) || allowedEventIds.has(event.id))),
+      events.filter((event) => {
+        if (isMuted(event.pubkey)) return false
+        if (eventModerationIds.has(event.id) && !allowedEventIds.has(event.id)) return false
+
+        if (mutedWords.size > 0) {
+          const lower = event.content.toLowerCase()
+          for (const word of mutedWords) {
+            if (lower.includes(word)) return false
+          }
+        }
+
+        if (mutedHashtags.size > 0) {
+          const tags = extractEventHashtags(event)
+          if (tags.some((tag) => mutedHashtags.has(tag))) return false
+        }
+
+        return true
+      }),
       hideNsfwTaggedPosts,
     ),
-    [allowedEventIds, eventModerationIds, events, hideNsfwTaggedPosts, isMuted],
+    [allowedEventIds, eventModerationIds, events, hideNsfwTaggedPosts, isMuted, mutedWords, mutedHashtags],
   )
   const semanticFilterResults = useSemanticFiltering(visibleEvents)
   const visibleProfiles = useMemo(

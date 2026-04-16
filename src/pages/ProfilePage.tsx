@@ -13,6 +13,7 @@ import { useProfileModeration } from '@/hooks/useModeration'
 import { useMuteList } from '@/hooks/useMuteList'
 import { usePageHead } from '@/hooks/usePageHead'
 import { useProfile } from '@/hooks/useProfile'
+import { useLivePresence } from '@/hooks/useLivePresence'
 import { useUserStatus } from '@/hooks/useUserStatus'
 import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import { buildProfileMetaTags, buildProfileTitle } from '@/lib/nostr/meta'
@@ -109,6 +110,20 @@ function formatTimestamp(timestamp: number): string {
     hour: 'numeric',
     minute: '2-digit',
   })
+}
+
+function getLivePresenceKindLabel(kind: number): string {
+  if (kind === Kind.LiveActivity) return 'Live Activity'
+  if (kind === Kind.MeetingSpace) return 'Meeting Space'
+  if (kind === Kind.MeetingRoom) return 'Meeting Room'
+  return `Kind ${kind}`
+}
+
+function getLivePresenceStatusLabel(status: 'live' | 'planned' | 'ended' | 'unknown'): string {
+  if (status === 'live') return 'Live'
+  if (status === 'planned') return 'Planned'
+  if (status === 'ended') return 'Ended'
+  return 'Status unknown'
 }
 
 function formatBirthday(
@@ -427,6 +442,9 @@ export default function ProfilePage() {
   } = useProfileModeration(profile)
   const { status: musicStatus, loading: musicStatusLoading } = useUserStatus(pubkey, {
     identifier: 'music',
+    background: true,
+  })
+  const { presence: livePresence, loading: livePresenceLoading } = useLivePresence(pubkey, {
     background: true,
   })
 
@@ -1155,6 +1173,52 @@ export default function ProfilePage() {
                         : isSelf
                           ? 'No active music status. Publish one from Settings.'
                           : 'No active music status.'}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {(livePresenceLoading || livePresence) && (
+                <div className="mt-4 rounded-[20px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+                        NIP-53 Live Presence
+                      </p>
+                      <p className="mt-1 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
+                        Active live activity and meeting presence for this profile.
+                      </p>
+                    </div>
+                  </div>
+
+                  {livePresence ? (
+                    <div className="mt-4 space-y-3">
+                      <div className="flex flex-wrap items-center gap-2 text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+                        <span>{getLivePresenceKindLabel(livePresence.kind)}</span>
+                        <span>{getLivePresenceStatusLabel(livePresence.status)}</span>
+                        <span>{formatTimestamp(livePresence.createdAt)}</span>
+                      </div>
+
+                      {(livePresence.title || livePresence.summary) && (
+                        <p className="text-[15px] leading-7 text-[rgb(var(--color-label))]">
+                          {livePresence.title ?? livePresence.summary}
+                        </p>
+                      )}
+
+                      {livePresence.streamingUrl && (
+                        <a
+                          href={livePresence.streamingUrl}
+                          target="_blank"
+                          rel="noopener noreferrer nofollow"
+                          className="inline-flex items-center gap-2 rounded-full bg-[rgb(var(--color-fill)/0.09)] px-3 py-1.5 text-[13px] font-medium text-[rgb(var(--color-label))]"
+                        >
+                          Open stream
+                        </a>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="mt-4 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
+                      {livePresenceLoading ? 'Checking live presence…' : 'No active live presence.'}
                     </p>
                   )}
                 </div>

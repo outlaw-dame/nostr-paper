@@ -35,9 +35,10 @@ import { getReactionLabel, parseReactionEvent } from '@/lib/nostr/reaction'
 import { getReportPreviewText, parseReportEvent } from '@/lib/nostr/report'
 import { getQuotePostBody, getRepostPreviewText, parseQuoteTags, parseRepostEvent } from '@/lib/nostr/repost'
 import { getUserStatusExternalHref, getUserStatusLabel, parseUserStatusEvent } from '@/lib/nostr/status'
-import { parseCommentEvent, parseThreadEvent } from '@/lib/nostr/thread'
+import { parseCommentEvent, parseNumberedThreadMarker, parseTextNoteReply, parseThreadEvent } from '@/lib/nostr/thread'
 import { parseVideoEvent } from '@/lib/nostr/video'
 import { parseHighlightEvent } from '@/lib/nostr/highlight'
+import { isThreadInspectorEnabled } from '@/lib/runtime/debugSettings'
 import type { NostrEvent } from '@/types'
 
 interface EventPreviewCardProps {
@@ -385,6 +386,7 @@ export function EventPreviewCard({
   linked = true,
 }: EventPreviewCardProps) {
   const threadIndex = useSelfThreadIndex(event)
+  const threadInspectorEnabled = isThreadInspectorEnabled()
   const { blocked, loading, decision } = useEventModeration(event)
   const { profile } = useProfile(event.pubkey, { background: false })
   const blockedByTagr = blocked && (decision?.reason?.startsWith('tagr:') ?? false)
@@ -408,6 +410,8 @@ export function EventPreviewCard({
 
   const kindLabel = getKindLabel(event)
   const href = getHref(event)
+  const numberedMarker = parseNumberedThreadMarker(event.content)
+  const parsedReply = parseTextNoteReply(event)
 
   const content = (
     <div className={`rounded-[18px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg-secondary))] p-3 ${className}`}>
@@ -424,6 +428,18 @@ export function EventPreviewCard({
       )}
 
       <ThreadIndexBadge threadIndex={threadIndex} className="mt-3" />
+
+      {threadInspectorEnabled && (
+        <div className="mt-3 rounded-[12px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-2.5 py-2 font-mono text-[11px] leading-5 text-[rgb(var(--color-label-secondary))]">
+          <p>kind={event.kind} id={event.id.slice(0, 12)}... sig={event.sig.slice(0, 12)}...</p>
+          {numberedMarker && (
+            <p>marker={numberedMarker.index}/{numberedMarker.total}</p>
+          )}
+          {parsedReply?.rootEventId && (
+            <p>root={parsedReply.rootEventId.slice(0, 12)}... parent={parsedReply.parentEventId.slice(0, 12)}...</p>
+          )}
+        </div>
+      )}
 
       <PreviewBody event={event} compact={compact} interactive={!linked} />
     </div>
