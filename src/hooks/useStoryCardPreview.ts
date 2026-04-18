@@ -78,6 +78,9 @@ export function useStoryCardPreview(
     storyMeta?.description,
   )
   const storyAuthor = storyMeta?.author
+  const storyNostrCreator = storyMeta?.nostrCreator
+  const storyNostrNip05 = storyMeta?.nostrNip05
+  const storyHostname = getStoryHostname(storyMeta?.url ?? storySourceUrl)
   const storySiteName = storyMeta?.siteName ?? getStoryHostname(storyMeta?.url ?? storySourceUrl)
   const previewText = pickStorySummary(
     (article?.summary ?? video?.summary ?? thread?.content) ?? (
@@ -116,6 +119,9 @@ export function useStoryCardPreview(
     storyTitle,
     storySummary,
     storyAuthor,
+    storyNostrCreator,
+    storyNostrNip05,
+    storyHostname,
     storySiteName,
     previewText,
   }

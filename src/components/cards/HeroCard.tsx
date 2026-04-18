@@ -22,6 +22,7 @@ import { useProfile } from '@/hooks/useProfile'
 import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
 import { useStoryCardPreview } from '@/hooks/useStoryCardPreview'
+import { NostrCreatorAttribution } from '@/components/links/NostrCreatorAttribution'
 import { SensitiveImage } from '@/components/media/SensitiveImage'
 import { EventMetricsRow } from '@/components/nostr/EventMetricsRow'
 import { AuthorRow } from '@/components/profile/AuthorRow'
@@ -81,6 +82,9 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
     isArticleStory,
     isVideoStory,
     storyAuthor,
+    storyNostrCreator,
+    storyNostrNip05,
+    storyHostname,
     storySiteName,
     storyTitle,
     storySummary,
@@ -339,6 +343,16 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
                     ? `By ${storyAuthor}`
                     : storySiteName}
               </p>
+            )}
+
+            {storyNostrCreator && (
+              <NostrCreatorAttribution
+                nostrCreator={storyNostrCreator}
+                nostrNip05={storyNostrNip05}
+                pageHostname={storyHostname}
+                tone="inverse"
+                className="mt-2 rounded-[12px] bg-white/8"
+              />
             )}
 
             {displayTitle && (

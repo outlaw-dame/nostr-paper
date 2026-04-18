@@ -4,9 +4,13 @@ import { resolveTagrModerationDecisions } from '@/lib/moderation/tagr'
 import {
   buildEventModerationDocument,
   buildProfileModerationDocument,
+  buildSyndicationEntryModerationDocument,
+  buildSyndicationFeedModerationDocument,
   getModerationDocumentCacheKey,
 } from '@/lib/moderation/content'
+import { useMuteList } from '@/hooks/useMuteList'
 import type { ModerationDecision, ModerationDocument, NostrEvent, Profile } from '@/types'
+import type { SyndicationEntry, SyndicationFeed } from '@/lib/syndication/types'
 
 // Bounded in-memory LRU cache — evict oldest when over the limit so the
 // cache doesn't grow unbounded across a long session with thousands of events.
@@ -230,4 +234,61 @@ export function useProfileModeration(
     decision,
     error: moderation.error,
   }
+}
+
+export function useSyndicationFeedModeration(feed: SyndicationFeed | null): {
+  feedBlocked: boolean
+  filteredItems: SyndicationEntry[]
+  loading: boolean
+} {
+  const feedSourceUrl = feed?.feedUrl ?? feed?.sourceUrl
+
+  const feedDoc = useMemo(
+    () => (feed ? buildSyndicationFeedModerationDocument(feed) : null),
+    [feed],
+  )
+
+  const itemDocs = useMemo(
+    () => feed
+      ? feed.items
+          .map((item) => buildSyndicationEntryModerationDocument(item, feedSourceUrl))
+          .filter((doc): doc is ModerationDocument => doc !== null)
+      : [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [feed, feedSourceUrl],
+  )
+
+  const allDocs = useMemo(
+    () => [...(feedDoc ? [feedDoc] : []), ...itemDocs],
+    [feedDoc, itemDocs],
+  )
+
+  const { blockedIds, loading } = useModerationDocuments(allDocs)
+  const { mutedWords, mutedHashtags } = useMuteList()
+
+  const feedBlocked = feedDoc !== null && blockedIds.has(feedDoc.id)
+
+  const filteredItems = useMemo(() => {
+    if (!feed) return []
+    return feed.items.filter((item, index) => {
+      const doc = itemDocs[index]
+      if (doc && blockedIds.has(doc.id)) return false
+
+      if (mutedWords.size > 0) {
+        const text = [item.title, item.summary, item.contentText]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+        for (const word of mutedWords) {
+          if (text.includes(word)) return false
+        }
+      }
+
+      if (mutedHashtags.size > 0 && item.tags.some((t) => mutedHashtags.has(t))) return false
+
+      return true
+    })
+  }, [feed, itemDocs, blockedIds, mutedWords, mutedHashtags])
+
+  return { feedBlocked, filteredItems, loading }
 }

@@ -1,4 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import { MemoryRouter } from 'react-router-dom'
+import { npubEncode } from 'nostr-tools/nip19'
 import { describe, expect, it, vi } from 'vitest'
 import { HeroCard } from './HeroCard'
 import type { NostrEvent } from '@/types'
@@ -47,6 +49,7 @@ vi.mock('@/hooks/useProfile', () => ({
     profile: {
       name: 'Paper Author',
       display_name: 'Paper Author',
+      picture: 'https://example.com/paper-author.jpg',
     },
   }),
 }))
@@ -71,6 +74,8 @@ vi.mock('@/hooks/useLinkPreview', () => ({
           image: 'https://techcrunch.com/hero.jpg',
           siteName: 'techcrunch.com',
           author: 'Sara Perez',
+          nostrCreator: npubEncode('d'.repeat(64)),
+          nostrNip05: 'sara@techcrunch.com',
         },
         loading: false,
       }
@@ -85,6 +90,8 @@ vi.mock('@/hooks/useLinkPreview', () => ({
           image: 'https://img.youtube.com/demo.jpg',
           siteName: 'youtube.com',
           author: 'Studio Channel',
+          nostrCreator: npubEncode('e'.repeat(64)),
+          nostrNip05: 'studio@youtube.com',
         },
         loading: false,
       }
@@ -159,10 +166,17 @@ describe('HeroCard', () => {
       content: 'https://techcrunch.com/example-story',
     })
 
-    const html = renderToStaticMarkup(<HeroCard event={event} />)
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <HeroCard event={event} />
+      </MemoryRouter>,
+    )
 
     expect(html).toContain('TechCrunch Funding Round')
     expect(html).toContain('By Sara Perez • techcrunch.com')
+    expect(html).toContain('Paper Author')
+    expect(html).toContain('sara@techcrunch.com')
+    expect(html).toContain('on Nostr')
     expect(html).toContain('A concise OG description for the funding round.')
     expect(html).toContain('src="https://techcrunch.com/hero.jpg"')
   })
@@ -184,11 +198,17 @@ describe('HeroCard', () => {
       ],
     })
 
-    const html = renderToStaticMarkup(<HeroCard event={event} />)
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <HeroCard event={event} />
+      </MemoryRouter>,
+    )
 
     expect(html).toContain('<video')
     expect(html).toContain('src="https://video.example.com/demo.mp4"')
     expect(html).toContain('poster="https://video.example.com/poster.jpg"')
     expect(html).toContain('By Studio Channel • youtube.com')
+    expect(html).toContain('studio@youtube.com')
+    expect(html).toContain('on Nostr')
   })
 })

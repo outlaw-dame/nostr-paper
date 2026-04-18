@@ -571,6 +571,12 @@ export interface SemanticMatch {
   score: number
 }
 
+export interface TopicAssignment {
+  id: string
+  topicId: string
+  keywords: string[]
+}
+
 export type SemanticWorkerRequest =
   | { id: number; type: 'init' }
   | {
@@ -582,6 +588,13 @@ export type SemanticWorkerRequest =
         limit: number
       }
     }
+  | {
+      id: number
+      type: 'cluster'
+      payload: {
+        documents: SemanticDocument[]
+      }
+    }
   | { id: number; type: 'close' }
 
 export type SemanticWorkerResponse =
@@ -589,6 +602,7 @@ export type SemanticWorkerResponse =
       id: number
       result: {
         matches?: SemanticMatch[]
+        topics?: TopicAssignment[]
         model?: string
       }
     }
@@ -613,7 +627,7 @@ export interface ModerationScores {
 
 export interface ModerationDocument {
   id: string
-  kind: 'event' | 'profile'
+  kind: 'event' | 'profile' | 'syndication-entry'
   text: string
   updatedAt: number
 }

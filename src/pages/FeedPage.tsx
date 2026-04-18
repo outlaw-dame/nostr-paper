@@ -17,6 +17,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useApp } from '@/contexts/app-context'
 import { useNostrFeed } from '@/hooks/useNostrFeed'
 import { HeroCard } from '@/components/cards/HeroCard'
+import { NostrCreatorAttribution } from '@/components/links/NostrCreatorAttribution'
 import { RepostCarousel } from '@/components/feed/RepostCarousel'
 import { StoryRail } from '@/components/feed/StoryRail'
 import { SectionRail } from '@/components/feed/SectionRail'
@@ -1418,6 +1419,9 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
     videoPoster,
     videoPlaybackPlan,
     storyAuthor,
+    storyNostrCreator,
+    storyNostrNip05,
+    storyHostname,
     storySiteName,
     storySummary,
     storyTitle,
@@ -1510,6 +1514,14 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
                 ? `By ${storyAuthor}`
                 : storySiteName}
           </p>
+        )}
+        {!poll && isStoryCard && storyNostrCreator && (
+          <NostrCreatorAttribution
+            nostrCreator={storyNostrCreator}
+            nostrNip05={storyNostrNip05}
+            pageHostname={storyHostname}
+            className="mt-2 rounded-[14px] bg-[rgb(var(--color-fill)/0.03)]"
+          />
         )}
         {!poll && storySummary ? (
           <>
