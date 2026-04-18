@@ -20,6 +20,8 @@ const DEBOUNCE_MS = 800
 const MIN_DISPLAY_SIZE = 1
 /** How many events to send for clustering at once (avoids huge IDB writes). */
 const MAX_CLUSTER_BATCH = 200
+/** If semantic clustering takes longer than this, fall back to lexical. */
+const SEMANTIC_TIMEOUT_MS = 4000
 
 const FALLBACK_STOP_WORDS = new Set([
   'the', 'a', 'an', 'and', 'or', 'is', 'are', 'to', 'of', 'in', 'on', 'for',
@@ -126,7 +128,10 @@ export function useTopicClusters(
       if (docs.length === 0) return
 
       setClustering(true)
-      clusterSemanticDocuments(docs, controller.signal)
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), SEMANTIC_TIMEOUT_MS),
+      )
+      Promise.race([clusterSemanticDocuments(docs, controller.signal), timeout])
         .then(results => {
           if (controller.signal.aborted) return
           if (results.length > 0) {
