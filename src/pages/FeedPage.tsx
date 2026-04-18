@@ -21,6 +21,7 @@ import { NostrCreatorAttribution } from '@/components/links/NostrCreatorAttribut
 import { RepostCarousel } from '@/components/feed/RepostCarousel'
 import { StoryRail } from '@/components/feed/StoryRail'
 import { SectionRail } from '@/components/feed/SectionRail'
+import { TopicFilterRail } from '@/components/feed/TopicFilterRail'
 import { FeedSkeleton } from '@/components/feed/FeedSkeleton'
 import { NoteContent } from '@/components/cards/NoteContent'
 import { SensitiveImage } from '@/components/media/SensitiveImage'
@@ -47,6 +48,7 @@ import { useActivityUnread } from '@/hooks/useActivityUnread'
 import { useSelfThreadIndex } from '@/hooks/useSelfThreadIndex'
 import { useVisibilityOnce } from '@/hooks/useVisibilityOnce'
 import { useEventFilterCheck, useSemanticFiltering, mergeResults } from '@/hooks/useKeywordFilters'
+import { useTopicClusters } from '@/hooks/useTopicClusters'
 import { recordMediaUrlFailure, recordMediaUrlSuccess, shouldAttemptMediaUrl } from '@/lib/media/failureBackoff'
 import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
 import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
@@ -754,8 +756,29 @@ export default function FeedPage() {
 
     return reducedEvents.length >= MIN_PRIMARY_FEED_ITEMS ? reducedEvents : visibleEvents
   }, [featuredRepostTargetIds, repostFeatureEnabled, visibleEvents])
-  const heroEvent = curatedFeedEvents[0] ?? null
-  const secondaryEvents = curatedFeedEvents.slice(1)
+  // ── Topic clustering ────────────────────────────────────────────────────
+  // Only run on text-heavy sections where topic grouping is meaningful.
+  const topicClustersEnabled = (
+    activeSection.id === 'feed' ||
+    activeSection.id === 'notes'
+  )
+  const {
+    topics,
+    topicFilter,
+    setTopicFilter,
+    eventPassesFilter,
+    clustering,
+  } = useTopicClusters(visibleEvents, topicClustersEnabled)
+
+  const topicFilteredEvents = useMemo(
+    () => topicFilter === null
+      ? curatedFeedEvents
+      : curatedFeedEvents.filter(e => eventPassesFilter(e.id)),
+    [topicFilter, curatedFeedEvents, eventPassesFilter],
+  )
+
+  const heroEvent = topicFilteredEvents[0] ?? null
+  const secondaryEvents = topicFilteredEvents.slice(1)
   const feedSurfaceLoading = loading || moderationLoading
   const feedLoading = loading || semanticTimelineLoading || moderationLoading || muteListLoading
 
@@ -991,10 +1014,11 @@ export default function FeedPage() {
     }
 
     setActiveSectionId(id)
+    setTopicFilter(null)
     if (routeSection) {
       navigate('/', { replace: true })
     }
-  }, [location.pathname, location.search, navigate, railSections, routeSection])
+  }, [location.pathname, location.search, navigate, railSections, routeSection, setTopicFilter])
 
   useEffect(() => {
     const scopeId = currentUser?.pubkey ?? 'anon'
@@ -1209,6 +1233,12 @@ export default function FeedPage() {
                 sections={railSections}
                 activeId={activeSection.id}
                 onSelect={handleSectionChange}
+              />
+              <TopicFilterRail
+                topics={topics}
+                activeTopicId={topicFilter}
+                onSelect={setTopicFilter}
+                clustering={clustering}
               />
             </div>
 

@@ -65,7 +65,7 @@ const MAX_CENTROIDS = 50
 // Centroids below this size are pruned when capacity is reached.
 const MIN_CLUSTER_SIZE = 3
 // Minimum cluster size before c-TF-IDF keyword extraction runs.
-const KEYWORD_THRESHOLD = 5
+const KEYWORD_THRESHOLD = 2
 // IDB key under which the centroid array is persisted.
 const CENTROIDS_STORE_KEY = '__centroids__'
 
