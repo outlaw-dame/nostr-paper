@@ -24,7 +24,7 @@ describe('nsfw hashtag moderation helpers', () => {
   })
 
   it('matches expanded NSFW hashtag variants', () => {
-    const variants = ['adult', 'explicit', 'porn', 'pornography', 'hentai', 'lewd', 'nude', 'nudity', 'erotica', 'mature', 'onlyfans']
+    const variants = ['adult', 'explicit', 'porn', 'pornography', 'hentai', 'lewd', 'nude', 'nudity', 'naked', 'erotica', 'mature', 'onlyfans', 'boobs', 'xxx', 'sex', 'sexy', 'topless', 'fetish', 'kink']
     for (const variant of variants) {
       expect(hasNsfwHashtag(makeEvent('a'.repeat(64), [['t', variant]]))).toBe(true)
       expect(hasNsfwHashtag(makeEvent('b'.repeat(64), [['t', variant.toUpperCase()]]))).toBe(true)

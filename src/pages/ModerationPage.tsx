@@ -225,10 +225,10 @@ export default function ModerationPage() {
             <label className="flex items-start gap-3">
               <div className="mt-0.5 flex-1">
                 <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
-                  Hide posts with #nsfw tags
+                  Hide explicit content
                 </p>
                 <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
-                  Automatically hide posts tagged with the exact hashtag #nsfw across feed and search surfaces.
+                  Hide posts tagged with adult hashtags (#nsfw, #nude, #porn, #boobs, and others). On by default.
                 </p>
               </div>
               <button

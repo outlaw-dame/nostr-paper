@@ -13,9 +13,17 @@ const NSFW_HASHTAGS = new Set([
   'lewd',
   'nude',
   'nudity',
+  'naked',
   'erotica',
   'mature',
   'onlyfans',
+  'boobs',
+  'xxx',
+  'sex',
+  'sexy',
+  'topless',
+  'fetish',
+  'kink',
 ])
 
 export function hasNsfwHashtag(event: NostrEvent): boolean {

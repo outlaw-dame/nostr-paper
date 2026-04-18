@@ -15,16 +15,18 @@ function emitUpdated(scopeId?: string | null): void {
 }
 
 export function getHideNsfwTaggedPostsEnabled(scopeId?: string | null): boolean {
-  if (typeof window === 'undefined') return false
+  if (typeof window === 'undefined') return true
   try {
     const raw = window.localStorage.getItem(getStorageKey(scopeId))
-    if (!raw) return false
+    // Default ON: if the user has never changed this setting, hide NSFW content.
+    if (!raw) return true
     const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return true
     const enabled = (parsed as { enabled?: unknown }).enabled
-    return enabled === true
+    // Treat missing key as enabled (forward-compatible with old stored values).
+    return enabled !== false
   } catch {
-    return false
+    return true
   }
 }
 
