@@ -34,9 +34,11 @@ import {
 } from '@/lib/music/appleMusicAuth'
 import { withRetry } from '@/lib/retry'
 import { sanitizeName, sanitizeText } from '@/lib/security/sanitize'
+import { isGemmaAvailable } from '@/lib/gemma/client'
 import { checkSmall100Health } from '@/lib/translation/engines/small100'
 import { getBrowserLanguage } from '@/lib/translation/detect'
 import { loadTranslationConfiguration, TRANSLATION_SETTINGS_UPDATED_EVENT } from '@/lib/translation/storage'
+import { tApp } from '@/lib/i18n/app'
 
 type TranslationHealthTone = 'ok' | 'warn'
 
@@ -214,6 +216,14 @@ export default function SettingsPage() {
             setHealth('Configured', `Opus-MT in-browser. Target: ${configuration.opusMtTargetLanguage}. Browser: ${browserPrimary}.`, 'ok')
             return
           }
+          case 'gemma': {
+            if (!isGemmaAvailable()) {
+              setHealth('Unavailable', `Gemma selected. Requires a configured local model and WebGPU. Browser: ${browserPrimary}.`, 'warn')
+              return
+            }
+            setHealth('Configured', `Gemma on-device. Target: ${configuration.gemmaTargetLanguage}. Browser: ${browserPrimary}.`, 'ok')
+            return
+          }
         }
       } catch {
         if (cancelled) return
@@ -373,7 +383,7 @@ export default function SettingsPage() {
               flex items-center justify-center
               active:opacity-80
             "
-            aria-label="Go back"
+            aria-label={tApp('settingsGoBack')}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
               <path
@@ -386,7 +396,7 @@ export default function SettingsPage() {
             </svg>
           </button>
           <h1 className="text-[20px] font-semibold text-[rgb(var(--color-label))]">
-            Settings
+            {tApp('settingsTitle')}
           </h1>
         </div>
       </div>
@@ -394,7 +404,7 @@ export default function SettingsPage() {
       <div className="space-y-8 pb-10 pt-2">
         {/* Account Section */}
         <section>
-          <h2 className="section-kicker px-1 mb-3">Account</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('settingsAccount')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated">
             {currentUser ? (
               <div className="space-y-4">
@@ -403,7 +413,7 @@ export default function SettingsPage() {
                 </div>
                 <div className="space-y-2">
                   <label className="block text-[13px] font-medium text-[rgb(var(--color-label-secondary))]">
-                    Display Name
+                    {tApp('settingsDisplayName')}
                   </label>
                   <input
                     type="text"
@@ -413,18 +423,18 @@ export default function SettingsPage() {
                       setDisplayNameSaved(false)
                       setDisplayNameError(null)
                     }}
-                    placeholder="How your name appears"
+                    placeholder={tApp('settingsDisplayNamePlaceholder')}
                     className="w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[15px] text-[rgb(var(--color-label))] placeholder:text-[rgb(var(--color-label-tertiary))] outline-none transition-colors focus:border-[rgb(var(--color-accent))]"
                   />
                   <label className="mt-3 block text-[13px] font-medium text-[rgb(var(--color-label-secondary))]">
-                    Bio
+                    {tApp('settingsBio')}
                   </label>
                   <textarea
                     value={bioDraft}
                     onChange={(event) => {
                       handleBioChange(event.target.value)
                     }}
-                    placeholder="Tell people a little about yourself"
+                    placeholder={tApp('settingsBioPlaceholder')}
                     rows={4}
                     className="mt-1 w-full resize-y rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[15px] text-[rgb(var(--color-label))] placeholder:text-[rgb(var(--color-label-tertiary))] outline-none transition-colors focus:border-[rgb(var(--color-accent))]"
                   />
@@ -434,37 +444,37 @@ export default function SettingsPage() {
                     disabled={displayNameSaving}
                     className="w-full rounded-[12px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[14px] font-medium text-[rgb(var(--color-label))] disabled:opacity-50"
                   >
-                    {displayNameSaving ? 'Saving...' : 'Save Profile'}
+                    {displayNameSaving ? tApp('settingsSaving') : tApp('settingsSaveProfile')}
                   </button>
                   {displayNameError && (
                     <p className="text-[13px] text-[rgb(var(--color-system-red))]">{displayNameError}</p>
                   )}
                   {displayNameSaved && !displayNameError && (
-                    <p className="text-[13px] text-[rgb(var(--color-system-green))]">Display name published.</p>
+                    <p className="text-[13px] text-[rgb(var(--color-system-green))]">{tApp('settingsDisplayNamePublished')}</p>
                   )}
                 </div>
                 <p className="text-[13px] text-[rgb(var(--color-label-secondary))] px-1">
-                  You are signed in via NIP-07 extension. Keys remain secure in your wallet.
+                  {tApp('settingsSignedInHint')}
                 </p>
                 <button
                   type="button"
                   onClick={handleLogout}
                   className="w-full rounded-[14px] border border-[rgb(var(--color-system-red)/0.22)] bg-[rgb(var(--color-system-red)/0.08)] px-4 py-3 text-[15px] font-medium text-[rgb(var(--color-system-red))] transition-opacity active:opacity-75"
                 >
-                  Logout
+                  {tApp('settingsLogout')}
                 </button>
               </div>
             ) : (
               <div className="text-center py-4">
                 <p className="text-[15px] text-[rgb(var(--color-label-secondary))]">
-                  You are browsing in read-only mode.
+                  {tApp('settingsReadOnlyMode')}
                 </p>
                 <button
                   type="button"
                   onClick={() => navigate('/onboard')}
                   className="mt-4 rounded-[14px] bg-[rgb(var(--color-label))] px-6 py-2.5 text-[15px] font-medium text-white"
                 >
-                  Sign In
+                  {tApp('settingsSignIn')}
                 </button>
               </div>
             )}
@@ -473,15 +483,15 @@ export default function SettingsPage() {
 
         {/* Music Status Section */}
         <section id="music-status">
-          <h2 className="section-kicker px-1 mb-3">Music Status</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('settingsMusicStatus')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated">
             <label className="mb-4 flex items-start gap-3">
               <div className="mt-0.5 flex-1">
                 <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
-                  Auto-publish now playing (NIP-38)
+                  {tApp('settingsAutoPublishNowPlaying')}
                 </p>
                 <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
-                  When enabled, Nostr Paper publishes your music status from browser Media Session metadata while audio is playing.
+                  {tApp('settingsAutoPublishDescription')}
                 </p>
               </div>
               <button
@@ -512,12 +522,12 @@ export default function SettingsPage() {
                   disabled={clearingStatus}
                   className="w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] px-4 py-3 text-[15px] font-medium text-[rgb(var(--color-label))] disabled:opacity-50"
                 >
-                  {clearingStatus ? 'Clearing...' : 'Clear Status'}
+                  {clearingStatus ? tApp('settingsClearing') : tApp('settingsClearStatus')}
                 </button>
               </div>
             ) : (
               <p className="text-[14px] text-[rgb(var(--color-label-secondary))]">
-                No active music status. Listening activity from compatible apps will appear here.
+                {tApp('settingsNoMusicStatus')}
               </p>
             )}
           </div>
@@ -525,19 +535,19 @@ export default function SettingsPage() {
 
         {/* Connected Music Services Section */}
         <section id="music-services">
-          <h2 className="section-kicker px-1 mb-3">Connected Music Services</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('settingsConnectedMusicServices')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-6">
 
             {/* Browser Auto-detect */}
             <div className="flex items-start gap-3">
               <div className="flex-1">
-                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">Browser Auto-detect</p>
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">{tApp('settingsBrowserAutoDetect')}</p>
                 <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
                   Passively reads what&apos;s playing via the Web Media Session API — works with Spotify Web, Apple Music, YouTube, and more with no sign-in required.
                 </p>
               </div>
               <span className="mt-0.5 shrink-0 rounded-full bg-[rgb(var(--color-system-green)/0.15)] px-2.5 py-0.5 text-[12px] font-medium text-[rgb(var(--color-system-green))]">
-                Always on
+                {tApp('settingsAlwaysOn')}
               </span>
             </div>
 
@@ -554,7 +564,7 @@ export default function SettingsPage() {
                 </div>
                 {spotifyConnected && (
                   <span className="mt-0.5 shrink-0 rounded-full bg-[rgb(var(--color-system-green)/0.15)] px-2.5 py-0.5 text-[12px] font-medium text-[rgb(var(--color-system-green))]">
-                    Connected
+                    {tApp('settingsConnected')}
                   </span>
                 )}
               </div>
@@ -632,7 +642,7 @@ export default function SettingsPage() {
                 </div>
                 {appleMusicConnected && (
                   <span className="mt-0.5 shrink-0 rounded-full bg-[rgb(var(--color-system-green)/0.15)] px-2.5 py-0.5 text-[12px] font-medium text-[rgb(var(--color-system-green))]">
-                    Connected
+                    {tApp('settingsConnected')}
                   </span>
                 )}
               </div>
@@ -668,7 +678,7 @@ export default function SettingsPage() {
 
         {/* Appearance Section */}
         <section>
-          <h2 className="section-kicker px-1 mb-3">Appearance</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('settingsAppearance')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated">
             <button
               type="button"
@@ -691,7 +701,7 @@ export default function SettingsPage() {
         </section>
 
         <section>
-          <h2 className="section-kicker px-1 mb-3">Feed</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('settingsFeed')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-4">
             <label className="flex items-start gap-3">
               <div className="mt-0.5 flex-1">
@@ -827,7 +837,7 @@ export default function SettingsPage() {
               <div>
                 <div className="flex items-center gap-2">
                   <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
-                    Translations
+                    {tApp('settingsTranslations')}
                   </p>
                   <span
                     className={`rounded-full px-2 py-[2px] text-[11px] font-semibold ${translationHealthTone === 'ok' ? 'bg-[rgb(var(--color-system-green)/0.14)] text-[rgb(var(--color-system-green))]' : 'bg-[rgb(var(--color-system-orange)/0.18)] text-[rgb(var(--color-system-orange))]'}`}
@@ -848,7 +858,7 @@ export default function SettingsPage() {
 
         {/* Media Servers Section */}
         <section>
-          <h2 className="section-kicker px-1 mb-3">Media</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('settingsMedia')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated">
             <div className="space-y-4">
               <div>
@@ -866,7 +876,7 @@ export default function SettingsPage() {
 
         {/* Relays Section */}
         <section>
-          <h2 className="section-kicker px-1 mb-3">Network</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('settingsNetwork')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated">
             <button
               type="button"
@@ -875,7 +885,7 @@ export default function SettingsPage() {
             >
               <div>
                 <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
-                  Relays
+                  {tApp('settingsRelays')}
                 </p>
                 <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
                   Add, remove, and monitor WebSocket relay connections.
@@ -889,7 +899,7 @@ export default function SettingsPage() {
         </section>
 
         <section>
-          <h2 className="section-kicker px-1 mb-3">Developer</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('settingsDeveloper')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated">
             <button
               type="button"
@@ -898,7 +908,7 @@ export default function SettingsPage() {
             >
               <div>
                 <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
-                  Debug Diagnostics
+                  {tApp('settingsDebugDiagnostics')}
                 </p>
                 <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
                   Inspect startup telemetry, last boot failure, and copy diagnostics JSON for troubleshooting.
@@ -913,7 +923,7 @@ export default function SettingsPage() {
 
         {/* Moderation Section */}
         <section>
-          <h2 className="section-kicker px-1 mb-3">Moderation</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('settingsModeration')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated">
             <button
               type="button"

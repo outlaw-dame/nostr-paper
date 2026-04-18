@@ -348,8 +348,8 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
             {storyNostrCreator && (
               <NostrCreatorAttribution
                 nostrCreator={storyNostrCreator}
-                nostrNip05={storyNostrNip05}
-                pageHostname={storyHostname}
+                {...(storyNostrNip05 !== undefined ? { nostrNip05: storyNostrNip05 } : {})}
+                pageHostname={storyHostname ?? null}
                 tone="inverse"
                 className="mt-2 rounded-[12px] bg-white/8"
               />

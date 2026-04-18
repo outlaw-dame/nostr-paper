@@ -718,6 +718,31 @@ export type MediaModerationWorkerResponse =
     }
   | { id: number; error: string }
 
+// ── Gemma Worker Types ────────────────────────────────────────
+
+export type GemmaModel = 'E2B' | 'E4B'
+
+export interface GemmaInitPayload {
+  /** Absolute URL or path to the .task model file */
+  modelPath: string
+  /** URL to the @mediapipe/tasks-genai WASM directory */
+  wasmPath?: string
+  maxTokens?: number
+  temperature?: number
+  topK?: number
+}
+
+export type GemmaWorkerRequest =
+  | { id: number; type: 'init'; payload: GemmaInitPayload }
+  | { id: number; type: 'generate'; payload: { prompt: string } }
+  | { id: number; type: 'close' }
+
+export type GemmaWorkerResponse =
+  | { id: number; type: 'init_ok' }
+  | { id: number; type: 'token'; partial: string }
+  | { id: number; type: 'done'; fullText: string }
+  | { id: number; type: 'error'; error: string }
+
 // ── Utility Types ────────────────────────────────────────────
 
 export type Prettify<T> = { [K in keyof T]: T[K] } & {}

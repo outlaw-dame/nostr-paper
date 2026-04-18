@@ -44,6 +44,7 @@ import {
 import { decodeProfileReference } from '@/lib/nostr/nip21'
 import { formatNip05Identifier, parseNip05Identifier, resolveNip05Identifier } from '@/lib/nostr/nip05'
 import { getIdentityUrl, getPlatformDisplayName } from '@/lib/nostr/nip39'
+import { tApp } from '@/lib/i18n/app'
 import type { ContactList, Profile, ProfileBirthday } from '@/types'
 import { Kind } from '@/types'
 
@@ -900,7 +901,7 @@ export default function ProfilePage() {
             disabled={muting || muteListLoading}
             className="mt-6 rounded-[14px] bg-[rgb(var(--color-label))] px-6 py-3 text-[15px] font-medium text-white transition-opacity active:opacity-75 disabled:opacity-40"
           >
-            {muting ? 'Updating…' : 'Unmute'}
+            {muting ? tApp('profileUpdating') : tApp('profileUnmute')}
           </button>
         </div>
       ) : (
@@ -946,31 +947,31 @@ export default function ProfilePage() {
                 )}
                 {displayProfile?.bot && (
                   <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[rgb(var(--color-label-secondary))]">
-                    Automated account
+                    {tApp('profileAutomatedAccount')}
                   </span>
                 )}
                 {musicStatus && (
                   <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[rgb(var(--color-label-secondary))]">
-                    Live music status
+                    {tApp('profileLiveMusicStatus')}
                   </span>
                 )}
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <ProfileStatBadge
-                  label="Following"
+                  label={tApp('profileFollowing')}
                   value={contactList ? contactList.entries.length : (contactListLoading ? '…' : '0')}
                 />
                 <ProfileStatBadge
-                  label="Badges"
+                  label={tApp('profileBadges')}
                   value={badgesLoading && badges.length === 0 ? '…' : badges.length}
                 />
                 <ProfileStatBadge
-                  label="Curated Sets"
+                  label={tApp('profileCuratedSets')}
                   value={nip51SetsLoading && totalCuratedSets === 0 ? '…' : totalCuratedSets}
                 />
                 <ProfileStatBadge
-                  label="Handlers"
+                  label={tApp('profileHandlers')}
                   value={handlerInfoLoading && handlerInfoEvents.length === 0 ? '…' : handlerInfoEvents.length}
                 />
               </div>
@@ -983,26 +984,26 @@ export default function ProfilePage() {
                       onClick={() => scrollToSection('profile-metadata')}
                       className="rounded-[14px] bg-[rgb(var(--color-label))] px-4 py-2.5 text-[14px] font-medium text-white transition-opacity active:opacity-75"
                     >
-                      Edit Profile
+                      {tApp('profileEditProfile')}
                     </button>
                     <Link
                       to="/settings"
                       className="rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-4 py-2.5 text-[14px] font-medium text-[rgb(var(--color-label))]"
                     >
-                      Settings
+                      {tApp('profileSettings')}
                     </Link>
                     <Link
                       to="/settings#music-status"
                       className="rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-4 py-2.5 text-[14px] font-medium text-[rgb(var(--color-label))]"
                     >
-                      Music Status
+                      {tApp('profileMusicStatus')}
                     </Link>
                     <button
                       type="button"
                       onClick={handleLogout}
                       className="rounded-[14px] border border-[rgb(var(--color-system-red)/0.22)] bg-[rgb(var(--color-system-red)/0.08)] px-4 py-2.5 text-[14px] font-medium text-[rgb(var(--color-system-red))] transition-opacity active:opacity-75"
                     >
-                      Logout
+                      {tApp('profileLogout')}
                     </button>
                   </>
                 ) : (
@@ -1013,11 +1014,11 @@ export default function ProfilePage() {
                         onClick={() => scrollToSection('profile-entry')}
                         className="rounded-[14px] bg-[rgb(var(--color-label))] px-4 py-2.5 text-[14px] font-medium text-white transition-opacity active:opacity-75"
                       >
-                        {currentEntry ? 'Manage Follow' : 'Follow'}
+                        {currentEntry ? tApp('profileManageFollow') : tApp('profileFollow')}
                       </button>
                     ) : (
                       <span className="rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-4 py-2.5 text-[14px] text-[rgb(var(--color-label-secondary))]">
-                        Connect a signer to follow
+                        {tApp('profileConnectSignerFollow')}
                       </span>
                     )}
 
@@ -1032,7 +1033,7 @@ export default function ProfilePage() {
                         transition-opacity active:opacity-75 disabled:opacity-40
                       "
                     >
-                      {muting ? 'Updating…' : isMutedProfile ? 'Unmute' : 'Mute'}
+                      {muting ? tApp('profileUpdating') : isMutedProfile ? tApp('profileUnmute') : tApp('profileMute')}
                     </button>
 
                     <button
@@ -1050,7 +1051,7 @@ export default function ProfilePage() {
                         transition-opacity active:opacity-75 disabled:opacity-40
                       "
                     >
-                      {reported ? 'Reported' : 'Report'}
+                      {reported ? tApp('profileReported') : tApp('profileReport')}
                     </button>
                   </>
                 )}
@@ -1058,7 +1059,7 @@ export default function ProfilePage() {
 
               <div className="mt-4 rounded-[16px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] px-3 py-3">
                 <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-                  Pubkey
+                  {tApp('profilePubkey')}
                 </p>
                 <p className="mt-1 break-all font-mono text-[12px] text-[rgb(var(--color-label-tertiary))]">
                   {pubkey}
@@ -1067,7 +1068,7 @@ export default function ProfilePage() {
 
               <div className="mt-4 rounded-[20px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] p-4">
                 <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-                  Bio
+                  {tApp('profileBio')}
                 </p>
 
                 {profileBlockedByTagr ? (
@@ -1087,7 +1088,7 @@ export default function ProfilePage() {
                   </>
                 ) : (
                   <p className="mt-2 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
-                    {profileLoading || profileModerationLoading ? 'Loading profile bio…' : 'No bio published yet.'}
+                    {profileLoading || profileModerationLoading ? tApp('profileLoadingBio') : tApp('profileNoBio')}
                   </p>
                 )}
               </div>

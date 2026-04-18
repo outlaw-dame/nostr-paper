@@ -83,64 +83,74 @@ export function useModerationDocuments(
     }
 
     const controller = new AbortController()
+    const nextDecisions = new Map<string, ModerationDecision>()
     const missing: ModerationDocument[] = []
 
     for (const document of documents) {
       const cacheKey = getModerationDocumentCacheKey(document)
       const cached = inMemoryModerationCache.get(cacheKey)
-      if (!cached) {
+      if (cached) {
+        nextDecisions.set(document.id, cached)
+      } else {
         missing.push(document)
       }
     }
 
+    // Synchronously apply all cache hits so consumers see decisions immediately
+    // without a loading flash.
+    setDecisions(nextDecisions)
     setError(null)
+
+    if (missing.length === 0) {
+      setLoading(false)
+      // Run Tagr in the background to pick up any relay-sourced blocks without
+      // gating the feed on the result (avoids loading oscillation for cached batches).
+      resolveTagrModerationDecisions(documents, controller.signal)
+        .then((tagrDecisions) => {
+          if (controller.signal.aborted || tagrDecisions.size === 0) return
+          setDecisions((previous) => {
+            const merged = new Map(previous)
+            for (const [id, tagrDecision] of tagrDecisions) {
+              const existing = merged.get(id)
+              if (!existing || existing.action !== 'block') {
+                merged.set(id, tagrDecision)
+              }
+            }
+            return merged
+          })
+        })
+        .catch(() => { /* non-blocking — ignore Tagr errors when all docs are cached */ })
+      return () => controller.abort()
+    }
+
     setLoading(true)
 
     Promise.all([
-      missing.length > 0
-        ? moderateContentDocuments(missing, controller.signal)
-        : Promise.resolve([]),
+      moderateContentDocuments(missing, controller.signal),
       resolveTagrModerationDecisions(documents, controller.signal).catch(() => new Map<string, ModerationDecision>()),
     ])
       .then(([results, tagrDecisions]) => {
         if (controller.signal.aborted) return
 
-        setDecisions((previous) => {
-          const merged = new Map<string, ModerationDecision>()
+        const merged = new Map(nextDecisions)
 
-          for (const document of documents) {
-            const cacheKey = getModerationDocumentCacheKey(document)
-            const cached = inMemoryModerationCache.get(cacheKey)
+        for (const decision of results) {
+          const document = missing.find((entry) => entry.id === decision.id)
+          if (!document) continue
 
-            if (cached) {
-              merged.set(document.id, cached)
-              continue
-            }
+          const cacheKey = getModerationDocumentCacheKey(document)
+          cacheSetModeration(cacheKey, decision)
+          merged.set(decision.id, decision)
+        }
 
-            const priorDecision = previous.get(document.id)
-            if (priorDecision) {
-              merged.set(document.id, priorDecision)
-            }
+        for (const [id, tagrDecision] of tagrDecisions) {
+          const existing = merged.get(id)
+          if (!existing || existing.action !== 'block') {
+            merged.set(id, tagrDecision)
           }
+        }
 
-          for (const decision of results) {
-            const document = missing.find((entry) => entry.id === decision.id)
-            if (!document) continue
-
-            const cacheKey = getModerationDocumentCacheKey(document)
-            cacheSetModeration(cacheKey, decision)
-            merged.set(decision.id, decision)
-          }
-
-          for (const [id, tagrDecision] of tagrDecisions) {
-            const existing = merged.get(id)
-            if (!existing || existing.action !== 'block') {
-              merged.set(id, tagrDecision)
-            }
-          }
-
-          return merged
-        })
+        setDecisions(merged)
         setLoading(false)
       })
       .catch((moderationError: unknown) => {
@@ -158,13 +168,13 @@ export function useModerationDocuments(
   }, [enabled, signature])
 
   const allowedIds = useMemo(
-    () => getAllowedIds(documents, decisions, !failClosed && error !== null),
-    [documents, decisions, error, failClosed],
+    () => getAllowedIds(documents, decisions, !failClosed && (loading || error !== null)),
+    [documents, decisions, loading, error, failClosed],
   )
 
   const blockedIds = useMemo(() => {
     const blocked = new Set<string>()
-    const failOpen = !failClosed && error !== null
+    const failOpen = !failClosed && (loading || error !== null)
 
     for (const document of documents) {
       const decision = decisions.get(document.id)
@@ -177,7 +187,7 @@ export function useModerationDocuments(
     }
 
     return blocked
-  }, [documents, decisions, error, failClosed])
+  }, [documents, decisions, loading, error, failClosed])
 
   return {
     decisions,

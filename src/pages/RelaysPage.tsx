@@ -35,6 +35,7 @@ import {
   setStoredRelayPreferences,
   type RelayPreference,
 } from '@/lib/relay/relaySettings'
+import { tApp } from '@/lib/i18n/app'
 import { isValidRelayURL } from '@/lib/security/sanitize'
 
 // ── Types ────────────────────────────────────────────────────
@@ -64,31 +65,31 @@ const RECOMMENDED_RELIABLE_WRITE_RELAYS = [
 const CURATED_RELAY_RECOMMENDATIONS = [
   {
     url: 'wss://purplepag.es',
-    reason: 'Useful for kind-10002 discovery and outbox lookup coverage.',
+    reasonKey: 'relaysRecommendationPurplepages',
   },
   {
     url: 'wss://nos.lol',
-    reason: 'Widely used public relay with good client interoperability.',
+    reasonKey: 'relaysRecommendationNosLol',
   },
   {
     url: 'wss://relay.primal.net',
-    reason: 'High-traffic relay often used for fast read/write propagation.',
+    reasonKey: 'relaysRecommendationPrimal',
   },
   {
     url: 'wss://relay.momostr.pink',
-    reason: 'Useful community relay for broader propagation across Mostr-adjacent clients.',
+    reasonKey: 'relaysRecommendationMomostr',
   },
   {
     url: 'wss://relay.mostr.pub',
-    reason: 'Mostr public relay commonly used in mobile-first relay sets.',
+    reasonKey: 'relaysRecommendationMostrPub',
   },
   {
     url: 'wss://ditto.pub/relay',
-    reason: 'Ditto relay endpoint for compatibility with Ditto-centric relay graphs.',
+    reasonKey: 'relaysRecommendationDitto',
   },
   {
     url: 'wss://relay.nostr.band',
-    reason: 'Popular indexing relay that improves broad discoverability.',
+    reasonKey: 'relaysRecommendationNostrBand',
   },
 ] as const
 
@@ -151,17 +152,17 @@ function statusMeta(status: NDKRelayStatus): StatusMeta {
   switch (status) {
     case NDKRelayStatus.CONNECTED:
     case NDKRelayStatus.AUTHENTICATED:
-      return { label: 'Connected', color: 'rgb(var(--color-system-green))', pulse: true }
+      return { label: tApp('relaysStatusConnected'), color: 'rgb(var(--color-system-green))', pulse: true }
     case NDKRelayStatus.AUTH_REQUESTED:
     case NDKRelayStatus.AUTHENTICATING:
-      return { label: 'Authenticating', color: 'rgb(var(--color-system-yellow, 255 204 0))', pulse: true }
+      return { label: tApp('relaysStatusAuthenticating'), color: 'rgb(var(--color-system-yellow, 255 204 0))', pulse: true }
     case NDKRelayStatus.CONNECTING:
     case NDKRelayStatus.RECONNECTING:
-      return { label: 'Connecting', color: 'rgb(var(--color-system-yellow, 255 204 0))', pulse: true }
+      return { label: tApp('relaysStatusConnecting'), color: 'rgb(var(--color-system-yellow, 255 204 0))', pulse: true }
     case NDKRelayStatus.FLAPPING:
-      return { label: 'Unstable', color: 'rgb(var(--color-system-orange, 255 149 0))', pulse: false }
+      return { label: tApp('relaysStatusUnstable'), color: 'rgb(var(--color-system-orange, 255 149 0))', pulse: false }
     default:
-      return { label: 'Offline', color: 'rgb(var(--color-fill-secondary, 142 142 147))', pulse: false }
+      return { label: tApp('relaysStatusOffline'), color: 'rgb(var(--color-fill-secondary, 142 142 147))', pulse: false }
   }
 }
 
@@ -183,8 +184,8 @@ function hostnameOf(url: string): string {
 }
 
 function relayCapabilitySummary(entry: Pick<RelayEntry, 'read' | 'write'>): string {
-  if (entry.read && entry.write) return 'Read and write'
-  return entry.read ? 'Read only' : 'Write only'
+  if (entry.read && entry.write) return tApp('relaysCapabilityReadWrite')
+  return entry.read ? tApp('relaysCapabilityReadOnly') : tApp('relaysCapabilityWriteOnly')
 }
 
 function isRecommendedReadRelay(url: string): boolean {
@@ -286,10 +287,10 @@ function RelayRow({
   const showRetry = entry.read && !connected && retryAvailable
   const offlineHint = !connected
     ? health?.tier === 'restricted'
-      ? 'This relay is reachable but may require auth or payment; offline state may be expected for unauthenticated reads.'
+      ? tApp('relaysOfflineHintRestricted')
       : health?.tier === 'good' || health?.tier === 'caution'
-        ? 'Relay metadata looks healthy; current offline state is likely a temporary network path or remote relay outage.'
-        : 'Health is unknown; offline state is usually due to remote relay downtime, regional routing, or transient handshake failures.'
+        ? tApp('relaysOfflineHintHealthy')
+        : tApp('relaysOfflineHintUnknown')
     : null
 
   return (
@@ -325,21 +326,21 @@ function RelayRow({
               </span>
               {isDefault && (
                 <span className="rounded-full bg-[rgb(var(--color-fill)/0.1)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.05em] text-[rgb(var(--color-label-tertiary))]">
-                  Default
+                  {tApp('relaysDefaultBadge')}
                 </span>
               )}
               {entry.read && isRecommendedReadRelay(entry.url) && (
                 <span className="rounded-full bg-[rgb(var(--color-system-green)/0.12)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.05em] text-[rgb(var(--color-system-green))]">
-                  Fast Read
+                  {tApp('relaysFastReadBadge')}
                 </span>
               )}
               {entry.write && isRecommendedWriteRelay(entry.url) && (
                 <span className="rounded-full bg-[rgb(var(--color-accent)/0.12)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.05em] text-[rgb(var(--color-accent))]">
-                  Reliable Write
+                  {tApp('relaysReliableWriteBadge')}
                 </span>
               )}
               <span className={healthBadgeClass(health?.tier ?? 'unknown')}>
-                {health?.label ?? 'Health unknown'}
+                {health?.label ?? tApp('relaysHealthUnknown')}
               </span>
             </div>
           </div>
@@ -352,21 +353,21 @@ function RelayRow({
                 onClick={() => setConfirmDelete(false)}
                 className="rounded-full border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg-secondary))] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label-secondary))] active:opacity-70"
               >
-                Cancel
+                {tApp('relaysCancel')}
               </button>
               <button
                 type="button"
                 onClick={() => onRemove(entry.url)}
                 className="rounded-full bg-[rgb(var(--color-system-red)/0.1)] px-3 py-1.5 text-[12px] font-semibold text-[rgb(var(--color-system-red))] active:opacity-70"
               >
-                Remove
+                {tApp('relaysRemove')}
               </button>
             </div>
           ) : (
             <button
               type="button"
               onClick={() => setConfirmDelete(true)}
-              aria-label={`Remove ${hostname}`}
+              aria-label={tApp('relaysRemoveAria', { hostname })}
               className="
                 flex h-7 w-7 shrink-0 items-center justify-center
                 rounded-full
@@ -389,13 +390,13 @@ function RelayRow({
 
         <div className="mt-3 flex flex-wrap gap-2">
           <RelayCapabilityButton
-            label="Read"
+            label={tApp('relaysRead')}
             active={entry.read}
             disabled={disableReadToggle}
             onClick={() => onToggleCapability(entry.url, 'read')}
           />
           <RelayCapabilityButton
-            label="Write"
+            label={tApp('relaysWrite')}
             active={entry.write}
             disabled={disableWriteToggle}
             onClick={() => onToggleCapability(entry.url, 'write')}
@@ -407,12 +408,12 @@ function RelayRow({
               onClick={() => onRetry(entry.url)}
               className="rounded-full border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg-secondary))] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label-secondary))] transition-opacity disabled:opacity-40 active:opacity-80"
             >
-              {retrying ? 'Retrying…' : 'Retry Now'}
+              {retrying ? tApp('relaysRetryingNow') : tApp('relaysRetryNow')}
             </button>
           )}
         </div>
         <p className="mt-2 text-[12px] text-[rgb(var(--color-label-tertiary))] leading-relaxed">
-          Read relays power subscriptions and feed refreshes. Write relays receive your signed notes and relay-list updates.
+          {tApp('relaysCapabilityHint')}
         </p>
         {health?.details && (
           <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))] leading-relaxed">
@@ -563,7 +564,7 @@ export default function RelaysPage() {
   const handleAdd = async () => {
     const trimmed = addUrl.trim()
     if (!trimmed) {
-      setAddError('Enter a relay URL.')
+      setAddError(tApp('relaysEnterUrl'))
       return
     }
 
@@ -571,12 +572,12 @@ export default function RelaysPage() {
     const url = /^wss?:\/\//i.test(trimmed) ? trimmed : `wss://${trimmed}`
 
     if (!isValidRelayURL(url)) {
-      setAddError('Must be a valid wss:// URL.')
+      setAddError(tApp('relaysInvalidUrl'))
       return
     }
 
     if (existingRelayKeys.has(normalizeRelayKey(url))) {
-      setAddError('Relay is already in your list.')
+      setAddError(tApp('relaysAlreadyAdded'))
       return
     }
 
@@ -598,7 +599,7 @@ export default function RelaysPage() {
         setAdding(false)
       }, 300)
     } catch (err) {
-      setAddError('Failed to add relay.')
+      setAddError(tApp('relaysAddFailed'))
       setAdding(false)
     }
   }
@@ -608,11 +609,11 @@ export default function RelaysPage() {
     (url: string) => {
       const newPreferences = relayPreferences.filter(preference => preference.url !== url)
       if (!newPreferences.some(preference => preference.read)) {
-        setRelayError('Keep at least one read relay so feeds can refresh.')
+        setRelayError(tApp('relaysKeepOneRead'))
         return
       }
       if (!newPreferences.some(preference => preference.write)) {
-        setRelayError('Keep at least one write relay so your notes have a publish target.')
+        setRelayError(tApp('relaysKeepOneWrite'))
         return
       }
 
@@ -644,12 +645,12 @@ export default function RelaysPage() {
       )
 
       if (!newPreferences.some(preference => preference.read)) {
-        setRelayError('Keep at least one read relay so feeds can refresh.')
+        setRelayError(tApp('relaysKeepOneRead'))
         return
       }
 
       if (!newPreferences.some(preference => preference.write)) {
-        setRelayError('Keep at least one write relay so your notes have a publish target.')
+        setRelayError(tApp('relaysKeepOneWrite'))
         return
       }
 
@@ -678,17 +679,17 @@ export default function RelaysPage() {
     try {
       const importedPreferences = await importCurrentUserRelayListPreferences(currentUser.pubkey)
       if (importedPreferences.length === 0) {
-        setImportNotice('No remote kind-10002 relay list was found for this account yet.')
+        setImportNotice(tApp('relaysNoRemoteList'))
         return
       }
 
       if (!importedPreferences.some(preference => preference.read)) {
-        setImportNotice('Remote relay list is missing a read relay, so it was not imported.')
+        setImportNotice(tApp('relaysRemoteMissingRead'))
         return
       }
 
       if (!importedPreferences.some(preference => preference.write)) {
-        setImportNotice('Remote relay list is missing a write relay, so it was not imported.')
+        setImportNotice(tApp('relaysRemoteMissingWrite'))
         return
       }
 
@@ -704,9 +705,9 @@ export default function RelaysPage() {
 
       setStoredRelayPreferences(importedPreferences)
       setEntries(getRelayEntries(importedPreferences))
-      setImportNotice('Imported your remote kind-10002 relay roles into this device.')
+      setImportNotice(tApp('relaysImportedRemote'))
     } catch (error) {
-      setRelayError(error instanceof Error ? error.message : 'Failed to import remote relay roles.')
+      setRelayError(error instanceof Error ? error.message : tApp('relaysImportFailed'))
     } finally {
       setImportingRemote(false)
     }
@@ -813,7 +814,7 @@ export default function RelaysPage() {
                 flex items-center justify-center
                 active:opacity-80
               "
-              aria-label="Go back"
+                aria-label={tApp('relaysGoBack')}
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
                 <path
@@ -827,11 +828,11 @@ export default function RelaysPage() {
             </button>
             <div>
               <h1 className="text-[20px] font-semibold text-[rgb(var(--color-label))] leading-tight">
-                Relays
+                {tApp('relaysTitle')}
               </h1>
               {entries.length > 0 && (
                 <p className="text-[12px] text-[rgb(var(--color-label-tertiary))] leading-tight mt-0.5">
-                  {connectedCount} of {entries.length} connected
+                  {tApp('relaysConnectedSummary', { connected: connectedCount, total: entries.length })}
                 </p>
               )}
             </div>
@@ -843,7 +844,7 @@ export default function RelaysPage() {
 
         {/* ── Add relay ── */}
         <section>
-          <h2 className="section-kicker px-1 mb-3">Add Relay</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('relaysAddSection')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-3">
             <div className="flex gap-2">
               <input
@@ -857,7 +858,7 @@ export default function RelaysPage() {
                 onKeyDown={e => {
                   if (e.key === 'Enter') void handleAdd()
                 }}
-                placeholder="wss://relay.example.com"
+                placeholder={tApp('relaysInputPlaceholder')}
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
@@ -890,7 +891,7 @@ export default function RelaysPage() {
                   transition-opacity
                 "
               >
-                {adding ? '…' : 'Add'}
+                {adding ? '…' : tApp('relaysAddButton')}
               </button>
             </div>
             {addError && (
@@ -898,17 +899,14 @@ export default function RelaysPage() {
             )}
             {!addError && pendingRelayAlreadyAdded && (
               <p className="text-[12px] text-[rgb(var(--color-system-orange,255_149_0))]">
-                This relay is already added.
+                {tApp('relaysAlreadyAdded')}
               </p>
             )}
             <p className="text-[12px] text-[rgb(var(--color-label-tertiary))] leading-relaxed">
-              Use WebSocket Secure (wss://) URLs only. Changes take effect immediately
-              and are saved for future sessions. New relays start as read/write, and
-              you can split them below. When signed in, changes also publish your
-              kind-10002 relay list for NIP-65 outbox discovery.
+              {tApp('relaysWssHint')}
             </p>
             <p className="text-[12px] text-[rgb(var(--color-label-secondary))] leading-relaxed">
-              Offline read relays can be manually reconnected with the Retry Now button in each relay row.
+              {tApp('relaysRetryHint')}
             </p>
             <div className="flex flex-wrap gap-2">
               <button
@@ -916,7 +914,7 @@ export default function RelaysPage() {
                 onClick={refresh}
                 className="rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[12px] font-semibold text-[rgb(var(--color-label))] active:opacity-80"
               >
-                Refresh Status
+                {tApp('relaysRefreshStatus')}
               </button>
               <button
                 type="button"
@@ -924,7 +922,7 @@ export default function RelaysPage() {
                 disabled={retryingAll}
                 className="rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[12px] font-semibold text-[rgb(var(--color-label))] transition-opacity disabled:opacity-40 active:opacity-80"
               >
-                {retryingAll ? 'Retrying…' : 'Retry Offline Read Relays'}
+                {retryingAll ? tApp('relaysRetryingNow') : tApp('relaysRetryOffline')}
               </button>
               <button
                 type="button"
@@ -932,17 +930,17 @@ export default function RelaysPage() {
                 disabled={refreshingHealth}
                 className="rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[12px] font-semibold text-[rgb(var(--color-label))] transition-opacity disabled:opacity-40 active:opacity-80"
               >
-                {refreshingHealth ? 'Refreshing…' : 'Refresh Health'}
+                {refreshingHealth ? tApp('relaysRefreshing') : tApp('relaysRefreshHealth')}
               </button>
             </div>
             {remoteImportEnabled && (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[rgb(var(--color-fill)/0.14)] bg-[rgb(var(--color-bg-secondary))] px-3 py-3">
                 <div className="min-w-0 flex-1">
                   <p className="text-[13px] font-medium text-[rgb(var(--color-label))]">
-                    One-time bootstrap from your remote relay list
+                    {tApp('relaysImportCardTitle')}
                   </p>
                   <p className="mt-1 text-[12px] text-[rgb(var(--color-label-tertiary))] leading-relaxed">
-                    Import your signed-in account’s current kind-10002 read/write roles into this device, then keep editing locally.
+                    {tApp('relaysImportCardBody')}
                   </p>
                 </div>
                 <button
@@ -951,7 +949,7 @@ export default function RelaysPage() {
                   disabled={importingRemote}
                   className="rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[13px] font-semibold text-[rgb(var(--color-label))] transition-opacity disabled:opacity-40 active:opacity-80"
                 >
-                  {importingRemote ? 'Importing…' : 'Import Remote Roles'}
+                  {importingRemote ? tApp('relaysImporting') : tApp('relaysImportRemote')}
                 </button>
               </div>
             )}
@@ -962,43 +960,43 @@ export default function RelaysPage() {
         </section>
 
         <section>
-          <h2 className="section-kicker px-1 mb-3">Recommendations</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('relaysRecommendationsSection')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-3">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-[14px] font-medium text-[rgb(var(--color-label))]">Fast read coverage</p>
+                <p className="text-[14px] font-medium text-[rgb(var(--color-label))]">{tApp('relaysFastReadCoverage')}</p>
                 <p className="mt-1 text-[12px] text-[rgb(var(--color-label-tertiary))] leading-relaxed">
-                  Keep at least one low-latency read relay for feed refreshes and search-heavy browsing.
+                  {tApp('relaysFastReadCoverageHint')}
                 </p>
               </div>
               <span className={hasRecommendedReadRelay
                 ? 'rounded-full bg-[rgb(var(--color-system-green)/0.12)] px-2 py-1 text-[11px] font-semibold text-[rgb(var(--color-system-green))]'
                 : 'rounded-full bg-[rgb(var(--color-system-orange,255_149_0)/0.12)] px-2 py-1 text-[11px] font-semibold text-[rgb(var(--color-system-orange,255_149_0))]'}>
-                {hasRecommendedReadRelay ? 'Covered' : 'Add One'}
+                {hasRecommendedReadRelay ? tApp('relaysCoverageCovered') : tApp('relaysCoverageAddOne')}
               </span>
             </div>
             <p className="text-[12px] text-[rgb(var(--color-label-secondary))]">
-              Suggested fast read relays: {RECOMMENDED_FAST_READ_RELAYS.join(', ')}
+              {tApp('relaysSuggestedFastRead', { relays: RECOMMENDED_FAST_READ_RELAYS.join(', ') })}
             </p>
             <div className="flex items-start justify-between gap-3 border-t border-[rgb(var(--color-fill)/0.08)] pt-3">
               <div>
-                <p className="text-[14px] font-medium text-[rgb(var(--color-label))]">Reliable write coverage</p>
+                <p className="text-[14px] font-medium text-[rgb(var(--color-label))]">{tApp('relaysReliableWriteCoverage')}</p>
                 <p className="mt-1 text-[12px] text-[rgb(var(--color-label-tertiary))] leading-relaxed">
-                  Keep at least one dependable write relay so publishes and relay-list updates land consistently.
+                  {tApp('relaysReliableWriteCoverageHint')}
                 </p>
               </div>
               <span className={hasRecommendedWriteRelay
                 ? 'rounded-full bg-[rgb(var(--color-system-green)/0.12)] px-2 py-1 text-[11px] font-semibold text-[rgb(var(--color-system-green))]'
                 : 'rounded-full bg-[rgb(var(--color-system-orange,255_149_0)/0.12)] px-2 py-1 text-[11px] font-semibold text-[rgb(var(--color-system-orange,255_149_0))]'}>
-                {hasRecommendedWriteRelay ? 'Covered' : 'Add One'}
+                {hasRecommendedWriteRelay ? tApp('relaysCoverageCovered') : tApp('relaysCoverageAddOne')}
               </span>
             </div>
             <p className="text-[12px] text-[rgb(var(--color-label-secondary))]">
-              Suggested reliable write relays: {RECOMMENDED_RELIABLE_WRITE_RELAYS.join(', ')}
+              {tApp('relaysSuggestedReliableWrite', { relays: RECOMMENDED_RELIABLE_WRITE_RELAYS.join(', ') })}
             </p>
             <div className="space-y-2 border-t border-[rgb(var(--color-fill)/0.08)] pt-3">
               <p className="text-[12px] text-[rgb(var(--color-label-secondary))]">
-                Curated relay suggestions based on broadly used public relay infrastructure and outbox-discovery coverage:
+                {tApp('relaysCuratedIntro')}
               </p>
               {CURATED_RELAY_RECOMMENDATIONS.map((recommendation) => {
                 const alreadyAdded = entries.some(entry => entry.url === recommendation.url)
@@ -1006,7 +1004,7 @@ export default function RelaysPage() {
                   <div key={recommendation.url} className="flex flex-wrap items-start justify-between gap-2 rounded-[12px] border border-[rgb(var(--color-fill)/0.12)] px-3 py-2">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[12px] font-mono text-[rgb(var(--color-label))]">{recommendation.url}</p>
-                      <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">{recommendation.reason}</p>
+                      <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">{tApp(recommendation.reasonKey)}</p>
                     </div>
                     <button
                       type="button"
@@ -1014,7 +1012,7 @@ export default function RelaysPage() {
                       onClick={() => handleAddRecommendedRelay(recommendation.url)}
                       className="rounded-[10px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-2.5 py-1.5 text-[11px] font-semibold text-[rgb(var(--color-label))] transition-opacity disabled:opacity-40 active:opacity-80"
                     >
-                      {alreadyAdded ? 'Added' : 'Add'}
+                      {alreadyAdded ? tApp('relaysAdded') : tApp('relaysAddButton')}
                     </button>
                   </div>
                 )
@@ -1026,14 +1024,19 @@ export default function RelaysPage() {
         {/* ── Relay list ── */}
         <section>
           <h2 className="section-kicker px-1 mb-3">
-            {entries.length > 0 ? `${entries.length} Relay${entries.length !== 1 ? 's' : ''}` : 'Relays'}
+            {entries.length > 0
+              ? tApp('relaysRelayCount', {
+                count: entries.length,
+                word: entries.length === 1 ? tApp('relaysRelaySingular') : tApp('relaysRelayPlural'),
+              })
+              : tApp('relaysRelayPlural')}
           </h2>
 
           {entries.length === 0 ? (
             <div className="app-panel rounded-ios-xl p-6 card-elevated text-center">
               <p className="text-[32px] mb-2">📡</p>
               <p className="text-[14px] text-[rgb(var(--color-label-secondary))]">
-                No relays configured. Add one above or reset to defaults.
+                {tApp('relaysEmptyTitle')}
               </p>
             </div>
           ) : (
@@ -1066,7 +1069,7 @@ export default function RelaysPage() {
             {showResetConfirm ? (
               <div className="space-y-3">
                 <p className="text-[14px] text-[rgb(var(--color-label-secondary))] leading-relaxed">
-                  This will restore the default relay list and remove any custom relays you've added. Continue?
+                  {tApp('relaysResetConfirm')}
                 </p>
                 <div className="flex gap-2">
                   <button
@@ -1074,14 +1077,14 @@ export default function RelaysPage() {
                     onClick={() => setShowResetConfirm(false)}
                     className="flex-1 rounded-[12px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] py-2.5 text-[14px] font-medium text-[rgb(var(--color-label))] active:opacity-70"
                   >
-                    Cancel
+                    {tApp('relaysCancel')}
                   </button>
                   <button
                     type="button"
                     onClick={handleReset}
                     className="flex-1 rounded-[12px] bg-[rgb(var(--color-system-red)/0.1)] py-2.5 text-[14px] font-semibold text-[rgb(var(--color-system-red))] active:opacity-70"
                   >
-                    Reset
+                    {tApp('relaysReset')}
                   </button>
                 </div>
               </div>
@@ -1093,10 +1096,10 @@ export default function RelaysPage() {
               >
                 <div>
                   <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
-                    Reset to Defaults
+                    {tApp('relaysResetTitle')}
                   </p>
                   <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
-                    Restore the {getDefaultRelayUrls().length} built-in relays.
+                    {tApp('relaysResetHint', { count: getDefaultRelayUrls().length })}
                   </p>
                 </div>
                 <svg
@@ -1121,14 +1124,14 @@ export default function RelaysPage() {
 
         {/* ── Legend ── */}
         <section className="px-1 space-y-2">
-          <h2 className="section-kicker mb-2">Status</h2>
+          <h2 className="section-kicker mb-2">{tApp('relaysStatusSection')}</h2>
           <div className="flex flex-wrap gap-4">
             {(
               [
-                { status: NDKRelayStatus.CONNECTED,    label: 'Connected'    },
-                { status: NDKRelayStatus.CONNECTING,   label: 'Connecting'   },
-                { status: NDKRelayStatus.FLAPPING,     label: 'Unstable'     },
-                { status: NDKRelayStatus.DISCONNECTED, label: 'Offline'      },
+                { status: NDKRelayStatus.CONNECTED,    label: tApp('relaysStatusConnected') },
+                { status: NDKRelayStatus.CONNECTING,   label: tApp('relaysStatusConnecting') },
+                { status: NDKRelayStatus.FLAPPING,     label: tApp('relaysStatusUnstable') },
+                { status: NDKRelayStatus.DISCONNECTED, label: tApp('relaysStatusOffline') },
               ] as const
             ).map(({ status, label }) => (
               <div key={label} className="flex items-center gap-1.5">

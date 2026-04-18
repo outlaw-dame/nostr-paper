@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { TranslationSettingsCard } from '@/components/translation/TranslationSettingsCard'
+import { tTranslationUi } from '@/lib/translation/i18n'
 
 export default function TranslationsPage() {
   const navigate = useNavigate()
@@ -18,7 +19,7 @@ export default function TranslationsPage() {
               flex items-center justify-center
               active:opacity-80
             "
-            aria-label="Go back"
+            aria-label={tTranslationUi('goBack')}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
               <path
@@ -31,14 +32,14 @@ export default function TranslationsPage() {
             </svg>
           </button>
           <h1 className="text-[20px] font-semibold text-[rgb(var(--color-label))]">
-            Translations
+            {tTranslationUi('translationsPageTitle')}
           </h1>
         </div>
       </div>
 
       <div className="space-y-4 pb-10 pt-2">
         <p className="px-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
-          Configure translation providers and language preferences for inline post translations.
+          {tTranslationUi('translationsPageSubtitle')}
         </p>
 
         <TranslationSettingsCard />

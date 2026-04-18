@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TranslationServiceError } from '@/lib/translation/errors'
+import type { TranslationConfiguration } from '@/lib/translation/storage'
 
 const loadTranslationConfiguration = vi.fn()
 
@@ -17,6 +18,9 @@ const translateWithOpusMt = vi.fn()
 const listTranslangLanguages = vi.fn(async () => [])
 const translateWithTranslang = vi.fn()
 
+const listGemmaLanguages = vi.fn(async () => [])
+const translateWithGemma = vi.fn()
+
 vi.mock('@/lib/translation/engines/small100', () => ({
   checkSmall100Health,
   listSmall100Languages,
@@ -33,11 +37,45 @@ vi.mock('@/lib/translation/engines/translang', () => ({
   translateWithTranslang,
 }))
 
+vi.mock('@/lib/translation/engines/gemma', () => ({
+  getGemmaTransportSummary: () => 'Runs entirely on-device.',
+  listGemmaLanguages,
+  translateWithGemma,
+}))
+
 const {
   inspectTranslationWithConfiguration,
   translateConfiguredText,
   translateTextWithConfiguration,
 } = await import('@/lib/translation/client')
+
+function buildConfiguration(overrides: Partial<TranslationConfiguration>): TranslationConfiguration {
+  return {
+    provider: 'deepl',
+    deeplPlan: 'free',
+    deeplTargetLanguage: 'EN-US',
+    deeplSourceLanguage: 'auto',
+    deeplAuthKey: '',
+    libreBaseUrl: '',
+    libreTargetLanguage: 'en',
+    libreSourceLanguage: 'auto',
+    libreApiKey: '',
+    translangBaseUrl: '',
+    translangTargetLanguage: 'en',
+    translangSourceLanguage: 'auto',
+    lingvaBaseUrl: '',
+    lingvaTargetLanguage: 'en',
+    lingvaSourceLanguage: 'auto',
+    small100BaseUrl: 'http://localhost:7080',
+    small100TargetLanguage: 'en',
+    small100SourceLanguage: 'auto',
+    opusMtTargetLanguage: 'en',
+    opusMtSourceLanguage: 'auto',
+    gemmaTargetLanguage: 'en',
+    gemmaSourceLanguage: 'auto',
+    ...overrides,
+  }
+}
 
 describe('translateTextWithConfiguration', () => {
   beforeEach(() => {
@@ -50,28 +88,13 @@ describe('translateTextWithConfiguration', () => {
       detectedSourceLang: 'ja',
     })
 
-    const result = await translateTextWithConfiguration({
+    const result = await translateTextWithConfiguration(buildConfiguration({
       provider: 'translang',
-      deeplPlan: 'free',
-      deeplTargetLanguage: 'EN-US',
-      deeplSourceLanguage: 'auto',
-      deeplAuthKey: '',
-      libreBaseUrl: '',
-      libreTargetLanguage: 'en',
-      libreSourceLanguage: 'auto',
-      libreApiKey: '',
       translangBaseUrl: 'https://translang.example.com',
       translangTargetLanguage: 'en',
       translangSourceLanguage: 'auto',
       lingvaBaseUrl: 'https://lingva.example.com',
-      lingvaTargetLanguage: 'en',
-      lingvaSourceLanguage: 'auto',
-      small100BaseUrl: 'http://localhost:7080',
-      small100TargetLanguage: 'en',
-      small100SourceLanguage: 'auto',
-      opusMtTargetLanguage: 'en',
-      opusMtSourceLanguage: 'auto',
-    }, 'こんにちは世界')
+    }), 'こんにちは世界')
 
     expect(translateWithTranslang).toHaveBeenCalledWith(
       'https://translang.example.com',
@@ -95,80 +118,35 @@ describe('translateTextWithConfiguration', () => {
       { code: 'config' },
     ))
 
-    await expect(translateTextWithConfiguration({
+    await expect(translateTextWithConfiguration(buildConfiguration({
       provider: 'opusmt',
-      deeplPlan: 'free',
-      deeplTargetLanguage: 'EN-US',
-      deeplSourceLanguage: 'auto',
-      deeplAuthKey: '',
-      libreBaseUrl: '',
-      libreTargetLanguage: 'en',
-      libreSourceLanguage: 'auto',
-      libreApiKey: '',
       translangBaseUrl: 'https://translang.example.com',
-      translangTargetLanguage: 'en',
-      translangSourceLanguage: 'auto',
       lingvaBaseUrl: 'https://lingva.example.com',
-      lingvaTargetLanguage: 'en',
-      lingvaSourceLanguage: 'auto',
-      small100BaseUrl: 'http://localhost:7080',
-      small100TargetLanguage: 'en',
-      small100SourceLanguage: 'auto',
       opusMtTargetLanguage: 'en',
       opusMtSourceLanguage: 'hi',
-    }, 'नमस्ते दुनिया')).rejects.toThrow('Opus-MT has no model for hi→en')
+    }), 'नमस्ते दुनिया')).rejects.toThrow('Opus-MT has no model for hi→en')
   })
 
   it('skips translation when the text already appears to match the target language', async () => {
-    await expect(translateTextWithConfiguration({
+    await expect(translateTextWithConfiguration(buildConfiguration({
       provider: 'translang',
-      deeplPlan: 'free',
-      deeplTargetLanguage: 'EN-US',
-      deeplSourceLanguage: 'auto',
-      deeplAuthKey: '',
-      libreBaseUrl: '',
-      libreTargetLanguage: 'en',
-      libreSourceLanguage: 'auto',
-      libreApiKey: '',
       translangBaseUrl: 'https://translang.example.com',
       translangTargetLanguage: 'en',
-      translangSourceLanguage: 'auto',
       lingvaBaseUrl: 'https://lingva.example.com',
-      lingvaTargetLanguage: 'en',
-      lingvaSourceLanguage: 'auto',
-      small100BaseUrl: 'http://localhost:7080',
-      small100TargetLanguage: 'en',
-      small100SourceLanguage: 'auto',
-      opusMtTargetLanguage: 'en',
-      opusMtSourceLanguage: 'auto',
-    }, 'This release note is already written in English for the current audience.')).rejects.toThrow('Text already matches your target language.')
+    }), 'This release note is already written in English for the current audience.')).rejects.toThrow('Text already matches your target language.')
 
     expect(translateWithTranslang).not.toHaveBeenCalled()
   })
 
   it('inspects auto-translate safety for Opus-MT latin text', () => {
-    expect(inspectTranslationWithConfiguration({
+    expect(inspectTranslationWithConfiguration(buildConfiguration({
       provider: 'opusmt',
-      deeplPlan: 'free',
-      deeplTargetLanguage: 'EN-US',
-      deeplSourceLanguage: 'auto',
-      deeplAuthKey: '',
-      libreBaseUrl: '',
-      libreTargetLanguage: 'en',
-      libreSourceLanguage: 'auto',
-      libreApiKey: '',
       translangBaseUrl: 'https://translang.example.com',
       translangTargetLanguage: 'en',
-      translangSourceLanguage: 'auto',
       lingvaBaseUrl: 'https://lingva.example.com',
-      lingvaTargetLanguage: 'en',
-      lingvaSourceLanguage: 'auto',
-      small100BaseUrl: 'http://localhost:7080',
-      small100TargetLanguage: 'en',
-      small100SourceLanguage: 'auto',
       opusMtTargetLanguage: 'es',
       opusMtSourceLanguage: 'auto',
-    }, 'Release notes and product details for a broad audience')).toMatchObject({
+    }), 'Release notes and product details for a broad audience')).toMatchObject({
       likelySourceLanguage: 'en',
       sameLanguage: false,
       canAutoTranslate: true,
@@ -176,55 +154,44 @@ describe('translateTextWithConfiguration', () => {
   })
 
   it('treats short ASCII snippets as same-language when the target is English', () => {
-    expect(inspectTranslationWithConfiguration({
+    expect(inspectTranslationWithConfiguration(buildConfiguration({
       provider: 'opusmt',
-      deeplPlan: 'free',
-      deeplTargetLanguage: 'EN-US',
-      deeplSourceLanguage: 'auto',
-      deeplAuthKey: '',
-      libreBaseUrl: '',
-      libreTargetLanguage: 'en',
-      libreSourceLanguage: 'auto',
-      libreApiKey: '',
-      translangBaseUrl: '',
-      translangTargetLanguage: 'en',
-      translangSourceLanguage: 'auto',
-      lingvaBaseUrl: '',
-      lingvaTargetLanguage: 'en',
-      lingvaSourceLanguage: 'auto',
-      small100BaseUrl: 'http://localhost:7080',
-      small100TargetLanguage: 'en',
-      small100SourceLanguage: 'auto',
       opusMtTargetLanguage: 'en',
       opusMtSourceLanguage: 'auto',
-    }, 'Breaking news')).toMatchObject({
+    }), 'Breaking news')).toMatchObject({
       sameLanguage: true,
       canAutoTranslate: false,
     })
   })
 
+  it('dispatches to the Gemma provider with local language settings', async () => {
+    translateWithGemma.mockResolvedValue({
+      translation: 'Hello world',
+      detectedSourceLang: 'ja',
+    })
+
+    const result = await translateTextWithConfiguration(buildConfiguration({
+      provider: 'gemma',
+      gemmaSourceLanguage: 'auto',
+      gemmaTargetLanguage: 'en',
+    }), 'こんにちは世界')
+
+    expect(translateWithGemma).toHaveBeenCalledWith('こんにちは世界', 'auto', 'en', undefined)
+    expect(result).toMatchObject({
+      provider: 'gemma',
+      translatedText: 'Hello world',
+      detectedSourceLanguage: 'ja',
+      targetLanguage: 'en',
+    })
+  })
+
   it('falls back to Opus-MT when the configured provider is unavailable', async () => {
     loadTranslationConfiguration.mockResolvedValue({
-      provider: 'deepl',
-      deeplPlan: 'free',
-      deeplTargetLanguage: 'EN-US',
-      deeplSourceLanguage: 'auto',
-      deeplAuthKey: '',
-      libreBaseUrl: '',
-      libreTargetLanguage: 'en',
-      libreSourceLanguage: 'auto',
-      libreApiKey: '',
-      translangBaseUrl: '',
-      translangTargetLanguage: 'en',
-      translangSourceLanguage: 'auto',
-      lingvaBaseUrl: '',
-      lingvaTargetLanguage: 'en',
-      lingvaSourceLanguage: 'auto',
-      small100BaseUrl: 'http://localhost:7080',
-      small100TargetLanguage: 'en',
-      small100SourceLanguage: 'auto',
-      opusMtTargetLanguage: 'en',
-      opusMtSourceLanguage: 'ru',
+      ...buildConfiguration({
+        provider: 'deepl',
+        opusMtTargetLanguage: 'en',
+        opusMtSourceLanguage: 'ru',
+      }),
     })
     translateWithOpusMt.mockResolvedValue({ translation: 'Hello world' })
 

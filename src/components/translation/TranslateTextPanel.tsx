@@ -14,6 +14,7 @@ import {
   loadTranslationDevQueueMetricsEnabled,
   TRANSLATION_SETTINGS_UPDATED_EVENT,
 } from '@/lib/translation/storage'
+import { tTranslationUi } from '@/lib/translation/i18n'
 
 interface TranslateTextPanelProps {
   text: string
@@ -266,11 +267,11 @@ export function TranslateTextPanel({
         }
         const message = translationError instanceof TranslationServiceError
           ? (translationError.code === 'config' || translationError.code === 'unavailable'
-            ? 'Translation is not available with current settings.'
+            ? tTranslationUi('translationUnavailableCurrentSettings')
             : translationError.message)
           : translationError instanceof Error
             ? translationError.message
-            : 'Translation failed.'
+            : tTranslationUi('translationFailed')
         setResult(null)
         setError(message)
         setErrorCode(code)
@@ -279,8 +280,8 @@ export function TranslateTextPanel({
         const shouldShowToast = code === 'config' || code === 'unavailable' || code === 'network' || code === 'provider'
         if (shouldShowToast) {
           setToastMessage(code === 'config' || code === 'unavailable'
-            ? 'Translation needs setup. Open Translation Settings.'
-            : 'Translation failed. You can retry or adjust Translation Settings.')
+            ? tTranslationUi('toastNeedsSetup')
+            : tTranslationUi('toastFailed'))
           setToastVisible(true)
           if (toastTimerRef.current !== null) {
             window.clearTimeout(toastTimerRef.current)
@@ -375,17 +376,17 @@ export function TranslateTextPanel({
               onPointerDownCapture={stopPropagation}
               className="text-[12px] font-semibold tracking-[0.01em] text-[#007AFF]"
             >
-              🌐 Translate
+              🌐 {tTranslationUi('translateAction')}
             </button>
           )}
           {autoLongText && (
             <span className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
-              Long post: tap to translate on demand.
+              {tTranslationUi('longPostHint')}
             </span>
           )}
           {autoBlocked && (
             <span className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
-              Retry available in a few seconds.
+              {tTranslationUi('retrySoonHint')}
             </span>
           )}
         </div>
@@ -393,13 +394,16 @@ export function TranslateTextPanel({
 
       {loading && (
         <p className="text-[13px] italic text-[rgb(var(--color-label-tertiary))]">
-          Translating…
+          {tTranslationUi('translating')}
         </p>
       )}
 
       {import.meta.env.DEV && showQueueMetrics && (autoQueueSnapshot.active > 0 || autoQueueSnapshot.queued > 0) && (
         <p className="text-[11px] text-[rgb(var(--color-label-tertiary))]">
-          Auto-translate queue: {autoQueueSnapshot.active} active, {autoQueueSnapshot.queued} waiting
+          {tTranslationUi('autoQueueLabel', {
+            active: autoQueueSnapshot.active,
+            queued: autoQueueSnapshot.queued,
+          })}
         </p>
       )}
 
@@ -407,8 +411,8 @@ export function TranslateTextPanel({
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="text-[12px] text-[rgb(var(--color-system-red))]" title={error}>
             {errorCode === 'config' || errorCode === 'unavailable'
-              ? 'Translation unavailable'
-              : 'Translation failed'}
+              ? tTranslationUi('translationUnavailable')
+              : tTranslationUi('translationFailed')}
           </span>
           <button
             type="button"
@@ -416,7 +420,7 @@ export function TranslateTextPanel({
             onPointerDownCapture={stopPropagation}
             className="text-[12px] font-medium text-[rgb(var(--color-system-red))] underline underline-offset-2"
           >
-            Retry
+            {tTranslationUi('retry')}
           </button>
           {(errorCode === 'config' || errorCode === 'unavailable') && (
             <Link
@@ -425,7 +429,7 @@ export function TranslateTextPanel({
               onPointerDownCapture={stopPropagation}
               className="text-[12px] text-[#007AFF] underline underline-offset-2"
             >
-              Open Translation Settings
+              {tTranslationUi('openTranslationSettings')}
             </Link>
           )}
         </div>
@@ -444,7 +448,9 @@ export function TranslateTextPanel({
           )}
 
           <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-[rgb(var(--color-label-tertiary))]">
-            <span>{sourceLabel ? `Translated from ${sourceLabel}` : 'Translated'}</span>
+            <span>{sourceLabel
+              ? tTranslationUi('translatedFrom', { source: sourceLabel })
+              : tTranslationUi('translated')}</span>
             <span>·</span>
             <span>{providerLabel}</span>
             <span>·</span>
@@ -454,7 +460,7 @@ export function TranslateTextPanel({
               onPointerDownCapture={stopPropagation}
               className="font-medium text-[#007AFF]"
             >
-              {hidden ? 'Show translation' : 'Hide translation'}
+              {hidden ? tTranslationUi('showTranslation') : tTranslationUi('hideTranslation')}
             </button>
             <span>·</span>
             <button
@@ -463,7 +469,7 @@ export function TranslateTextPanel({
               onPointerDownCapture={stopPropagation}
               className="font-medium text-[#007AFF]"
             >
-              Re-translate
+              {tTranslationUi('retranslate')}
             </button>
           </p>
         </>
@@ -480,7 +486,7 @@ export function TranslateTextPanel({
                 onPointerDownCapture={stopPropagation}
                 className="font-medium text-[#007AFF] underline underline-offset-2"
               >
-                Open Translation Settings
+                {tTranslationUi('openTranslationSettings')}
               </Link>
             </p>
           </div>

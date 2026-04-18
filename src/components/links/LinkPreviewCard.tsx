@@ -160,7 +160,7 @@ export function LinkPreviewCard({
       {data.nostrCreator && (
         <NostrCreatorAttribution
           nostrCreator={data.nostrCreator}
-          nostrNip05={data.nostrNip05}
+          {...(data.nostrNip05 !== undefined ? { nostrNip05: data.nostrNip05 } : {})}
           pageHostname={host}
           showTopBorder
         />

@@ -55,6 +55,7 @@ import { extractEventHashtags } from '@/lib/feed/tagTimeline'
 import { parseCommentEvent, parseThreadEvent } from '@/lib/nostr/thread'
 import { sanitizeText } from '@/lib/security/sanitize'
 import { parseVideoEvent } from '@/lib/nostr/video'
+import { tApp } from '@/lib/i18n/app'
 import type { NostrEvent, Profile } from '@/types'
 import { Kind } from '@/types'
 import type { RecentHashtagStat } from '@/lib/db/nostr'
@@ -222,7 +223,7 @@ export default function ExplorePage() {
 
   const handleFollowPack = useCallback(async (pack: RankedExploreFollowPack) => {
     if (!currentUser) {
-      throw new Error('Connect a signer to follow pack profiles together.')
+      throw new Error(tApp('explorePackReasonConnectSigner'))
     }
     if (pack.missingProfiles.length === 0) return
 
@@ -256,6 +257,9 @@ export default function ExplorePage() {
   const hasResults = visibleEvents.length > 0 || visibleProfiles.length > 0
   const showSkeleton = fetchLoading && !hasResults && !idle
   const empty = !fetchLoading && query.length > 0 && !hasResults
+  const localResultText = hasResults
+    ? tApp('exploreStatusLocalResultsCount', { count: visibleProfiles.length })
+    : tApp('exploreStatusNoLocalResults')
 
   return (
     <div className="min-h-dvh bg-[rgb(var(--color-bg))]">
@@ -267,16 +271,16 @@ export default function ExplorePage() {
             type="button"
             onClick={() => navigate(-1)}
             className="app-panel-muted h-10 w-10 rounded-full text-[rgb(var(--color-label))] flex items-center justify-center active:opacity-80"
-            aria-label="Go back"
+            aria-label={tApp('exploreGoBack')}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
               <path d="M9.5 3.25L4.75 8l4.75 4.75" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
           <div className="min-w-0 flex-1">
-            <p className="section-kicker">Explore</p>
+            <p className="section-kicker">{tApp('exploreKicker')}</p>
             <h1 className="mt-1 text-[28px] font-semibold leading-[1.02] tracking-[-0.035em] text-[rgb(var(--color-label))]">
-              Discover
+              {tApp('exploreTitle')}
             </h1>
           </div>
         </div>
@@ -293,24 +297,29 @@ export default function ExplorePage() {
         {query.length > 0 && (
           <p className="mt-2 text-[13px] text-[rgb(var(--color-label-secondary))]">
             {localLoading
-              ? 'Searching local cache…'
+              ? tApp('exploreStatusSearchingLocal')
               : relayLoading
-                ? `${hasResults ? `${visibleProfiles.length} local results` : 'No local results'} — fetching from relays…`
-                : `Showing ${visibleProfiles.length} people and ${visibleEvents.length} posts.`}
+                ? tApp('exploreStatusLocalResultsFetchingRelays', {
+                  resultsText: localResultText,
+                })
+                : tApp('exploreStatusShowingResults', {
+                  people: visibleProfiles.length,
+                  posts: visibleEvents.length,
+                })}
           </p>
         )}
 
         {unsupportedKeys.length > 0 && (
           <p className="mt-2 text-[13px] text-[rgb(var(--color-label-secondary))]">
-            Relay-only filters in use: {unsupportedKeys.join(', ')}.
+            {tApp('exploreUnsupportedFilters', { filters: unsupportedKeys.join(', ') })}
           </p>
         )}
 
         {relayError && (
-          <p className="mt-2 text-[13px] text-[#C65D2E]">Relay search degraded: {relayError}</p>
+          <p className="mt-2 text-[13px] text-[#C65D2E]">{tApp('exploreRelayDegraded', { error: relayError })}</p>
         )}
         {semanticError && (
-          <p className="mt-2 text-[13px] text-[#C65D2E]">Semantic reranking degraded: {semanticError}</p>
+          <p className="mt-2 text-[13px] text-[#C65D2E]">{tApp('exploreSemanticDegraded', { error: semanticError })}</p>
         )}
       </div>
 
@@ -344,7 +353,7 @@ export default function ExplorePage() {
           <div className="space-y-5 mt-4">
             {visibleProfiles.length > 0 && (
               <section>
-                <h2 className="section-kicker px-1 mb-3">People</h2>
+                <h2 className="section-kicker px-1 mb-3">{tApp('explorePeopleSection')}</h2>
                 <div className="space-y-3">
                   {visibleProfiles.map(profile => (
                     <ProfileResult key={profile.pubkey} profile={profile} />
@@ -354,7 +363,7 @@ export default function ExplorePage() {
             )}
             {visibleEvents.length > 0 && (
               <section>
-                <h2 className="section-kicker px-1 mb-3">Posts</h2>
+                <h2 className="section-kicker px-1 mb-3">{tApp('explorePostsSection')}</h2>
                 <div className="space-y-3">
                   {visibleEvents.map(event => (
                     <EventResult key={event.id} event={event} />
@@ -407,9 +416,9 @@ function ExploreContent({
       <section>
         <div className="flex items-center justify-between px-1 mb-3">
           <div>
-            <h2 className="section-kicker">Trending Topics</h2>
+            <h2 className="section-kicker">{tApp('exploreTrendingTopics')}</h2>
             <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">
-              Local cache blend: popularity, diversity, freshness, and momentum
+              {tApp('exploreTrendingTopicsHint')}
             </p>
           </div>
           <div className="flex items-center gap-1 rounded-full bg-[rgb(var(--color-fill)/0.10)] p-0.5">
@@ -425,7 +434,7 @@ function ExploreContent({
                   }
                 `}
               >
-                {w === 'today' ? 'Today' : '7 Days'}
+                {w === 'today' ? tApp('exploreWindowToday') : tApp('exploreWindowWeek')}
               </button>
             ))}
           </div>
@@ -469,18 +478,18 @@ function ExploreContent({
           </div>
         ) : (
           <p className="px-1 text-[14px] text-[rgb(var(--color-label-tertiary))]">
-            No trending topics yet — sync more content to see what's popular.
+            {tApp('exploreNoTrendingTopics')}
           </p>
         )}
       </section>
 
       <section>
         <div className="px-1 mb-3">
-          <h2 className="section-kicker">Follow Packs</h2>
+          <h2 className="section-kicker">{tApp('exploreFollowPacks')}</h2>
           <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">
             {followPackSemanticApplied
-              ? 'Relay-discovered packs ranked by overlap, freshness, and semantic affinity'
-              : 'Relay-discovered packs ranked for your network overlap'}
+              ? tApp('exploreFollowPacksSemanticHint')
+              : tApp('exploreFollowPacksNetworkHint')}
           </p>
         </div>
         {followPacksLoading ? (
@@ -508,16 +517,16 @@ function ExploreContent({
           </div>
         ) : (
           <p className="px-1 text-[14px] text-[rgb(var(--color-label-tertiary))]">
-            No starter packs cached yet. Explore will surface them here as your relays publish more curated follow lists.
+            {tApp('exploreNoFollowPacks')}
           </p>
         )}
       </section>
 
       <section>
         <div className="px-1 mb-3">
-          <h2 className="section-kicker">Suggested Accounts</h2>
+          <h2 className="section-kicker">{tApp('exploreSuggestedAccounts')}</h2>
           <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">
-              Social graph + semantic affinity from your posts, profile, and candidate bios
+            {tApp('exploreSuggestedAccountsHint')}
           </p>
         </div>
         {suggestedLoading ? (
@@ -541,7 +550,7 @@ function ExploreContent({
           </div>
         ) : (
           <p className="px-1 text-[14px] text-[rgb(var(--color-label-tertiary))]">
-            Connect a signer and sync your follows to unlock social graph suggestions.
+            {tApp('exploreSuggestedAccountsEmpty')}
           </p>
         )}
       </section>
@@ -549,9 +558,9 @@ function ExploreContent({
       {/* Popular accounts */}
       <section>
         <div className="px-1 mb-3">
-          <h2 className="section-kicker">Popular Accounts</h2>
+          <h2 className="section-kicker">{tApp('explorePopularAccounts')}</h2>
           <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">
-            Consistently followed accounts in your local graph
+            {tApp('explorePopularAccountsHint')}
           </p>
         </div>
         {popularLoading ? (
@@ -569,13 +578,13 @@ function ExploreContent({
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.18, delay: i * 0.04 }}
               >
-                <ProfileResult profile={profile} subtitle="Popular in your local graph" />
+                <ProfileResult profile={profile} subtitle={tApp('explorePopularInGraph')} />
               </motion.div>
             ))}
           </div>
         ) : (
           <p className="px-1 text-[14px] text-[rgb(var(--color-label-tertiary))]">
-            No profiles cached yet.
+            {tApp('exploreNoProfilesCached')}
           </p>
         )}
       </section>
@@ -600,7 +609,7 @@ function FollowPackPreviewPerson({ entry }: { entry: FollowPackProfileEntry }) {
       <AuthorRow pubkey={entry.pubkey} profile={profile} />
       {(entry.petname || entry.relayUrl) && (
         <p className="mt-2 break-all text-[12px] leading-5 text-[rgb(var(--color-label-tertiary))]">
-          {[entry.petname ? `Pack note: ${entry.petname}` : null, entry.relayUrl].filter(Boolean).join(' • ')}
+          {[entry.petname ? tApp('explorePackNotePrefix', { petname: entry.petname }) : null, entry.relayUrl].filter(Boolean).join(' • ')}
         </p>
       )}
     </Link>
@@ -621,9 +630,12 @@ function ExploreFollowPackCard({
   const [followMessage, setFollowMessage] = useState<string | null>(null)
   const [followError, setFollowError] = useState<string | null>(null)
   const hiddenPreviewCount = Math.max(pack.totalProfiles - pack.previewProfiles.length, 0)
+  const profileWord = tApp(pack.missingCount === 1 ? 'exploreProfileSingular' : 'exploreProfilePlural')
+  const totalProfileWord = tApp(pack.totalProfiles === 1 ? 'exploreProfileSingular' : 'exploreProfilePlural')
+  const hiddenProfileWord = tApp(hiddenPreviewCount === 1 ? 'exploreProfileSingular' : 'exploreProfilePlural')
   const followLabel = pack.missingCount > 0
-    ? `Follow ${pack.missingCount}`
-    : 'Already Following'
+    ? tApp('explorePackFollowCount', { count: pack.missingCount })
+    : tApp('explorePackAlreadyFollowing')
 
   const handleFollow = async () => {
     if (!canBulkFollow || following || pack.missingCount === 0) return
@@ -635,10 +647,13 @@ function ExploreFollowPackCard({
     try {
       await onFollowPack(pack)
       setFollowMessage(
-        `Added ${pack.missingCount} new profile${pack.missingCount === 1 ? '' : 's'} from this pack to your follows.`,
+        tApp('explorePackAddedProfiles', {
+          count: pack.missingCount,
+          profileWord,
+        }),
       )
     } catch (error) {
-      setFollowError(error instanceof Error ? error.message : 'Failed to follow this pack.')
+      setFollowError(error instanceof Error ? error.message : tApp('explorePackFailedFollow'))
     } finally {
       setFollowing(false)
     }
@@ -671,14 +686,14 @@ function ExploreFollowPackCard({
 
       <div className="mt-4 flex flex-wrap gap-2">
         <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
-          {pack.totalProfiles} profile{pack.totalProfiles === 1 ? '' : 's'}
+          {tApp('explorePackProfileCount', { count: pack.totalProfiles, profileWord: totalProfileWord })}
         </span>
         <span className="rounded-full bg-[rgb(var(--color-accent)/0.14)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label))]">
-          {pack.missingCount} new
+          {tApp('explorePackNewCount', { count: pack.missingCount })}
         </span>
         {pack.overlapCount > 0 && (
           <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
-            {pack.overlapCount} already follow
+            {tApp('explorePackAlreadyFollowCount', { count: pack.overlapCount })}
           </span>
         )}
       </div>
@@ -691,7 +706,10 @@ function ExploreFollowPackCard({
 
       {hiddenPreviewCount > 0 && (
         <p className="mt-3 text-[13px] text-[rgb(var(--color-label-tertiary))]">
-          +{hiddenPreviewCount} more profile{hiddenPreviewCount === 1 ? '' : 's'} inside this pack
+          {tApp('explorePackHiddenProfiles', {
+            count: hiddenPreviewCount,
+            profileWord: hiddenProfileWord,
+          })}
         </p>
       )}
 
@@ -703,7 +721,7 @@ function ExploreFollowPackCard({
             disabled={following || pack.missingCount === 0}
             className="rounded-[14px] bg-[rgb(var(--color-label))] px-3 py-2 text-[13px] font-semibold text-white transition-opacity active:opacity-80 disabled:opacity-40"
           >
-            {following ? 'Following…' : followLabel}
+            {following ? tApp('explorePackFollowingAction') : followLabel}
           </button>
         )}
 
@@ -711,13 +729,13 @@ function ExploreFollowPackCard({
           to={pack.parsed.route}
           className="rounded-[14px] border border-[rgb(var(--color-fill)/0.14)] px-3 py-2 text-[13px] font-semibold text-[rgb(var(--color-label))] transition-opacity active:opacity-80"
         >
-          Open Pack
+          {tApp('explorePackOpenPack')}
         </Link>
       </div>
 
       {!canBulkFollow && (
         <p className="mt-3 text-[13px] leading-6 text-[rgb(var(--color-label-tertiary))]">
-          Connect a signer to follow the missing profiles from this pack together.
+          {tApp('explorePackConnectSignerHint')}
         </p>
       )}
 

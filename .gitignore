@@ -86,3 +86,7 @@ bundle-stats.json
 *.local
 .temp/
 tmp/
+
+# ── Local AI model assets ─────────────────────────────────────
+# Large local-only model files downloaded for on-device inference.
+public/models/

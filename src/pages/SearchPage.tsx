@@ -39,6 +39,7 @@ import { initSemanticSearch } from '@/lib/semantic/client'
 import { parseCommentEvent, parseThreadEvent } from '@/lib/nostr/thread'
 import { sanitizeText } from '@/lib/security/sanitize'
 import { parseVideoEvent } from '@/lib/nostr/video'
+import { tApp } from '@/lib/i18n/app'
 import type { FilterCheckResult } from '@/lib/filters/types'
 import type { NostrEvent, Profile } from '@/types'
 import { Kind } from '@/types'
@@ -182,6 +183,9 @@ export default function SearchPage() {
   const hasResults = visibleEvents.length > 0 || visibleProfiles.length > 0
   const showSkeleton = fetchLoading && !hasResults && !idle
   const empty = !fetchLoading && query.length > 0 && !hasResults
+  const localResultText = hasResults
+    ? tApp('searchStatusLocalResultsCount', { count: visibleProfiles.length })
+    : tApp('searchStatusNoLocalResults')
 
   return (
     <div className="min-h-dvh bg-[rgb(var(--color-bg))]">
@@ -197,7 +201,7 @@ export default function SearchPage() {
               flex items-center justify-center
               active:opacity-80
             "
-            aria-label="Go back"
+            aria-label={tApp('searchGoBack')}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
               <path
@@ -211,9 +215,9 @@ export default function SearchPage() {
           </button>
 
           <div className="min-w-0 flex-1">
-            <p className="section-kicker">Search</p>
+            <p className="section-kicker">{tApp('searchKicker')}</p>
             <h1 className="mt-1 text-[28px] font-semibold leading-[1.02] tracking-[-0.035em] text-[rgb(var(--color-label))]">
-              Discover
+              {tApp('searchTitle')}
             </h1>
           </div>
         </div>
@@ -230,28 +234,33 @@ export default function SearchPage() {
         {query.length > 0 && (
           <p className="mt-2 text-[13px] text-[rgb(var(--color-label-secondary))]">
             {localLoading
-              ? 'Searching local cache…'
+              ? tApp('searchStatusSearchingLocal')
               : relayLoading
-                ? `${hasResults ? `${visibleProfiles.length} local results` : 'No local results'} — fetching from relays…`
-                : `Showing ${visibleProfiles.length} people and ${visibleEvents.length} posts.`}
+                ? tApp('searchStatusLocalResultsFetchingRelays', {
+                  resultsText: localResultText,
+                })
+                : tApp('searchStatusShowingResults', {
+                  people: visibleProfiles.length,
+                  posts: visibleEvents.length,
+                })}
           </p>
         )}
 
         {unsupportedKeys.length > 0 && (
           <p className="mt-2 text-[13px] text-[rgb(var(--color-label-secondary))]">
-            Relay-only filters in use: {unsupportedKeys.join(', ')}.
+            {tApp('searchUnsupportedFilters', { filters: unsupportedKeys.join(', ') })}
           </p>
         )}
 
         {relayError && (
           <p className="mt-2 text-[13px] text-[#C65D2E]">
-            Relay search degraded: {relayError}
+            {tApp('searchRelayDegraded', { error: relayError })}
           </p>
         )}
 
         {semanticError && (
           <p className="mt-2 text-[13px] text-[#C65D2E]">
-            Semantic reranking degraded: {semanticError}
+            {tApp('searchSemanticDegraded', { error: semanticError })}
           </p>
         )}
       </div>
@@ -272,7 +281,7 @@ export default function SearchPage() {
             {visibleProfiles.length > 0 && (
               <section>
                 <h2 className="section-kicker px-1 mb-3">
-                  People
+                  {tApp('searchPeopleSection')}
                 </h2>
                 <div className="space-y-3">
                   {visibleProfiles.map(profile => (
@@ -285,7 +294,7 @@ export default function SearchPage() {
             {visibleEvents.length > 0 && (
               <section>
                 <h2 className="section-kicker px-1 mb-3">
-                  Posts
+                  {tApp('searchPostsSection')}
                 </h2>
                 <div className="space-y-3">
                   {visibleEvents.map(event => (
@@ -363,16 +372,16 @@ function EventResult({
   const attachments = getEventMediaAttachments(event)
   const hiddenUrls = getImetaHiddenUrls(event)
   const kindLabel = poll
-    ? 'Poll'
+    ? tApp('searchKindPoll')
     : article
-    ? 'Article'
+    ? tApp('searchKindArticle')
     : thread
-      ? 'Thread'
+      ? tApp('searchKindThread')
       : comment
-        ? 'Comment'
+        ? tApp('searchKindComment')
     : video
-      ? (video.isShort ? 'Short video' : 'Video')
-      : 'Note'
+      ? (video.isShort ? tApp('searchKindShortVideo') : tApp('searchKindVideo'))
+      : tApp('searchKindNote')
   const href = article?.route ?? video?.route ?? `/note/${event.id}`
 
   return (
@@ -455,11 +464,9 @@ function SearchHint() {
         text-[rgb(var(--color-label))]
       "
     >
-      <p className="text-headline mb-2">Search the people and stories already close at hand</p>
+      <p className="text-headline mb-2">{tApp('searchHintTitle')}</p>
       <p className="text-body text-[rgb(var(--color-label-secondary))]">
-        Use phrases in quotes for exact matches. Local ranking is blended with
-        on-device semantic results when available, and standardized
-        `domain:example.com` filters continue to pass through to relays.
+        {tApp('searchHintBody')}
       </p>
     </motion.div>
   )
@@ -476,10 +483,10 @@ function SearchEmpty() {
       "
     >
       <p className="text-headline text-[rgb(var(--color-label))] mb-2">
-        No search results
+        {tApp('searchEmptyTitle')}
       </p>
       <p className="text-body text-[rgb(var(--color-label-secondary))]">
-        Try a broader query or remove any relay-only filters.
+        {tApp('searchEmptyBody')}
       </p>
     </motion.div>
   )

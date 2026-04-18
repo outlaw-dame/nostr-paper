@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
   getDeepLTransportSummary,
+  getGemmaTransportSummary,
   getLibreTransportSummary,
   getSmall100TransportSummary,
   getOpusMtTransportSummary,
@@ -23,6 +24,7 @@ import {
   type TranslationProvider,
 } from '@/lib/translation/storage'
 import { getBrowserLanguage } from '@/lib/translation/detect'
+import { tTranslationUi } from '@/lib/translation/i18n'
 
 function sortLanguages(languages: TranslationLanguage[]): TranslationLanguage[] {
   return [...languages].sort((left, right) => left.name.localeCompare(right.name))
@@ -62,6 +64,8 @@ function buildDraftConfiguration(input: {
   small100SourceLanguage: string
   opusMtTargetLanguage: string
   opusMtSourceLanguage: string
+  gemmaTargetLanguage: string
+  gemmaSourceLanguage: string
 }): TranslationConfiguration {
   const preferences = normalizeTranslationPreferences({
     provider: input.provider,
@@ -82,6 +86,8 @@ function buildDraftConfiguration(input: {
     small100SourceLanguage: input.small100SourceLanguage,
     opusMtTargetLanguage: input.opusMtTargetLanguage,
     opusMtSourceLanguage: input.opusMtSourceLanguage,
+    gemmaTargetLanguage: input.gemmaTargetLanguage,
+    gemmaSourceLanguage: input.gemmaSourceLanguage,
   })
 
   return {
@@ -179,6 +185,8 @@ export function TranslationSettingsCard() {
   const [small100SourceLanguage, setSmall100SourceLanguage] = useState('auto')
   const [opusMtTargetLanguage, setOpusMtTargetLanguage] = useState('en')
   const [opusMtSourceLanguage, setOpusMtSourceLanguage] = useState('auto')
+  const [gemmaTargetLanguage, setGemmaTargetLanguage] = useState('en')
+  const [gemmaSourceLanguage, setGemmaSourceLanguage] = useState('auto')
   const [sourceLanguages, setSourceLanguages] = useState<TranslationLanguage[]>([])
   const [targetLanguages, setTargetLanguages] = useState<TranslationLanguage[]>([])
   const [saving, setSaving] = useState(false)
@@ -221,10 +229,12 @@ export function TranslationSettingsCard() {
         setSmall100SourceLanguage(configuration.small100SourceLanguage)
         setOpusMtTargetLanguage(configuration.opusMtTargetLanguage)
         setOpusMtSourceLanguage(configuration.opusMtSourceLanguage)
+        setGemmaTargetLanguage(configuration.gemmaTargetLanguage)
+        setGemmaSourceLanguage(configuration.gemmaSourceLanguage)
       })
       .catch(() => {
         if (cancelled) return
-        setError('Failed to load translation settings.')
+        setError(tTranslationUi('loadSettingsFailed'))
       })
       .finally(() => {
         if (!cancelled) {
@@ -247,6 +257,8 @@ export function TranslationSettingsCard() {
       })
     } else if (provider === 'opusmt') {
       setTransportSummary(getOpusMtTransportSummary())
+    } else if (provider === 'gemma') {
+      setTransportSummary(getGemmaTransportSummary())
     } else if (provider === 'translang') {
       setTransportSummary(getTranslangTransportSummary(translangBaseUrl))
     } else if (provider === 'lingva') {
@@ -279,6 +291,8 @@ export function TranslationSettingsCard() {
     small100SourceLanguage,
     opusMtTargetLanguage,
     opusMtSourceLanguage,
+    gemmaTargetLanguage,
+    gemmaSourceLanguage,
   })
 
   function getSelectedSourceLanguage(): string {
@@ -295,6 +309,8 @@ export function TranslationSettingsCard() {
         return small100SourceLanguage
       case 'opusmt':
         return opusMtSourceLanguage
+      case 'gemma':
+        return gemmaSourceLanguage
     }
   }
 
@@ -312,6 +328,8 @@ export function TranslationSettingsCard() {
         return small100TargetLanguage
       case 'opusmt':
         return opusMtTargetLanguage
+      case 'gemma':
+        return gemmaTargetLanguage
     }
   }
 
@@ -334,6 +352,9 @@ export function TranslationSettingsCard() {
         return
       case 'opusmt':
         setOpusMtSourceLanguage(value)
+        return
+      case 'gemma':
+        setGemmaSourceLanguage(value)
         return
     }
   }
@@ -358,6 +379,9 @@ export function TranslationSettingsCard() {
       case 'opusmt':
         setOpusMtTargetLanguage(value)
         return
+      case 'gemma':
+        setGemmaTargetLanguage(value)
+        return
     }
   }
 
@@ -372,9 +396,9 @@ export function TranslationSettingsCard() {
         deeplAuthKey: draftConfiguration.deeplAuthKey,
         libreApiKey: draftConfiguration.libreApiKey,
       })
-      setMessage('Translation settings saved locally.')
+      setMessage(tTranslationUi('saveSettingsSuccess'))
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'Failed to save translation settings.')
+      setError(saveError instanceof Error ? saveError.message : tTranslationUi('saveSettingsFailed'))
     } finally {
       setSaving(false)
     }
@@ -404,9 +428,13 @@ export function TranslationSettingsCard() {
         setSelectedSourceLanguage('auto')
       }
 
-      setMessage(`Loaded ${targets.length} ${getProviderDisplayName(provider)} target language${targets.length === 1 ? '' : 's'}.`)
+      setMessage(tTranslationUi('loadLanguagesSuccess', {
+        count: targets.length,
+        provider: getProviderDisplayName(provider),
+        suffix: targets.length === 1 ? '' : 's',
+      }))
     } catch (languageError) {
-      setError(languageError instanceof Error ? languageError.message : 'Failed to load provider languages.')
+      setError(languageError instanceof Error ? languageError.message : tTranslationUi('loadLanguagesFailed'))
     } finally {
       setLoadingLanguages(false)
     }
@@ -421,9 +449,9 @@ export function TranslationSettingsCard() {
       await clearTranslationSecrets()
       setDeeplAuthKey('')
       setLibreApiKey('')
-      setMessage('Stored translation API keys cleared.')
+      setMessage(tTranslationUi('clearKeysSuccess'))
     } catch (clearError) {
-      setError(clearError instanceof Error ? clearError.message : 'Failed to clear stored translation API keys.')
+      setError(clearError instanceof Error ? clearError.message : tTranslationUi('clearKeysFailed'))
     } finally {
       setClearing(false)
     }
@@ -448,9 +476,9 @@ export function TranslationSettingsCard() {
         small100SourceLanguage: 'auto',
         small100TargetLanguage: targetLanguage,
       })
-      setMessage(`Applied local SMaLL-100 preset (target: ${targetLanguage}).`)
+      setMessage(tTranslationUi('presetApplied', { target: targetLanguage }))
     } catch (presetError) {
-      setError(presetError instanceof Error ? presetError.message : 'Failed to apply local preset.')
+      setError(presetError instanceof Error ? presetError.message : tTranslationUi('presetFailed'))
     }
   }
 
@@ -458,7 +486,7 @@ export function TranslationSettingsCard() {
     return (
       <div className="rounded-[20px] border border-[rgb(var(--color-fill)/0.16)] bg-[rgb(var(--color-bg-secondary))] p-4">
         <p className="text-[14px] text-[rgb(var(--color-label-secondary))]">
-          Loading translation settings…
+          {tTranslationUi('loadingTranslationSettings')}
         </p>
       </div>
     )
@@ -467,15 +495,15 @@ export function TranslationSettingsCard() {
   return (
     <div className="rounded-[20px] border border-[rgb(var(--color-fill)/0.16)] bg-[rgb(var(--color-bg-secondary))] p-4">
       <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
-        Inline Translation
+        {tTranslationUi('inlineTranslationTitle')}
       </p>
       <p className="mt-2 text-[14px] leading-relaxed text-[rgb(var(--color-label-secondary))]">
-        Notes, articles, and profile bios auto-translate inline once a provider is configured. API keys are encrypted locally when the browser supports Web Crypto and IndexedDB. No keys are sent to relays.
+        {tTranslationUi('inlineTranslationIntro')}
       </p>
 
       <label className="mt-4 block">
         <span className="text-[13px] font-medium text-[rgb(var(--color-label))]">
-          Provider
+          {tTranslationUi('providerLabel')}
         </span>
         <select
           value={provider}
@@ -487,6 +515,7 @@ export function TranslationSettingsCard() {
               : value === 'lingva' ? 'lingva'
               : value === 'small100' ? 'small100'
               : value === 'opusmt' ? 'opusmt'
+              : value === 'gemma' ? 'gemma'
               : 'deepl'
             )
             setSourceLanguages([])
@@ -502,6 +531,7 @@ export function TranslationSettingsCard() {
           <option value="lingva">Lingva (Google Translate frontend)</option>
           <option value="small100">SMaLL-100 (local daemon)</option>
           <option value="opusmt">Opus-MT (in-browser)</option>
+          <option value="gemma">Gemma 4 (on-device)</option>
         </select>
       </label>
 
@@ -512,7 +542,7 @@ export function TranslationSettingsCard() {
           disabled={saving || loadingLanguages || clearing}
           className="w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] px-4 py-2.5 text-[14px] font-medium text-[rgb(var(--color-label))] transition-opacity active:opacity-75 disabled:opacity-40"
         >
-          Use Local SMaLL-100 Defaults
+          {tTranslationUi('useLocalDefaults')}
         </button>
       </div>
 
@@ -762,24 +792,50 @@ export function TranslationSettingsCard() {
             Models download once (~50–300 MB per language pair) and run entirely in your browser. No data leaves your device after download, but pair coverage is limited compared with TransLang or SMaLL-100.
           </p>
         </>
+      ) : provider === 'gemma' ? (
+        <>
+          <LanguageInput
+            id="gemma-source-language"
+            label="Source language"
+            value={gemmaSourceLanguage}
+            onChange={setGemmaSourceLanguage}
+            languages={sourceLanguages}
+            allowAuto
+            placeholder="auto"
+          />
+          <LanguageInput
+            id="gemma-target-language"
+            label="Target language"
+            value={gemmaTargetLanguage}
+            onChange={setGemmaTargetLanguage}
+            languages={targetLanguages}
+            placeholder="en"
+          />
+
+          <p className="mt-3 text-[12px] leading-5 text-[rgb(var(--color-label-secondary))]">
+            Runs entirely on your device using the local Gemma 4 model and WebGPU. No translation text is sent to any remote service, but responses are generated by an LLM, so wording can be less literal than dedicated MT engines.
+          </p>
+        </>
       ) : null}
 
       <div className="mt-4 rounded-[16px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] p-3">
         <p className="text-[13px] font-medium text-[rgb(var(--color-label))]">
-          Transport
+          {tTranslationUi('transportLabel')}
         </p>
         <p className="mt-1 text-[13px] leading-6 text-[rgb(var(--color-label-secondary))]">
           {transportSummary}
         </p>
         <p className="mt-2 text-[13px] leading-6 text-[rgb(var(--color-label-secondary))]">
-          Storage: {storageMode === 'encrypted-indexeddb' ? 'Encrypted local persistence' : 'Session-only fallback'}
+          {tTranslationUi('storageLabel')}: {storageMode === 'encrypted-indexeddb'
+            ? tTranslationUi('storageEncrypted')
+            : tTranslationUi('storageSessionOnly')}
         </p>
       </div>
 
       {import.meta.env.DEV && (
         <label className="mt-3 flex items-center justify-between gap-3 rounded-[14px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] px-3 py-2.5">
           <span className="text-[13px] text-[rgb(var(--color-label-secondary))]">
-            Show auto-translate queue metrics in feed (dev)
+            {tTranslationUi('queueMetricsLabel')}
           </span>
           <input
             type="checkbox"
@@ -836,7 +892,7 @@ export function TranslationSettingsCard() {
             transition-opacity active:opacity-75 disabled:opacity-40
           "
         >
-          {loadingLanguages ? 'Loading…' : 'Load Languages'}
+          {loadingLanguages ? tTranslationUi('loadingLanguages') : tTranslationUi('loadLanguages')}
         </button>
         <button
           type="button"
@@ -848,7 +904,7 @@ export function TranslationSettingsCard() {
             transition-opacity active:opacity-75 disabled:opacity-40
           "
         >
-          {saving ? 'Saving…' : 'Save Settings'}
+          {saving ? tTranslationUi('saving') : tTranslationUi('saveSettings')}
         </button>
       </div>
 
@@ -863,7 +919,7 @@ export function TranslationSettingsCard() {
           transition-opacity active:opacity-75 disabled:opacity-40
         "
       >
-        {clearing ? 'Clearing…' : 'Clear Stored API Keys'}
+        {clearing ? tTranslationUi('clearing') : tTranslationUi('clearStoredKeys')}
       </button>
     </div>
   )

@@ -75,6 +75,7 @@ import { parseRepostEvent } from '@/lib/nostr/repost'
 import { warmSelfThreadIndexCache } from '@/lib/nostr/threadIndex'
 import { parseCommentEvent } from '@/lib/nostr/thread'
 import { getPeerTubeEmbedUrl, getVimeoVideoId, getYouTubeVideoId } from '@/lib/nostr/imeta'
+import { tApp } from '@/lib/i18n/app'
 import type { ParsedVideoEvent } from '@/lib/nostr/video'
 import type { FilterCheckResult } from '@/lib/filters/types'
 import type { FeedSection, NostrEvent, Profile } from '@/types'
@@ -1065,7 +1066,7 @@ export default function FeedPage() {
           overflow-hidden text-[rgb(var(--color-label-secondary))]
           transition-opacity active:opacity-70
         "
-        aria-label={currentUser ? 'My Profile' : 'Sign In'}
+        aria-label={currentUser ? tApp('navMyProfile') : tApp('navSignIn')}
       >
         {currentUserProfile?.picture ? (
           <img
@@ -1091,12 +1092,12 @@ export default function FeedPage() {
           text-[rgb(var(--color-label-secondary))]
           transition-opacity active:opacity-70
         "
-        aria-label="Activity"
+        aria-label={tApp('navActivity')}
       >
         {currentUser && hasUnreadActivity && (
           <span
             className="absolute -right-0.5 -top-0.5 min-w-[16px] rounded-full bg-[rgb(var(--color-system-red))] px-1 py-[1px] text-center text-[10px] font-semibold leading-[1.2] text-white"
-            aria-label={`${activityUnreadCount} unread notifications`}
+            aria-label={tApp('navUnreadNotifications', { count: activityUnreadCount })}
           >
             {activityUnreadBadgeText}
           </span>
@@ -1116,7 +1117,7 @@ export default function FeedPage() {
           text-[rgb(var(--color-label-secondary))]
           transition-opacity active:opacity-70
         "
-        aria-label="Settings"
+        aria-label={tApp('navSettings')}
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <circle cx="12" cy="12" r="3" />
@@ -1133,7 +1134,7 @@ export default function FeedPage() {
           text-[rgb(var(--color-label))]
           transition-opacity active:opacity-70
         "
-        aria-label="Compose a note"
+        aria-label={tApp('navComposeNote')}
       >
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
           <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
@@ -1158,7 +1159,7 @@ export default function FeedPage() {
         <div className="glass rounded-full px-4 py-1.5 flex items-center gap-2">
           <span className="h-2 w-2 rounded-full bg-[rgb(var(--color-accent))]" />
           <span className="text-[rgb(var(--color-label))] text-[14px] font-medium">
-            Pull to compose
+            {tApp('feedPullToCompose')}
           </span>
         </div>
       </motion.div>
@@ -1214,7 +1215,7 @@ export default function FeedPage() {
                   text-left text-[15px] text-[rgb(var(--color-label-tertiary))]
                   transition-opacity active:opacity-80
                 "
-                aria-label="Open search"
+                aria-label={tApp('feedOpenSearch')}
               >
                 <svg
                   width="16" height="16" viewBox="0 0 16 16" fill="none"
@@ -1224,7 +1225,7 @@ export default function FeedPage() {
                   <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.5" />
                   <path d="M10 10l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                 </svg>
-                <span className="truncate">Search notes, articles, videos, and people</span>
+                <span className="truncate">{tApp('feedSearchPrompt')}</span>
               </button>
             </section>
 
@@ -1548,8 +1549,8 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
         {!poll && isStoryCard && storyNostrCreator && (
           <NostrCreatorAttribution
             nostrCreator={storyNostrCreator}
-            nostrNip05={storyNostrNip05}
-            pageHostname={storyHostname}
+            {...(storyNostrNip05 !== undefined ? { nostrNip05: storyNostrNip05 } : {})}
+            pageHostname={storyHostname ?? null}
             className="mt-2 rounded-[14px] bg-[rgb(var(--color-fill)/0.03)]"
           />
         )}

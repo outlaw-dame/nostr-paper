@@ -1,7 +1,7 @@
 import { createStore, del, get, set } from 'idb-keyval'
 import { getBrowserLanguage } from '@/lib/translation/detect'
 
-export type TranslationProvider = 'deepl' | 'libretranslate' | 'small100' | 'opusmt' | 'translang' | 'lingva'
+export type TranslationProvider = 'deepl' | 'libretranslate' | 'small100' | 'opusmt' | 'translang' | 'lingva' | 'gemma'
 export type DeepLApiPlan = 'free' | 'pro'
 export type TranslationStorageMode = 'encrypted-indexeddb' | 'session-only'
 
@@ -24,6 +24,8 @@ export interface TranslationPreferences {
   small100SourceLanguage: string
   opusMtTargetLanguage: string
   opusMtSourceLanguage: string
+  gemmaTargetLanguage: string
+  gemmaSourceLanguage: string
 }
 
 export interface TranslationSecrets {
@@ -78,6 +80,8 @@ const DEFAULT_PREFERENCES: TranslationPreferences = {
   small100SourceLanguage: 'auto',
   opusMtTargetLanguage: 'en',
   opusMtSourceLanguage: 'auto',
+  gemmaTargetLanguage: 'en',
+  gemmaSourceLanguage: 'auto',
 }
 
 const DEFAULT_SECRETS: TranslationSecrets = {
@@ -297,6 +301,7 @@ export function normalizeTranslationPreferences(
       : raw.provider === 'lingva' ? 'lingva'
       : raw.provider === 'small100' ? 'small100'
       : raw.provider === 'opusmt' ? 'opusmt'
+      : raw.provider === 'gemma' ? 'gemma'
       : DEFAULT_PREFERENCES.provider,
     deeplPlan: raw.deeplPlan === 'pro' ? 'pro' : 'free',
     deeplTargetLanguage: normalizeDeepLLanguage(raw.deeplTargetLanguage, false, deeplTargetFallback),
@@ -319,6 +324,8 @@ export function normalizeTranslationPreferences(
     small100SourceLanguage: normalizeLibreLanguage(raw.small100SourceLanguage, true),
     opusMtTargetLanguage: normalizeLibreLanguage(raw.opusMtTargetLanguage, false, libreTargetFallback),
     opusMtSourceLanguage: normalizeLibreLanguage(raw.opusMtSourceLanguage, true),
+    gemmaTargetLanguage: normalizeLibreLanguage(raw.gemmaTargetLanguage, false, libreTargetFallback),
+    gemmaSourceLanguage: normalizeLibreLanguage(raw.gemmaSourceLanguage, true),
   }
 }
 

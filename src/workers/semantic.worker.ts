@@ -456,7 +456,7 @@ async function rankDocuments(
 }
 
 self.addEventListener('message', async (event: MessageEvent<SemanticWorkerRequest>) => {
-  const respond = (result: { matches?: SemanticMatch[]; model?: string }) => {
+  const respond = (result: Extract<SemanticWorkerResponse, { result: unknown }>['result']) => {
     self.postMessage({ id: event.data.id, result } satisfies SemanticWorkerResponse)
   }
   const respondError = (error: unknown) => {

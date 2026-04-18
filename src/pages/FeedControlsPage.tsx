@@ -10,6 +10,7 @@ import {
   getShowSyndicationRankingReasons,
   setShowSyndicationRankingReasons,
 } from '@/lib/syndication/settings'
+import { tApp } from '@/lib/i18n/app'
 
 function pct(value: number): string {
   return `${Math.round(value * 100)}%`
@@ -131,7 +132,7 @@ finalScore = baseScore + semanticAffinity * ${controls.followPacks.semanticBoost
               flex items-center justify-center
               active:opacity-80
             "
-            aria-label="Go back"
+            aria-label={tApp('feedControlsGoBack')}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
               <path
@@ -145,10 +146,10 @@ finalScore = baseScore + semanticAffinity * ${controls.followPacks.semanticBoost
           </button>
           <div>
             <h1 className="text-[20px] font-semibold text-[rgb(var(--color-label))]">
-              Feed Controls
+              {tApp('feedControlsTitle')}
             </h1>
             <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
-              Tune Explore ranking formulas for trends, suggestions, and follow packs.
+              {tApp('feedControlsSubtitle')}
             </p>
           </div>
         </div>
@@ -158,15 +159,15 @@ finalScore = baseScore + semanticAffinity * ${controls.followPacks.semanticBoost
         <section>
           <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-3">
             <p className="text-[13px] leading-6 text-[rgb(var(--color-label-secondary))]">
-              Changes apply immediately to Explore and are saved on this device.
+              {tApp('feedControlsImmediateApply')}
             </p>
             <label className="flex items-start gap-3 rounded-[12px] border border-[rgb(var(--color-fill)/0.14)] bg-[rgb(var(--color-bg-secondary))] p-3">
               <div className="mt-0.5 flex-1">
                 <p className="text-[13px] font-medium text-[rgb(var(--color-label))]">
-                  Syndication: show ranking reasons
+                  {tApp('feedControlsSyndicationReasons')}
                 </p>
                 <p className="mt-1 text-[12px] text-[rgb(var(--color-label-secondary))]">
-                  Opt-in to show why discovered feed results ranked where they did on the Syndication Feeds page.
+                  {tApp('feedControlsSyndicationReasonsHint')}
                 </p>
               </div>
               <button
@@ -193,19 +194,19 @@ finalScore = baseScore + semanticAffinity * ${controls.followPacks.semanticBoost
               onClick={() => setControls(resetDiscoveryControls())}
               className="rounded-[12px] border border-[rgb(var(--color-fill)/0.18)] px-3 py-2 text-[13px] font-semibold text-[rgb(var(--color-label))] active:opacity-80"
             >
-              Reset Defaults
+              {tApp('feedControlsResetDefaults')}
             </button>
           </div>
         </section>
 
         <section>
-          <h2 className="section-kicker px-1 mb-3">Trending Topics</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('feedControlsTrendingTopics')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-3">
             <p className="text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
-              Trending blends popularity, author diversity, freshness, and momentum to better capture what is currently rising.
+              {tApp('feedControlsTrendingHint')}
             </p>
             <WeightSlider
-              label="Popularity"
+              label={tApp('feedControlsPopularity')}
               value={controls.trending.popularity}
               onChange={(value) => updateControls((previous) => ({
                 ...previous,
@@ -213,7 +214,7 @@ finalScore = baseScore + semanticAffinity * ${controls.followPacks.semanticBoost
               }))}
             />
             <WeightSlider
-              label="Diversity"
+              label={tApp('feedControlsDiversity')}
               value={controls.trending.diversity}
               onChange={(value) => updateControls((previous) => ({
                 ...previous,
@@ -221,7 +222,7 @@ finalScore = baseScore + semanticAffinity * ${controls.followPacks.semanticBoost
               }))}
             />
             <WeightSlider
-              label="Freshness"
+              label={tApp('feedControlsFreshness')}
               value={controls.trending.freshness}
               onChange={(value) => updateControls((previous) => ({
                 ...previous,
@@ -229,7 +230,7 @@ finalScore = baseScore + semanticAffinity * ${controls.followPacks.semanticBoost
               }))}
             />
             <WeightSlider
-              label="Momentum"
+              label={tApp('feedControlsMomentum')}
               value={controls.trending.momentum}
               onChange={(value) => updateControls((previous) => ({
                 ...previous,
@@ -240,19 +241,19 @@ finalScore = baseScore + semanticAffinity * ${controls.followPacks.semanticBoost
 {trendingFormula}
             </pre>
             <p className="text-[12px] leading-5 text-[rgb(var(--color-label-tertiary))]">
-              Dominant long-running topics are intentionally preserved; freshness is a soft influence, not a hard suppression.
+              {tApp('feedControlsTrendingFootnote')}
             </p>
           </div>
         </section>
 
         <section>
-          <h2 className="section-kicker px-1 mb-3">Suggested Accounts</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('feedControlsSuggestedAccounts')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-3">
             <p className="text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
-              Suggestions blend social graph strength with semantic affinity from posts, hashtags, and bios.
+              {tApp('feedControlsSuggestedHint')}
             </p>
             <WeightSlider
-              label="Social Weight"
+              label={tApp('feedControlsSocialWeight')}
               value={controls.suggested.social}
               onChange={(value) => updateControls((previous) => ({
                 ...previous,
@@ -260,7 +261,7 @@ finalScore = baseScore + semanticAffinity * ${controls.followPacks.semanticBoost
               }))}
             />
             <WeightSlider
-              label="Semantic Weight"
+              label={tApp('feedControlsSemanticWeight')}
               value={controls.suggested.semantic}
               onChange={(value) => updateControls((previous) => ({
                 ...previous,
@@ -268,7 +269,7 @@ finalScore = baseScore + semanticAffinity * ${controls.followPacks.semanticBoost
               }))}
             />
             <WeightSlider
-              label="Semantic: Keyword"
+              label={tApp('feedControlsSemanticKeyword')}
               value={controls.suggested.keyword}
               onChange={(value) => updateControls((previous) => ({
                 ...previous,
@@ -276,7 +277,7 @@ finalScore = baseScore + semanticAffinity * ${controls.followPacks.semanticBoost
               }))}
             />
             <WeightSlider
-              label="Semantic: Hashtag"
+              label={tApp('feedControlsSemanticHashtag')}
               value={controls.suggested.hashtag}
               onChange={(value) => updateControls((previous) => ({
                 ...previous,
@@ -284,7 +285,7 @@ finalScore = baseScore + semanticAffinity * ${controls.followPacks.semanticBoost
               }))}
             />
             <WeightSlider
-              label="Semantic: Bio"
+              label={tApp('feedControlsSemanticBio')}
               value={controls.suggested.bio}
               onChange={(value) => updateControls((previous) => ({
                 ...previous,
@@ -292,7 +293,7 @@ finalScore = baseScore + semanticAffinity * ${controls.followPacks.semanticBoost
               }))}
             />
             <WeightSlider
-              label="Semantic: Language"
+              label={tApp('feedControlsSemanticLanguage')}
               value={controls.suggested.language}
               onChange={(value) => updateControls((previous) => ({
                 ...previous,
@@ -303,19 +304,19 @@ finalScore = baseScore + semanticAffinity * ${controls.followPacks.semanticBoost
 {suggestedFormula}
             </pre>
             <p className="text-[12px] leading-5 text-[rgb(var(--color-label-tertiary))]">
-              Suggestions do not require a minimum post count. If local posts are sparse, profile metadata still contributes to semantic matching.
+              {tApp('feedControlsSuggestedFootnote')}
             </p>
           </div>
         </section>
 
         <section>
-          <h2 className="section-kicker px-1 mb-3">Follow Packs</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('feedControlsFollowPacks')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-3">
             <p className="text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
-              Follow Packs are ranked with social overlap, freshness, metadata quality, and semantic affinity.
+              {tApp('feedControlsFollowPacksHint')}
             </p>
             <BoostSlider
-              label="Semantic Boost"
+              label={tApp('feedControlsSemanticBoost')}
               value={controls.followPacks.semanticBoost}
               onChange={(value) => updateControls((previous) => ({
                 ...previous,
@@ -329,7 +330,7 @@ finalScore = baseScore + semanticAffinity * ${controls.followPacks.semanticBoost
 {followPackFormula}
             </pre>
             <p className="text-[12px] leading-5 text-[rgb(var(--color-label-tertiary))]">
-              Semantic affinity compares your recent interests and profile signals with pack author/preview profile content. It has no hard minimum-post requirement.
+              {tApp('feedControlsFollowPacksFootnote')}
             </p>
           </div>
         </section>

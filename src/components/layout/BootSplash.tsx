@@ -7,6 +7,7 @@
  */
 
 import { motion } from 'motion/react'
+import { tApp } from '@/lib/i18n/app'
 
 interface BootSplashProps {
   minimal?: boolean
@@ -28,7 +29,7 @@ export function BootSplash({ minimal = false }: BootSplashProps) {
         bg-[rgb(var(--color-bg))]
       "
       role="status"
-      aria-label="Loading Nostr Paper"
+      aria-label={tApp('bootLoadingLabel')}
       style={{
         backgroundImage: 'radial-gradient(circle at top, rgb(var(--color-bg-secondary)) 0%, rgb(var(--color-bg)) 42%)',
       }}
@@ -62,7 +63,7 @@ export function BootSplash({ minimal = false }: BootSplashProps) {
         transition={{ duration: 0.4, delay: 0.5 }}
         className="mb-12 text-[15px] text-[rgb(var(--color-label-secondary))]"
       >
-        Stories from Nostr
+        {tApp('bootSubtitle')}
       </motion.p>
 
       {/* Loading indicator */}

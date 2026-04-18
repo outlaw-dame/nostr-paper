@@ -10,6 +10,7 @@ import { ACTIVITY_KINDS, ACTIVITY_WINDOW_DAYS } from '@/lib/activity/constants'
 import { parseReactionEvent } from '@/lib/nostr/reaction'
 import { parseRepostEvent } from '@/lib/nostr/repost'
 import { parseZapReceipt } from '@/lib/nostr/zap'
+import { getAppLocale, tApp } from '@/lib/i18n/app'
 import { isValidHex32 } from '@/lib/security/sanitize'
 import type { FeedSection, NostrEvent } from '@/types'
 
@@ -39,7 +40,7 @@ export default function ActivityPage() {
     if (!currentUser?.pubkey) return null
     return {
       id: 'activity',
-      label: 'Activity',
+      label: tApp('activityLabel'),
       filter: {
         kinds: ACTIVITY_KINDS,
         '#p': [currentUser.pubkey],
@@ -52,7 +53,7 @@ export default function ActivityPage() {
   const { events, loading, error, refresh } = useNostrFeed({
     section: section ?? {
       id: 'activity-disabled',
-      label: 'Activity',
+      label: tApp('activityLabel'),
       filter: { kinds: [], limit: 1 },
     },
     enabled: section !== null,
@@ -76,7 +77,7 @@ export default function ActivityPage() {
             type="button"
             onClick={() => navigate(-1)}
             className="app-panel-muted h-10 w-10 rounded-full text-[rgb(var(--color-label))] flex items-center justify-center active:opacity-80"
-            aria-label="Go back"
+            aria-label={tApp('activityGoBack')}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
               <path d="M9.5 3.25L4.75 8l4.75 4.75" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -89,18 +90,18 @@ export default function ActivityPage() {
               onClick={markAllSeen}
               disabled={!hasUnread}
               className="app-panel-muted h-10 rounded-full px-3 text-[13px] font-medium text-[rgb(var(--color-label-secondary))] active:opacity-80 disabled:opacity-45"
-              aria-label="Mark all activity as seen"
+              aria-label={tApp('activityMarkAllSeenAria')}
             >
-              Mark all seen
+              {tApp('activityMarkAllSeen')}
             </button>
 
             <button
               type="button"
               onClick={refresh}
               className="app-panel-muted h-10 rounded-full px-3 text-[13px] font-medium text-[rgb(var(--color-label-secondary))] active:opacity-80"
-              aria-label="Refresh activity"
+              aria-label={tApp('activityRefreshAria')}
             >
-              Refresh
+              {tApp('activityRefresh')}
             </button>
           </div>
         </div>
@@ -110,7 +111,7 @@ export default function ActivityPage() {
         {!currentUser?.pubkey ? (
           <div className="app-panel mt-3 rounded-ios-xl p-5 text-center">
             <p className="text-[15px] text-[rgb(var(--color-label-secondary))]">
-              Sign in to see your activity.
+              {tApp('activitySignInPrompt')}
             </p>
           </div>
         ) : loading && groups.length === 0 ? (
@@ -122,10 +123,10 @@ export default function ActivityPage() {
         ) : groups.length === 0 ? (
           <div className="app-panel mt-3 rounded-ios-xl p-5 text-center">
             <p className="text-[15px] text-[rgb(var(--color-label-secondary))]">
-              You&apos;re all caught up.
+              {tApp('activityCaughtUpTitle')}
             </p>
             <p className="mt-2 text-[13px] text-[rgb(var(--color-label-tertiary))]">
-              New mentions, reactions, reposts, and zaps that reference your pubkey appear here.
+              {tApp('activityCaughtUpSubtitle')}
             </p>
           </div>
         ) : (
@@ -137,7 +138,7 @@ export default function ActivityPage() {
         )}
 
         {error && (
-          <p className="mt-4 text-[13px] text-[#C65D2E]">Activity degraded: {error}</p>
+          <p className="mt-4 text-[13px] text-[#C65D2E]">{tApp('activityDegraded', { error })}</p>
         )}
       </div>
     </div>
@@ -219,39 +220,49 @@ function ActorAvatar({ pubkey }: { pubkey: string }) {
 
 function renderSummary(group: ActivityGroup): string {
   const actorCount = group.actors.length
-  const lead = actorCount <= 1 ? 'Someone' : `${actorCount} people`
+  const lead = actorCount <= 1
+    ? tApp('activitySomeone')
+    : tApp('activityPeopleCount', { count: actorCount })
 
   if (group.kind === 'mention') {
     return actorCount <= 1
-      ? 'Someone mentioned you.'
-      : `${lead} mentioned you.`
+      ? tApp('activityMentionSingle')
+      : tApp('activityMentionMulti', { count: actorCount })
   }
 
   const segments: string[] = []
   if (group.stats.reaction > 0) {
-    segments.push(group.stats.reaction === 1 ? 'reacted' : `${group.stats.reaction} reactions`)
+    segments.push(group.stats.reaction === 1
+      ? tApp('activitySegmentReacted')
+      : tApp('activitySegmentReactions', { count: group.stats.reaction }))
   }
   if (group.stats.repost > 0) {
-    segments.push(group.stats.repost === 1 ? 'reposted' : `${group.stats.repost} reposts`)
+    segments.push(group.stats.repost === 1
+      ? tApp('activitySegmentReposted')
+      : tApp('activitySegmentReposts', { count: group.stats.repost }))
   }
   if (group.stats.zap > 0) {
-    segments.push(group.stats.zap === 1 ? 'zapped' : `${group.stats.zap} zaps`)
+    segments.push(group.stats.zap === 1
+      ? tApp('activitySegmentZapped')
+      : tApp('activitySegmentZaps', { count: group.stats.zap }))
   }
 
-  if (segments.length === 0) return `${lead} interacted with your post.`
-  return `${lead} ${segments.join(' • ')} on your post.`
+  if (segments.length === 0) return tApp('activityInteractedFallback', { lead })
+  return tApp('activityInteractedSummary', { lead, segments: segments.join(' • ') })
 }
 
 function formatRelative(createdAt: number): string {
   const now = Math.floor(Date.now() / 1000)
   const diff = now - createdAt
 
-  if (diff < 60) return 'Just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86_400) return `${Math.floor(diff / 3600)}h ago`
-  if (diff < 604_800) return `${Math.floor(diff / 86_400)}d ago`
+  if (diff < 60) return tApp('activityJustNow')
 
-  return new Date(createdAt * 1000).toLocaleDateString()
+  const formatter = new Intl.RelativeTimeFormat(getAppLocale(), { numeric: 'auto' })
+  if (diff < 3600) return formatter.format(-Math.floor(diff / 60), 'minute')
+  if (diff < 86_400) return formatter.format(-Math.floor(diff / 3600), 'hour')
+  if (diff < 604_800) return formatter.format(-Math.floor(diff / 86_400), 'day')
+
+  return new Intl.DateTimeFormat(getAppLocale()).format(new Date(createdAt * 1000))
 }
 
 function getLastEventTag(event: NostrEvent, tagName: string): string | null {

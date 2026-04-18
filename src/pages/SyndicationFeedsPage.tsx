@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '@/contexts/app-context'
+import { tApp } from '@/lib/i18n/app'
 import {
   discoverSyndicationFeedCandidates,
   verifySyndicationFeed,
@@ -28,46 +29,87 @@ type VerificationState = {
   tone: 'neutral' | 'ok' | 'warn'
 }
 
-const KIND_LABELS: Record<SavedSyndicationFeedKind, string> = {
-  auto: 'Auto-detect',
-  rss: 'RSS',
-  atom: 'Atom',
-  rdf: 'RDF',
-  json: 'JSON Feed',
-  podcast: 'Podcasting 2.0',
+function getKindLabel(kind: SavedSyndicationFeedKind): string {
+  switch (kind) {
+    case 'auto':
+      return tApp('syndicationAutoDetect')
+    case 'rss':
+      return tApp('syndicationKindRss')
+    case 'atom':
+      return tApp('syndicationKindAtom')
+    case 'rdf':
+      return tApp('syndicationKindRdf')
+    case 'json':
+      return tApp('syndicationKindJsonFeed')
+    case 'podcast':
+      return tApp('syndicationKindPodcast')
+  }
 }
 
-const SOURCE_TYPE_LABELS: Record<SavedSyndicationSourceType, string> = {
-  feed: 'Feed Source',
-  link: 'Link Source',
+function getSourceTypeLabel(sourceType: SavedSyndicationSourceType): string {
+  switch (sourceType) {
+    case 'feed':
+      return tApp('syndicationFeedSource')
+    case 'link':
+      return tApp('syndicationLinkSource')
+  }
 }
 
-const LINK_KIND_LABELS: Record<SavedSyndicationLinkKind, string> = {
-  website: 'Website',
-  newsletter: 'Newsletter',
-  video: 'Video Channel',
-  social: 'Social Profile',
-  'podcast-home': 'Podcast Homepage',
-  other: 'Other',
+function getLinkKindLabel(kind: SavedSyndicationLinkKind): string {
+  switch (kind) {
+    case 'website':
+      return tApp('syndicationWebsite')
+    case 'newsletter':
+      return tApp('syndicationNewsletter')
+    case 'video':
+      return tApp('syndicationVideoChannel')
+    case 'social':
+      return tApp('syndicationSocialProfile')
+    case 'podcast-home':
+      return tApp('syndicationPodcastHomepage')
+    case 'other':
+      return tApp('syndicationOther')
+  }
 }
 
-const FEED_VERIFY_ERROR_MESSAGE: Record<SyndicationVerifyErrorCode, string> = {
-  'invalid-url': 'Invalid URL. Use a valid HTTPS URL.',
-  'private-host-blocked': 'Private and localhost feed URLs are blocked outside local development.',
-  'network-error': 'Network error while fetching the feed. Please retry.',
-  'rate-limited': 'Feed host rate limited this request. Retry in a moment.',
-  'server-error': 'Feed host returned a temporary server error. Please retry.',
-  'http-error': 'Feed host rejected this URL.',
-  'payload-too-large': 'Feed is too large to process safely.',
-  'invalid-payload': 'Feed response payload was invalid.',
-  'parse-failed': 'Could not parse this URL as RSS, Atom, RDF, or JSON Feed.',
+function getFeedVerifyErrorMessage(errorCode: SyndicationVerifyErrorCode): string {
+  switch (errorCode) {
+    case 'invalid-url':
+      return tApp('syndicationErrorInvalidUrl')
+    case 'private-host-blocked':
+      return tApp('syndicationErrorPrivateHost')
+    case 'network-error':
+      return tApp('syndicationErrorNetwork')
+    case 'rate-limited':
+      return tApp('syndicationErrorRateLimited')
+    case 'server-error':
+      return tApp('syndicationErrorServer')
+    case 'http-error':
+      return tApp('syndicationErrorHttp')
+    case 'payload-too-large':
+      return tApp('syndicationErrorPayloadTooLarge')
+    case 'invalid-payload':
+      return tApp('syndicationErrorInvalidPayload')
+    case 'parse-failed':
+      return tApp('syndicationErrorParseFailed')
+  }
 }
 
-const DISCOVERY_SOURCE_LABELS: Record<SyndicationDiscoveredFeedCandidate['via'], string> = {
-  direct: 'Direct URL',
-  linked: 'Page link',
-  common: 'Common path',
-  feedsearch: 'Feedsearch',
+function getDiscoverySourceLabel(source: SyndicationDiscoveredFeedCandidate['via']): string {
+  switch (source) {
+    case 'direct':
+      return tApp('syndicationDirectUrl')
+    case 'linked':
+      return tApp('syndicationPageLink')
+    case 'common':
+      return tApp('syndicationCommonPath')
+    case 'feedsearch':
+      return tApp('syndicationFeedsearch')
+  }
+}
+
+function getItemWord(count: number): string {
+  return tApp(count === 1 ? 'syndicationItemSingular' : 'syndicationItemPlural')
 }
 
 function getScopeId(pubkey: string | undefined): string {
@@ -131,7 +173,7 @@ export default function SyndicationFeedsPage() {
     }, scopeId)
 
     if (!saved) {
-      setError('Enter a valid HTTPS source URL.')
+      setError(tApp('syndicationEnterValidHttps'))
       return
     }
 
@@ -153,7 +195,7 @@ export default function SyndicationFeedsPage() {
 
     const rawUrl = urlDraft.trim()
     if (!rawUrl) {
-      setDiscoveryError('Enter a URL first.')
+      setDiscoveryError(tApp('syndicationEnterUrlFirst'))
       return
     }
 
@@ -162,14 +204,14 @@ export default function SyndicationFeedsPage() {
       const result = await discoverSyndicationFeedCandidates(rawUrl)
       if (result.candidates.length === 0) {
         const errorCode = result.errorCode ?? 'parse-failed'
-        setDiscoveryError(FEED_VERIFY_ERROR_MESSAGE[errorCode])
+        setDiscoveryError(getFeedVerifyErrorMessage(errorCode))
         return
       }
 
       setDiscoveredCandidates(result.candidates)
       setUsedFeedsearchFallback(result.usedFeedsearchFallback)
     } catch {
-      setDiscoveryError('Feed discovery failed due to a temporary network error.')
+      setDiscoveryError(tApp('syndicationDiscoveryTemporaryError'))
     } finally {
       setDiscovering(false)
     }
@@ -184,7 +226,7 @@ export default function SyndicationFeedsPage() {
     }, scopeId)
 
     if (!saved) {
-      setDiscoveryError('Could not add this discovered feed URL.')
+      setDiscoveryError(tApp('syndicationAddDiscoveredFailed'))
       return
     }
 
@@ -214,7 +256,7 @@ export default function SyndicationFeedsPage() {
         ...previous,
         [entry.id]: {
           loading: false,
-          message: 'Verification is only available for feed sources.',
+          message: tApp('syndicationVerificationFeedOnly'),
           tone: 'warn',
         },
       }))
@@ -225,7 +267,7 @@ export default function SyndicationFeedsPage() {
       ...previous,
       [entry.id]: {
         loading: true,
-        message: 'Verifying feed…',
+        message: tApp('syndicationVerifying'),
         tone: 'neutral',
       },
     }))
@@ -238,7 +280,7 @@ export default function SyndicationFeedsPage() {
           ...previous,
           [entry.id]: {
             loading: false,
-            message: FEED_VERIFY_ERROR_MESSAGE[result.errorCode ?? 'parse-failed'],
+            message: getFeedVerifyErrorMessage(result.errorCode ?? 'parse-failed'),
             tone: 'warn',
           },
         }))
@@ -250,14 +292,22 @@ export default function SyndicationFeedsPage() {
       const kindMismatch = entry.kind !== 'auto' && entry.kind !== 'podcast' && entry.kind !== parsed.format
       const podcastMismatch = entry.kind === 'podcast' && !podcastDetected
 
-      let message = `${parsed.format.toUpperCase()} feed detected with ${itemCount} item${itemCount === 1 ? '' : 's'}${podcastDetected ? ' (Podcast metadata found)' : ''}.`
+      let message = tApp('syndicationDetectedWithItems', {
+        format: parsed.format.toUpperCase(),
+        count: itemCount,
+        itemWord: getItemWord(itemCount),
+        podcastSuffix: podcastDetected ? tApp('syndicationPodcastMetadataSuffix') : '',
+      })
       let tone: VerificationState['tone'] = 'ok'
 
       if (kindMismatch) {
-        message = `${message} Saved type is ${KIND_LABELS[entry.kind]}, but detected ${parsed.format.toUpperCase()}.`
+        message = `${message}${tApp('syndicationSavedTypeMismatch', {
+          savedType: getKindLabel(entry.kind),
+          detectedType: parsed.format.toUpperCase(),
+        })}`
         tone = 'warn'
       } else if (podcastMismatch) {
-        message = `${message} Saved type is Podcasting 2.0, but no podcast namespace metadata was found.`
+        message = `${message}${tApp('syndicationSavedPodcastMismatch')}`
         tone = 'warn'
       }
 
@@ -274,7 +324,7 @@ export default function SyndicationFeedsPage() {
         ...previous,
         [entry.id]: {
           loading: false,
-          message: 'Feed verification failed due to a temporary network error.',
+          message: tApp('syndicationVerifyNetworkError'),
           tone: 'warn',
         },
       }))
@@ -308,7 +358,7 @@ export default function SyndicationFeedsPage() {
     }, scopeId)
 
     if (!saved) {
-      setEditError('Enter a valid HTTPS source URL.')
+      setEditError(tApp('syndicationEnterValidHttps'))
       return
     }
 
@@ -330,7 +380,7 @@ export default function SyndicationFeedsPage() {
               flex items-center justify-center
               active:opacity-80
             "
-            aria-label="Go back"
+            aria-label={tApp('syndicationGoBack')}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
               <path
@@ -344,10 +394,10 @@ export default function SyndicationFeedsPage() {
           </button>
           <div>
             <h1 className="text-[20px] font-semibold text-[rgb(var(--color-label))]">
-              Syndication Feeds
+              {tApp('syndicationTitle')}
             </h1>
             <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
-              Save RSS, Atom, RDF, JSON Feed, podcast feeds, and supporting source links for quick reuse.
+              {tApp('syndicationSubtitle')}
             </p>
           </div>
         </div>
@@ -355,71 +405,71 @@ export default function SyndicationFeedsPage() {
 
       <div className="space-y-5 pb-10 pt-2">
         <section>
-          <h2 className="section-kicker px-1 mb-3">Add Source</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('syndicationAddSourceSection')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-3">
             <label className="block">
-              <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">Source Type</span>
+              <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">{tApp('syndicationSourceType')}</span>
               <select
                 value={sourceTypeDraft}
                 onChange={(event) => setSourceTypeDraft(event.target.value as SavedSyndicationSourceType)}
                 className="w-full rounded-[12px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[14px] text-[rgb(var(--color-label))] outline-none focus:ring-2 focus:ring-[rgb(var(--color-accent)/0.4)]"
               >
-                {Object.entries(SOURCE_TYPE_LABELS).map(([sourceType, label]) => (
-                  <option key={sourceType} value={sourceType}>{label}</option>
+                {(['feed', 'link'] as const).map((sourceType) => (
+                  <option key={sourceType} value={sourceType}>{getSourceTypeLabel(sourceType)}</option>
                 ))}
               </select>
             </label>
 
             <label className="block">
               <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
-                {sourceTypeDraft === 'feed' ? 'Feed URL' : 'Source URL'}
+                {sourceTypeDraft === 'feed' ? tApp('syndicationFeedUrlLabel') : tApp('syndicationSourceUrlLabel')}
               </span>
               <input
                 type="url"
                 value={urlDraft}
                 onChange={(event) => setUrlDraft(event.target.value)}
-                placeholder={sourceTypeDraft === 'feed' ? 'https://example.com/feed.xml' : 'https://example.com'}
+                placeholder={sourceTypeDraft === 'feed' ? tApp('syndicationFeedPlaceholder') : tApp('syndicationSourcePlaceholder')}
                 className="w-full rounded-[12px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[14px] text-[rgb(var(--color-label))] outline-none focus:ring-2 focus:ring-[rgb(var(--color-accent)/0.4)]"
               />
             </label>
             <p className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
-              Save direct feed URLs or related source links. Feed verification can parse RSS, Atom, RDF, JSON Feed, and Podcasting 2.0 metadata.
+              {tApp('syndicationSourceHint')}
             </p>
 
             <label className="block">
-              <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">Label (optional)</span>
+              <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">{tApp('syndicationLabelOptional')}</span>
               <input
                 type="text"
                 value={labelDraft}
                 onChange={(event) => setLabelDraft(event.target.value)}
-                placeholder="My podcast feed"
+                placeholder={tApp('syndicationLabelPlaceholder')}
                 className="w-full rounded-[12px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[14px] text-[rgb(var(--color-label))] outline-none focus:ring-2 focus:ring-[rgb(var(--color-accent)/0.4)]"
               />
             </label>
 
             {sourceTypeDraft === 'feed' ? (
               <label className="block">
-                <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">Feed Type</span>
+                <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">{tApp('syndicationFeedType')}</span>
                 <select
                   value={kindDraft}
                   onChange={(event) => setKindDraft(event.target.value as SavedSyndicationFeedKind)}
                   className="w-full rounded-[12px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[14px] text-[rgb(var(--color-label))] outline-none focus:ring-2 focus:ring-[rgb(var(--color-accent)/0.4)]"
                 >
-                  {Object.entries(KIND_LABELS).map(([kind, label]) => (
-                    <option key={kind} value={kind}>{label}</option>
+                  {(['auto', 'rss', 'atom', 'rdf', 'json', 'podcast'] as const).map((kind) => (
+                    <option key={kind} value={kind}>{getKindLabel(kind)}</option>
                   ))}
                 </select>
               </label>
             ) : (
               <label className="block">
-                <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">Link Type</span>
+                <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">{tApp('syndicationLinkType')}</span>
                 <select
                   value={linkKindDraft}
                   onChange={(event) => setLinkKindDraft(event.target.value as SavedSyndicationLinkKind)}
                   className="w-full rounded-[12px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[14px] text-[rgb(var(--color-label))] outline-none focus:ring-2 focus:ring-[rgb(var(--color-accent)/0.4)]"
                 >
-                  {Object.entries(LINK_KIND_LABELS).map(([kind, label]) => (
-                    <option key={kind} value={kind}>{label}</option>
+                  {(['website', 'newsletter', 'video', 'social', 'podcast-home', 'other'] as const).map((kind) => (
+                    <option key={kind} value={kind}>{getLinkKindLabel(kind)}</option>
                   ))}
                 </select>
               </label>
@@ -429,10 +479,10 @@ export default function SyndicationFeedsPage() {
               <label className="flex items-start gap-3 rounded-[12px] border border-[rgb(var(--color-fill)/0.14)] bg-[rgb(var(--color-bg-secondary))] p-3">
                 <div className="mt-0.5 flex-1">
                   <p className="text-[13px] font-medium text-[rgb(var(--color-label))]">
-                    Show ranking reasons
+                    {tApp('syndicationShowRankingReasons')}
                   </p>
                   <p className="mt-1 text-[12px] text-[rgb(var(--color-label-secondary))]">
-                    Opt-in to show why each discovered feed ranked where it did.
+                    {tApp('syndicationShowRankingReasonsHint')}
                   </p>
                 </div>
                 <button
@@ -463,7 +513,7 @@ export default function SyndicationFeedsPage() {
                 disabled={discovering}
                 className="rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-4 py-2.5 text-[14px] font-medium text-[rgb(var(--color-label))] active:opacity-80 disabled:opacity-50"
               >
-                {discovering ? 'Discovering…' : 'Discover Feeds'}
+                {discovering ? tApp('syndicationDiscovering') : tApp('syndicationDiscoverFeeds')}
               </button>
             )}
 
@@ -478,18 +528,18 @@ export default function SyndicationFeedsPage() {
             {discoveredCandidates.length > 0 && (
               <div className="space-y-2 rounded-[12px] border border-[rgb(var(--color-fill)/0.14)] bg-[rgb(var(--color-bg-secondary))] p-3">
                 <p className="text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
-                  Discovered feeds (ranked)
+                  {tApp('syndicationDiscoveredFeedsRanked')}
                 </p>
                 {usedFeedsearchFallback && (
                   <p className="text-[11px] text-[rgb(var(--color-label-tertiary))]">
-                    Fallback provider:{' '}
+                    {tApp('syndicationFallbackProvider')}{' '}
                     <a
                       href="https://feedsearch.dev"
                       target="_blank"
                       rel="noreferrer"
                       className="underline"
                     >
-                      powered by feedsearch.dev
+                      {tApp('syndicationPoweredByFeedsearch')}
                     </a>
                   </p>
                 )}
@@ -504,10 +554,13 @@ export default function SyndicationFeedsPage() {
                             {candidate.format.toUpperCase()}
                           </span>
                           <span className="rounded-full bg-[rgb(var(--color-fill)/0.1)] px-2 py-0.5 text-[10px] font-medium text-[rgb(var(--color-label-secondary))]">
-                            {candidate.itemCount} items
+                            {tApp('syndicationItemsCount', {
+                              count: candidate.itemCount,
+                              itemWord: getItemWord(candidate.itemCount),
+                            })}
                           </span>
                           <span className="rounded-full bg-[rgb(var(--color-fill)/0.1)] px-2 py-0.5 text-[10px] font-medium text-[rgb(var(--color-label-secondary))]">
-                            {DISCOVERY_SOURCE_LABELS[candidate.via]}
+                            {getDiscoverySourceLabel(candidate.via)}
                           </span>
                           {showRankingReasons && candidate.rankingReasons.slice(0, 3).map((reason) => (
                             <span
@@ -524,7 +577,7 @@ export default function SyndicationFeedsPage() {
                         onClick={() => handleAddDiscoveredFeed(candidate)}
                         className="shrink-0 rounded-[9px] border border-[rgb(var(--color-fill)/0.18)] px-2.5 py-1 text-[11px] font-medium text-[rgb(var(--color-label))] active:opacity-80"
                       >
-                        Add
+                        {tApp('syndicationAddButton')}
                       </button>
                     </div>
                   </div>
@@ -537,24 +590,24 @@ export default function SyndicationFeedsPage() {
               onClick={handleAddFeed}
               className="rounded-[14px] bg-[rgb(var(--color-label))] px-4 py-2.5 text-[14px] font-medium text-[rgb(var(--color-bg))] active:opacity-80"
             >
-              Add Source
+              {tApp('syndicationAddSourceButton')}
             </button>
           </div>
         </section>
 
         <section>
-          <h2 className="section-kicker px-1 mb-3">Saved Sources</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('syndicationSavedSources')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-3">
             {feedLinks.length === 0 ? (
               <p className="text-[14px] text-[rgb(var(--color-label-secondary))]">
-                No saved sources yet.
+                {tApp('syndicationNoSavedSources')}
               </p>
             ) : (
               feedLinks.map((entry) => {
                 const status = verification[entry.id]
                 const isEditing = editingId === entry.id
-                const sourceTypeLabel = SOURCE_TYPE_LABELS[entry.sourceType]
-                const sourceKindLabel = entry.sourceType === 'feed' ? KIND_LABELS[entry.kind] : LINK_KIND_LABELS[entry.linkKind]
+                const sourceTypeLabel = getSourceTypeLabel(entry.sourceType)
+                const sourceKindLabel = entry.sourceType === 'feed' ? getKindLabel(entry.kind) : getLinkKindLabel(entry.linkKind)
                 return (
                   <div
                     key={entry.id}
@@ -562,23 +615,23 @@ export default function SyndicationFeedsPage() {
                   >
                     {isEditing ? (
                       <div className="space-y-3">
-                        <p className="text-[13px] font-semibold text-[rgb(var(--color-label))]">Edit Source</p>
+                        <p className="text-[13px] font-semibold text-[rgb(var(--color-label))]">{tApp('syndicationEditSource')}</p>
 
                         <label className="block">
-                          <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">Source Type</span>
+                          <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">{tApp('syndicationSourceType')}</span>
                           <select
                             value={editSourceType}
                             onChange={(event) => setEditSourceType(event.target.value as SavedSyndicationSourceType)}
                             className="w-full rounded-[10px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[13px] text-[rgb(var(--color-label))] outline-none focus:ring-2 focus:ring-[rgb(var(--color-accent)/0.4)]"
                           >
-                            {Object.entries(SOURCE_TYPE_LABELS).map(([st, label]) => (
-                              <option key={st} value={st}>{label}</option>
+                            {(['feed', 'link'] as const).map((sourceType) => (
+                              <option key={sourceType} value={sourceType}>{getSourceTypeLabel(sourceType)}</option>
                             ))}
                           </select>
                         </label>
 
                         <label className="block">
-                          <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">URL</span>
+                          <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">{tApp('syndicationUrl')}</span>
                           <input
                             type="url"
                             value={editUrl}
@@ -588,7 +641,7 @@ export default function SyndicationFeedsPage() {
                         </label>
 
                         <label className="block">
-                          <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">Label</span>
+                          <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">{tApp('syndicationLabelOptional')}</span>
                           <input
                             type="text"
                             value={editLabel}
@@ -599,27 +652,27 @@ export default function SyndicationFeedsPage() {
 
                         {editSourceType === 'feed' ? (
                           <label className="block">
-                            <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">Feed Type</span>
+                            <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">{tApp('syndicationFeedType')}</span>
                             <select
                               value={editKind}
                               onChange={(event) => setEditKind(event.target.value as SavedSyndicationFeedKind)}
                               className="w-full rounded-[10px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[13px] text-[rgb(var(--color-label))] outline-none focus:ring-2 focus:ring-[rgb(var(--color-accent)/0.4)]"
                             >
-                              {Object.entries(KIND_LABELS).map(([k, label]) => (
-                                <option key={k} value={k}>{label}</option>
+                              {(['auto', 'rss', 'atom', 'rdf', 'json', 'podcast'] as const).map((kind) => (
+                                <option key={kind} value={kind}>{getKindLabel(kind)}</option>
                               ))}
                             </select>
                           </label>
                         ) : (
                           <label className="block">
-                            <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">Link Type</span>
+                            <span className="mb-1 block text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">{tApp('syndicationLinkType')}</span>
                             <select
                               value={editLinkKind}
                               onChange={(event) => setEditLinkKind(event.target.value as SavedSyndicationLinkKind)}
                               className="w-full rounded-[10px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[13px] text-[rgb(var(--color-label))] outline-none focus:ring-2 focus:ring-[rgb(var(--color-accent)/0.4)]"
                             >
-                              {Object.entries(LINK_KIND_LABELS).map(([k, label]) => (
-                                <option key={k} value={k}>{label}</option>
+                              {(['website', 'newsletter', 'video', 'social', 'podcast-home', 'other'] as const).map((kind) => (
+                                <option key={kind} value={kind}>{getLinkKindLabel(kind)}</option>
                               ))}
                             </select>
                           </label>
@@ -635,14 +688,14 @@ export default function SyndicationFeedsPage() {
                             onClick={() => handleSaveEdit(entry)}
                             className="rounded-[10px] bg-[rgb(var(--color-label))] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-bg))] active:opacity-80"
                           >
-                            Save
+                            {tApp('syndicationSave')}
                           </button>
                           <button
                             type="button"
                             onClick={handleCancelEdit}
                             className="rounded-[10px] border border-[rgb(var(--color-fill)/0.18)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label))] active:opacity-80"
                           >
-                            Cancel
+                            {tApp('syndicationCancel')}
                           </button>
                         </div>
                       </div>
@@ -669,7 +722,7 @@ export default function SyndicationFeedsPage() {
                                 disabled={status?.loading}
                                 className="rounded-[10px] border border-[rgb(var(--color-fill)/0.18)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label))] active:opacity-80 disabled:opacity-50"
                               >
-                                {status?.loading ? 'Checking…' : 'Verify'}
+                                {status?.loading ? tApp('syndicationChecking') : tApp('syndicationVerify')}
                               </button>
                             )}
                             <button
@@ -677,14 +730,14 @@ export default function SyndicationFeedsPage() {
                               onClick={() => handleStartEdit(entry)}
                               className="rounded-[10px] border border-[rgb(var(--color-fill)/0.18)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label))] active:opacity-80"
                             >
-                              Edit
+                              {tApp('syndicationEdit')}
                             </button>
                             <button
                               type="button"
                               onClick={() => handleDeleteFeed(entry.id)}
                               className="rounded-[10px] border border-[rgb(var(--color-system-red)/0.25)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-system-red))] active:opacity-80"
                             >
-                              Remove
+                              {tApp('syndicationRemove')}
                             </button>
                           </div>
                         </div>

@@ -96,6 +96,7 @@ describe('normalizeTranslationPreferences', () => {
       provider: 'opusmt',
     })).toMatchObject({
       opusMtTargetLanguage: 'fr',
+      gemmaTargetLanguage: 'fr',
       libreTargetLanguage: 'fr',
       lingvaTargetLanguage: 'fr',
       translangTargetLanguage: 'fr-CA',

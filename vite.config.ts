@@ -1396,7 +1396,7 @@ export default defineConfig(({ mode }) => {
     },
 
     optimizeDeps: {
-      exclude: ['@sqlite.org/sqlite-wasm'],
+      exclude: ['@sqlite.org/sqlite-wasm', '@mediapipe/tasks-genai'],
     },
 
     worker: {

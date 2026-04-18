@@ -300,7 +300,12 @@ function SyndicationEntryRow({
 
   switch (kind) {
     case 'podcast':
-      return <PodcastEntryRow item={item} feedArtwork={feedArtwork} />
+      return (
+        <PodcastEntryRow
+          item={item}
+          {...(feedArtwork !== undefined ? { feedArtwork } : {})}
+        />
+      )
     case 'video':
       return <VideoEntryRow item={item} />
     case 'audio':

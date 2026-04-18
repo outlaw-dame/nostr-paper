@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { tApp } from '@/lib/i18n/app'
 import {
   clearBootDiagnosticsForDebug,
   readBootSessionForDebug,
@@ -119,7 +120,7 @@ export default function DebugPage() {
               flex items-center justify-center
               active:opacity-80
             "
-            aria-label="Go back"
+            aria-label={tApp('debugGoBack')}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
               <path
@@ -132,22 +133,22 @@ export default function DebugPage() {
             </svg>
           </button>
           <h1 className="text-[20px] font-semibold text-[rgb(var(--color-label))]">
-            Debug
+            {tApp('debugTitle')}
           </h1>
         </div>
       </div>
 
       <div className="space-y-8 pb-10 pt-2">
         <section>
-          <h2 className="section-kicker px-1 mb-3">Developer Options</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('debugDeveloperOptionsSection')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
-                  Thread Inspector Overlay
+                  {tApp('debugThreadInspectorLabel')}
                 </p>
                 <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
-                  Show event id, kind, signature preview, and reply linkage on note screens and preview cards.
+                  {tApp('debugThreadInspectorHint')}
                 </p>
               </div>
               <button
@@ -173,45 +174,45 @@ export default function DebugPage() {
         </section>
 
         <section>
-          <h2 className="section-kicker px-1 mb-3">Diagnostics</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('debugDiagnosticsSection')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-4">
             <div className="rounded-[14px] bg-[rgb(var(--color-bg-secondary))] p-3">
-              <p className="text-[12px] uppercase tracking-[0.08em] text-[rgb(var(--color-label-tertiary))]">Current session</p>
+              <p className="text-[12px] uppercase tracking-[0.08em] text-[rgb(var(--color-label-tertiary))]">{tApp('debugCurrentSessionLabel')}</p>
               <p className="mt-1 text-[14px] text-[rgb(var(--color-label-secondary))]">
                 {diagnostics.session
-                  ? `Stage: ${diagnostics.session.stage} · Started ${formatTime(diagnostics.session.startedAt)}`
-                  : 'No active boot session found.'}
+                  ? tApp('debugSessionSummary', { stage: diagnostics.session.stage, time: formatTime(diagnostics.session.startedAt) })
+                  : tApp('debugNoActiveSession')}
               </p>
             </div>
 
             <div className="rounded-[14px] bg-[rgb(var(--color-bg-secondary))] p-3">
-              <p className="text-[12px] uppercase tracking-[0.08em] text-[rgb(var(--color-label-tertiary))]">Last failure</p>
+              <p className="text-[12px] uppercase tracking-[0.08em] text-[rgb(var(--color-label-tertiary))]">{tApp('debugLastFailureLabel')}</p>
               {diagnostics.lastFailure ? (
                 <div className="mt-1 space-y-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
-                  <p>Stage: {diagnostics.lastFailure.stage}</p>
-                  <p>When: {formatTime(diagnostics.lastFailure.timestamp)}</p>
-                  <p className="break-words">Reason: {diagnostics.lastFailure.reason}</p>
+                  <p>{tApp('debugFailureStage', { stage: diagnostics.lastFailure.stage })}</p>
+                  <p>{tApp('debugFailureWhen', { when: formatTime(diagnostics.lastFailure.timestamp) })}</p>
+                  <p className="break-words">{tApp('debugFailureReason', { reason: diagnostics.lastFailure.reason })}</p>
                 </div>
               ) : (
-                <p className="mt-1 text-[14px] text-[rgb(var(--color-label-secondary))]">No boot failure recorded.</p>
+                <p className="mt-1 text-[14px] text-[rgb(var(--color-label-secondary))]">{tApp('debugNoBootFailure')}</p>
               )}
             </div>
 
             <div className="rounded-[14px] bg-[rgb(var(--color-bg-secondary))] p-3">
-              <p className="text-[12px] uppercase tracking-[0.08em] text-[rgb(var(--color-label-tertiary))]">Last success</p>
+              <p className="text-[12px] uppercase tracking-[0.08em] text-[rgb(var(--color-label-tertiary))]">{tApp('debugLastSuccessLabel')}</p>
               {diagnostics.lastSuccess ? (
                 <div className="mt-1 space-y-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
-                  <p>Stage: {diagnostics.lastSuccess.stage}</p>
-                  <p>When: {formatTime(diagnostics.lastSuccess.timestamp)}</p>
-                  <p>Duration: {diagnostics.lastSuccess.durationMs} ms</p>
+                  <p>{tApp('debugSuccessStage', { stage: diagnostics.lastSuccess.stage })}</p>
+                  <p>{tApp('debugSuccessWhen', { when: formatTime(diagnostics.lastSuccess.timestamp) })}</p>
+                  <p>{tApp('debugSuccessDuration', { ms: diagnostics.lastSuccess.durationMs })}</p>
                 </div>
               ) : (
-                <p className="mt-1 text-[14px] text-[rgb(var(--color-label-secondary))]">No boot success recorded yet.</p>
+                <p className="mt-1 text-[14px] text-[rgb(var(--color-label-secondary))]">{tApp('debugNoBootSuccess')}</p>
               )}
             </div>
 
             <label className="block text-[13px] font-medium text-[rgb(var(--color-label-secondary))]">
-              Raw payload
+              {tApp('debugRawPayloadLabel')}
             </label>
             <textarea
               value={diagnosticsJson}
@@ -226,7 +227,7 @@ export default function DebugPage() {
                 onClick={() => setRefreshTick((value) => value + 1)}
                 className="rounded-[12px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[13px] font-medium text-[rgb(var(--color-label))]"
               >
-                Refresh
+                {tApp('debugRefresh')}
               </button>
 
               <button
@@ -241,7 +242,7 @@ export default function DebugPage() {
                 }}
                 className="rounded-[12px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[13px] font-medium text-[rgb(var(--color-label))]"
               >
-                Copy JSON
+                {tApp('debugCopyJson')}
               </button>
 
               <button
@@ -256,7 +257,7 @@ export default function DebugPage() {
                 }}
                 className="rounded-[12px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[13px] font-medium text-[rgb(var(--color-label))]"
               >
-                Export
+                {tApp('debugExport')}
               </button>
 
               <button
@@ -267,24 +268,24 @@ export default function DebugPage() {
                 }}
                 className="rounded-[12px] border border-[rgb(var(--color-system-red)/0.24)] bg-[rgb(var(--color-system-red)/0.08)] px-3 py-2 text-[13px] font-medium text-[rgb(var(--color-system-red))]"
               >
-                Clear Diagnostics
+                {tApp('debugClearDiagnostics')}
               </button>
             </div>
 
             {copyStatus === 'copied' && (
-              <p className="text-[12px] text-[rgb(var(--color-system-green))]">Copied diagnostics JSON.</p>
+              <p className="text-[12px] text-[rgb(var(--color-system-green))]">{tApp('debugCopied')}</p>
             )}
             {copyStatus === 'failed' && (
-              <p className="text-[12px] text-[rgb(var(--color-system-red))]">Failed to copy diagnostics JSON.</p>
+              <p className="text-[12px] text-[rgb(var(--color-system-red))]">{tApp('debugCopyFailed')}</p>
             )}
             {exportStatus === 'shared' && (
-              <p className="text-[12px] text-[rgb(var(--color-system-green))]">Shared diagnostics via system sheet.</p>
+              <p className="text-[12px] text-[rgb(var(--color-system-green))]">{tApp('debugShared')}</p>
             )}
             {exportStatus === 'downloaded' && (
-              <p className="text-[12px] text-[rgb(var(--color-system-green))]">Downloaded diagnostics JSON file.</p>
+              <p className="text-[12px] text-[rgb(var(--color-system-green))]">{tApp('debugDownloaded')}</p>
             )}
             {exportStatus === 'failed' && (
-              <p className="text-[12px] text-[rgb(var(--color-system-red))]">Failed to export diagnostics.</p>
+              <p className="text-[12px] text-[rgb(var(--color-system-red))]">{tApp('debugExportFailed')}</p>
             )}
           </div>
         </section>

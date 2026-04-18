@@ -23,6 +23,7 @@ import {
   normalizeLanguageCode,
 } from '@/lib/translation/detect'
 import { listLingvaLanguages, translateWithLingva } from '@/lib/translation/engines/lingva'
+import { getGemmaTransportSummary, listGemmaLanguages, translateWithGemma } from '@/lib/translation/engines/gemma'
 import { isRecord } from '@/lib/translation/utils'
 
 export interface TranslationLanguage {
@@ -111,6 +112,8 @@ function buildCacheKey(
     small100SourceLanguage: configuration.small100SourceLanguage,
     opusMtTargetLanguage: configuration.opusMtTargetLanguage,
     opusMtSourceLanguage: configuration.opusMtSourceLanguage,
+    gemmaTargetLanguage: configuration.gemmaTargetLanguage,
+    gemmaSourceLanguage: configuration.gemmaSourceLanguage,
     text,
   })
 }
@@ -123,6 +126,7 @@ function getConfiguredTargetLanguage(configuration: TranslationConfiguration): s
     case 'lingva': return configuration.lingvaTargetLanguage
     case 'small100': return configuration.small100TargetLanguage
     case 'opusmt': return configuration.opusMtTargetLanguage
+    case 'gemma': return configuration.gemmaTargetLanguage
   }
 }
 
@@ -134,6 +138,7 @@ function getConfiguredSourceLanguage(configuration: TranslationConfiguration): s
     case 'lingva': return configuration.lingvaSourceLanguage
     case 'small100': return configuration.small100SourceLanguage
     case 'opusmt': return configuration.opusMtSourceLanguage
+    case 'gemma': return configuration.gemmaSourceLanguage
   }
 }
 
@@ -712,6 +717,8 @@ export function getOpusMtTransportSummary(): string {
   return 'Runs entirely in your browser via WebAssembly. Models (~50–300 MB each) download once from HuggingFace and are cached locally. Auto-detects many non-Latin scripts, but language-pair coverage is limited. For broader Asian-language support, use TransLang or SMaLL-100.'
 }
 
+export { getGemmaTransportSummary }
+
 export function getTranslangTransportSummary(baseUrl: string): string {
   if (!baseUrl) {
     return 'Configure a TransLang instance URL in Settings.'
@@ -735,6 +742,7 @@ export function getProviderDisplayName(provider: TranslationProvider): string {
     case 'lingva': return 'Lingva'
     case 'small100': return 'SMaLL-100 (local)'
     case 'opusmt': return 'Opus-MT (in-browser)'
+    case 'gemma': return 'Gemma 4 (on-device)'
   }
 }
 
@@ -758,6 +766,8 @@ export async function listProviderLanguages(
       const { listOpusMtLanguages } = await loadOpusMtModule()
       return listOpusMtLanguages()
     }
+    case 'gemma':
+      return listGemmaLanguages()
   }
 }
 
@@ -922,6 +932,27 @@ async function callOpusMt(
   }
 }
 
+async function callGemma(
+  configuration: TranslationConfiguration,
+  text: string,
+  signal?: AbortSignal,
+): Promise<TranslationResult> {
+  const result = await translateWithGemma(
+    text,
+    configuration.gemmaSourceLanguage,
+    configuration.gemmaTargetLanguage,
+    signal,
+  )
+
+  return {
+    provider: 'gemma',
+    translatedText: result.translation,
+    targetLanguage: configuration.gemmaTargetLanguage,
+    sourceLanguage: configuration.gemmaSourceLanguage,
+    ...(result.detectedSourceLang ? { detectedSourceLanguage: result.detectedSourceLang } : {}),
+  }
+}
+
 export async function translateTextWithConfiguration(
   configuration: TranslationConfiguration,
   text: string,
@@ -970,6 +1001,9 @@ export async function translateTextWithConfiguration(
         break
       case 'opusmt':
         result = await callOpusMt(configuration, normalizedText, signal)
+        break
+      case 'gemma':
+        result = await callGemma(configuration, normalizedText, signal)
         break
     }
 

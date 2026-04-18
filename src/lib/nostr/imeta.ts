@@ -221,7 +221,10 @@ export function getOrderedImageCandidates(
 
   return unique
     .sort((a, b) => imageFormatRank(a) - imageFormatRank(b))
-    .map((url) => ({ url, type: inferMimeTypeFromUrl(url) }))
+    .map((url) => {
+      const type = inferMimeTypeFromUrl(url)
+      return type !== undefined ? { url, type } : { url }
+    })
 }
 
 function inferAttachmentMimeType(attachment: Nip92MediaAttachment): string | undefined {
