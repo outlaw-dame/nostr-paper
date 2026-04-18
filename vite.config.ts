@@ -584,112 +584,118 @@ function safeBrowsingDevProxyPlugin() {
 }
 
 function mediaFetchDevProxyPlugin() {
+  function makeMiddleware(): Parameters<import('vite').ViteDevServer['middlewares']['use']>[0] {
+    return async (req, res, next) => {
+      if (!req.url?.startsWith(DEV_MEDIA_PROXY_PATH)) {
+        next()
+        return
+      }
+
+      if (req.method !== 'GET') {
+        jsonResponse(res, 405, { error: 'Method Not Allowed' }, req.headers.origin)
+        return
+      }
+
+      const reqUrl = new URL(req.url, 'http://localhost')
+      const rawTarget = reqUrl.searchParams.get('url') ?? ''
+
+      let targetUrl: URL
+      try {
+        targetUrl = new URL(rawTarget)
+      } catch {
+        jsonResponse(res, 400, { error: 'Invalid URL parameter' }, req.headers.origin)
+        return
+      }
+
+      if (!isAllowedOGTarget(targetUrl)) {
+        jsonResponse(res, 403, { error: 'Target URL not allowed' }, req.headers.origin)
+        return
+      }
+
+      const timeoutSignal = AbortSignal.timeout(DEV_MEDIA_PROXY_TIMEOUT_MS)
+      let currentUrl = targetUrl.href
+
+      try {
+        let upstream!: Response
+        let redirects = 0
+
+        while (redirects <= DEV_MEDIA_PROXY_MAX_REDIRECTS) {
+          upstream = await fetch(currentUrl, {
+            method: 'GET',
+            headers: {
+              Accept: 'image/*,video/*,application/octet-stream;q=0.9,*/*;q=0.1',
+              'User-Agent': 'Mozilla/5.0 (compatible; NostrPaper/1.0; +https://github.com/nostr-paper)',
+            },
+            redirect: 'manual',
+            signal: timeoutSignal,
+          })
+
+          if (upstream.status >= 301 && upstream.status <= 308) {
+            const location = upstream.headers.get('location')
+            if (!location) break
+            let nextTarget: URL
+            try {
+              nextTarget = new URL(location, currentUrl)
+            } catch {
+              break
+            }
+            if (!isAllowedOGTarget(nextTarget)) break
+            currentUrl = nextTarget.href
+            redirects++
+            continue
+          }
+
+          break
+        }
+
+        if (!upstream.ok) {
+          jsonResponse(res, 502, { error: `Upstream responded with ${upstream.status}` }, req.headers.origin)
+          return
+        }
+
+        const contentType = upstream.headers.get('content-type') ?? 'application/octet-stream'
+        if (
+          !contentType.toLowerCase().startsWith('image/') &&
+          !contentType.toLowerCase().startsWith('video/') &&
+          contentType.toLowerCase() !== 'application/octet-stream'
+        ) {
+          jsonResponse(res, 415, { error: 'Upstream asset is not image/video media' }, req.headers.origin)
+          return
+        }
+
+        const buffer = Buffer.from(await upstream.arrayBuffer())
+        if (buffer.byteLength > DEV_MEDIA_PROXY_MAX_BYTES) {
+          jsonResponse(res, 413, { error: 'Upstream media too large' }, req.headers.origin)
+          return
+        }
+
+        res.statusCode = 200
+        res.setHeader('Content-Type', contentType)
+        res.setHeader('Cache-Control', 'public, max-age=300')
+        res.setHeader('Access-Control-Allow-Origin', req.headers.origin ?? '*')
+        res.end(buffer)
+      } catch (error) {
+        const isTimeout = error instanceof DOMException && error.name === 'TimeoutError'
+        jsonResponse(
+          res,
+          isTimeout ? 504 : 502,
+          { error: isTimeout ? 'Media fetch proxy timeout' : 'Media fetch proxy request failed' },
+          req.headers.origin,
+        )
+      }
+    }
+  }
+
   return {
     name: 'media-fetch-dev-proxy',
     configureServer(server: import('vite').ViteDevServer) {
-      server.middlewares.use(async (req, res, next) => {
-        if (!req.url?.startsWith(DEV_MEDIA_PROXY_PATH)) {
-          next()
-          return
-        }
-
-        if (req.method !== 'GET') {
-          jsonResponse(res, 405, { error: 'Method Not Allowed' }, req.headers.origin)
-          return
-        }
-
-        const reqUrl = new URL(req.url, 'http://localhost')
-        const rawTarget = reqUrl.searchParams.get('url') ?? ''
-
-        let targetUrl: URL
-        try {
-          targetUrl = new URL(rawTarget)
-        } catch {
-          jsonResponse(res, 400, { error: 'Invalid URL parameter' }, req.headers.origin)
-          return
-        }
-
-        if (!isAllowedOGTarget(targetUrl)) {
-          jsonResponse(res, 403, { error: 'Target URL not allowed' }, req.headers.origin)
-          return
-        }
-
-        const timeoutSignal = AbortSignal.timeout(DEV_MEDIA_PROXY_TIMEOUT_MS)
-        let currentUrl = targetUrl.href
-
-        try {
-          let upstream!: Response
-          let redirects = 0
-
-          while (redirects <= DEV_MEDIA_PROXY_MAX_REDIRECTS) {
-            upstream = await fetch(currentUrl, {
-              method: 'GET',
-              headers: {
-                Accept: 'image/*,video/*,application/octet-stream;q=0.9,*/*;q=0.1',
-                'User-Agent': 'Mozilla/5.0 (compatible; NostrPaper/1.0; +https://github.com/nostr-paper)',
-              },
-              redirect: 'manual',
-              signal: timeoutSignal,
-            })
-
-            if (upstream.status >= 301 && upstream.status <= 308) {
-              const location = upstream.headers.get('location')
-              if (!location) break
-              let nextTarget: URL
-              try {
-                nextTarget = new URL(location, currentUrl)
-              } catch {
-                break
-              }
-              if (!isAllowedOGTarget(nextTarget)) break
-              currentUrl = nextTarget.href
-              redirects++
-              continue
-            }
-
-            break
-          }
-
-          if (!upstream.ok) {
-            jsonResponse(res, 502, { error: `Upstream responded with ${upstream.status}` }, req.headers.origin)
-            return
-          }
-
-          const contentType = upstream.headers.get('content-type') ?? 'application/octet-stream'
-          if (
-            !contentType.toLowerCase().startsWith('image/') &&
-            !contentType.toLowerCase().startsWith('video/') &&
-            contentType.toLowerCase() !== 'application/octet-stream'
-          ) {
-            jsonResponse(res, 415, { error: 'Upstream asset is not image/video media' }, req.headers.origin)
-            return
-          }
-
-          const buffer = Buffer.from(await upstream.arrayBuffer())
-          if (buffer.byteLength > DEV_MEDIA_PROXY_MAX_BYTES) {
-            jsonResponse(res, 413, { error: 'Upstream media too large' }, req.headers.origin)
-            return
-          }
-
-          res.statusCode = 200
-          res.setHeader('Content-Type', contentType)
-          res.setHeader('Cache-Control', 'public, max-age=300')
-          res.setHeader('Access-Control-Allow-Origin', req.headers.origin ?? '*')
-          res.end(buffer)
-        } catch (error) {
-          const isTimeout = error instanceof DOMException && error.name === 'TimeoutError'
-          jsonResponse(
-            res,
-            isTimeout ? 504 : 502,
-            { error: isTimeout ? 'Media fetch proxy timeout' : 'Media fetch proxy request failed' },
-            req.headers.origin,
-          )
-        }
-      })
+      server.middlewares.use(makeMiddleware())
+    },
+    configurePreviewServer(server: import('vite').PreviewServer) {
+      server.middlewares.use(makeMiddleware())
     },
   }
 }
-
 function feedDevProxyPlugin() {
   return {
     name: 'feed-dev-proxy',

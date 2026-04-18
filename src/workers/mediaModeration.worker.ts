@@ -102,7 +102,14 @@ function getWorkerOrigin(): string | null {
 }
 
 function buildMediaProxyUrl(target: string): string | null {
-  const proxyBase = import.meta.env.DEV ? DEV_MEDIA_PROXY_PATH : MEDIA_PROXY_BASE
+  // In dev mode, the Vite dev server plugin handles the proxy path.
+  // In preview mode (DEV=false), we still want the same proxy when running locally,
+  // so fall back to DEV_MEDIA_PROXY_PATH when the origin is localhost / 127.0.0.1.
+  const workerOrigin = getWorkerOrigin()
+  const isLocalOrigin = workerOrigin
+    ? /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(workerOrigin)
+    : false
+  const proxyBase = import.meta.env.DEV || isLocalOrigin ? DEV_MEDIA_PROXY_PATH : MEDIA_PROXY_BASE
   if (!proxyBase) return null
 
   try {
