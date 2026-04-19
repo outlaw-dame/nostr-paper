@@ -97,10 +97,30 @@ describe('normalizeTranslationPreferences', () => {
     })).toMatchObject({
       opusMtTargetLanguage: 'fr',
       gemmaTargetLanguage: 'fr',
+      geminiTargetLanguage: 'fr',
       libreTargetLanguage: 'fr',
       lingvaTargetLanguage: 'fr',
       translangTargetLanguage: 'fr-CA',
       deeplTargetLanguage: 'FR-CA',
     })
+  })
+
+  it('normalizes Gemini settings and model names', () => {
+    expect(normalizeTranslationPreferences({
+      provider: 'gemini',
+      geminiModel: 'gemini-2.5-flash',
+      geminiTargetLanguage: 'ES',
+      geminiSourceLanguage: 'AUTO',
+    })).toMatchObject({
+      provider: 'gemini',
+      geminiModel: 'gemini-2.5-flash',
+      geminiTargetLanguage: 'es',
+      geminiSourceLanguage: 'auto',
+    })
+
+    expect(normalizeTranslationPreferences({
+      provider: 'gemini',
+      geminiModel: 'bad model !',
+    }).geminiModel).toBe('gemini-2.5-flash')
   })
 })

@@ -224,6 +224,14 @@ export default function SettingsPage() {
             setHealth('Configured', `Gemma on-device. Target: ${configuration.gemmaTargetLanguage}. Browser: ${browserPrimary}.`, 'ok')
             return
           }
+          case 'gemini': {
+            if (!configuration.geminiApiKey) {
+              setHealth('Missing API key', `Gemini selected. Set an API key. Browser: ${browserPrimary}.`, 'warn')
+              return
+            }
+            setHealth('Configured', `Gemini cloud translation. Model: ${configuration.geminiModel}. Target: ${configuration.geminiTargetLanguage}. Browser: ${browserPrimary}.`, 'ok')
+            return
+          }
         }
       } catch {
         if (cancelled) return

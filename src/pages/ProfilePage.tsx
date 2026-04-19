@@ -15,6 +15,10 @@ import { usePageHead } from '@/hooks/usePageHead'
 import { useProfile } from '@/hooks/useProfile'
 import { useLivePresence } from '@/hooks/useLivePresence'
 import { useUserStatus } from '@/hooks/useUserStatus'
+import { buildProfileInsightFallback, extractHashtagsFromContents } from '@/lib/ai/insights'
+import { generateAssistText, type AiAssistProvider, type AiAssistSource } from '@/lib/ai/gemmaAssist'
+import { AI_ASSIST_PROVIDER_UPDATED_EVENT, getAiAssistProvider, setAiAssistProvider } from '@/lib/ai/provider'
+import { queryEvents } from '@/lib/db/nostr'
 import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import { buildProfileMetaTags, buildProfileTitle } from '@/lib/nostr/meta'
 import {
@@ -47,6 +51,17 @@ import { getIdentityUrl, getPlatformDisplayName } from '@/lib/nostr/nip39'
 import { tApp } from '@/lib/i18n/app'
 import type { ContactList, Profile, ProfileBirthday } from '@/types'
 import { Kind } from '@/types'
+
+const PROFILE_INSIGHT_KINDS = [
+  Kind.ShortNote,
+  Kind.Thread,
+  Kind.Poll,
+  Kind.LongFormContent,
+  Kind.Video,
+  Kind.ShortVideo,
+  Kind.AddressableVideo,
+  Kind.AddressableShortVideo,
+] as const
 
 interface ExpandedProfileImage {
   url: string
@@ -474,15 +489,18 @@ export default function ProfilePage() {
   const [error, setError] = useState<string | null>(null)
   const [muting, setMuting] = useState(false)
   const [expandedImage, setExpandedImage] = useState<ExpandedProfileImage | null>(null)
+  const [recentProfilePosts, setRecentProfilePosts] = useState<string[]>([])
+  const [profileInsights, setProfileInsights] = useState<string[]>([])
+  const [profileInsightsLoading, setProfileInsightsLoading] = useState(false)
+  const [profileInsightsSource, setProfileInsightsSource] = useState<AiAssistSource | 'fallback'>('fallback')
+  const [aiAssistProvider, setAiAssistProviderState] = useState<AiAssistProvider>(() => getAiAssistProvider())
   const profileBlockedByTagr = profileTextBlocked && (profileModerationDecision?.reason?.startsWith('tagr:') ?? false)
   const displayProfile = useMemo<Profile | null>(() => {
     if (!profile || !profileTextBlocked) return profile
-    const {
-      about: _about,
-      name: _name,
-      display_name: _displayName,
-      ...redactedProfile
-    } = profile
+    const redactedProfile: Profile = { ...profile }
+    delete redactedProfile.about
+    delete redactedProfile.name
+    delete redactedProfile.display_name
     return redactedProfile
   }, [profile, profileTextBlocked])
   const profileMediaDocuments = useMemo(
@@ -504,18 +522,15 @@ export default function ProfilePage() {
   )
   const {
     blockedIds: blockedProfileMediaIds,
-    loading: profileMediaLoading,
   } = useMediaModerationDocuments(profileMediaDocuments)
   const blockedAvatar = profile ? blockedProfileMediaIds.has(`${profile.pubkey}:avatar`) : false
   const blockedBanner = profile ? blockedProfileMediaIds.has(`${profile.pubkey}:banner`) : false
   const renderProfile = useMemo<Profile | null>(() => {
     if (!displayProfile) return displayProfile
 
-    const {
-      picture: _picture,
-      banner: _banner,
-      ...restProfile
-    } = displayProfile
+    const restProfile: Profile = { ...displayProfile }
+    delete restProfile.picture
+    delete restProfile.banner
 
     return {
       ...restProfile,
@@ -585,11 +600,40 @@ export default function ProfilePage() {
     }),
     [displayProfile?.about, displayProfile?.nip05, displayProfile?.nip05Verified],
   )
+  const avatarUrl = renderProfile?.picture ?? null
   const birthdayLabel = useMemo(
     () => formatBirthday(renderProfile?.birthday),
     [renderProfile?.birthday],
   )
   const totalCuratedSets = followSets.length + starterPacks.length + mediaStarterPacks.length + articleCurations.length + appCurations.length
+  const profileContentHashtags = useMemo(
+    () => extractHashtagsFromContents(recentProfilePosts),
+    [recentProfilePosts],
+  )
+
+  const fallbackProfileInsights = useMemo(
+    () => buildProfileInsightFallback({
+      displayName: profileLabel,
+      about: displayProfile?.about ?? '',
+      hashtags: profileContentHashtags,
+      recentPosts: recentProfilePosts,
+    }),
+    [displayProfile?.about, profileContentHashtags, profileLabel, recentProfilePosts],
+  )
+
+  useEffect(() => {
+    const onProviderUpdated = () => {
+      setAiAssistProviderState(getAiAssistProvider())
+    }
+
+    window.addEventListener(AI_ASSIST_PROVIDER_UPDATED_EVENT, onProviderUpdated)
+    window.addEventListener('storage', onProviderUpdated)
+
+    return () => {
+      window.removeEventListener(AI_ASSIST_PROVIDER_UPDATED_EVENT, onProviderUpdated)
+      window.removeEventListener('storage', onProviderUpdated)
+    }
+  }, [])
 
   const scrollToSection = (id: string) => {
     document.getElementById(id)?.scrollIntoView({
@@ -813,6 +857,102 @@ export default function ProfilePage() {
     return () => controller.abort()
   }, [currentUser?.pubkey, pubkey])
 
+  useEffect(() => {
+    if (!pubkey) {
+      setRecentProfilePosts([])
+      return
+    }
+
+    const controller = new AbortController()
+
+    queryEvents({
+      authors: [pubkey],
+      kinds: [...PROFILE_INSIGHT_KINDS],
+      limit: 48,
+    })
+      .then((events) => {
+        if (controller.signal.aborted) return
+        const posts = events
+          .sort((a, b) => b.created_at - a.created_at)
+          .map((event) => event.content.trim())
+          .filter((content) => content.length > 0)
+          .slice(0, 24)
+        setRecentProfilePosts(posts)
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return
+        setRecentProfilePosts([])
+      })
+
+    return () => controller.abort()
+  }, [pubkey])
+
+  useEffect(() => {
+    setProfileInsights(fallbackProfileInsights)
+    setProfileInsightsSource('fallback')
+
+    if (!pubkey || !displayProfile) {
+      setProfileInsightsLoading(false)
+      return
+    }
+
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      setProfileInsightsLoading(true)
+
+      const prompt = [
+        'You are generating profile insights for a social client.',
+        'Write 3 informative sentences about this profile.',
+        'Cover: (1) their main topics and writing style, (2) audience fit or community they belong to, (3) one actionable suggestion for engaging with them.',
+        'Plain text only, no markdown, no bullet points.',
+        'Each sentence must be self-contained and add distinct value.',
+        `Profile label: ${JSON.stringify(profileLabel)}`,
+        `Bio: ${JSON.stringify(displayProfile.about ?? '')}`,
+        `Hashtags: ${JSON.stringify(profileContentHashtags.slice(0, 12))}`,
+        `Recent posts: ${JSON.stringify(recentProfilePosts.slice(0, 8))}`,
+      ].join('\n')
+
+      generateAssistText(prompt, {
+        signal: controller.signal,
+        provider: aiAssistProvider,
+      })
+        .then((result) => {
+          if (controller.signal.aborted) return
+          const lines = result.text
+            .split(/\n+/)
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0)
+            .slice(0, 3)
+
+          if (lines.length > 0) {
+            setProfileInsights(lines)
+            setProfileInsightsSource(result.source)
+          }
+
+          setProfileInsightsLoading(false)
+        })
+        .catch(() => {
+          if (controller.signal.aborted) return
+          setProfileInsights(fallbackProfileInsights)
+          setProfileInsightsSource('fallback')
+          setProfileInsightsLoading(false)
+        })
+    }, 600)
+
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [
+    displayProfile,
+    fallbackProfileInsights,
+    profileContentHashtags,
+    profileLabel,
+    pubkey,
+    recentProfilePosts,
+    aiAssistProvider,
+  ])
+
   const handleSave = async () => {
     if (!pubkey) return
 
@@ -925,10 +1065,10 @@ export default function ProfilePage() {
                 pubkey={pubkey}
                 profile={renderProfile}
                 large
-                {...(renderProfile?.picture
+                {...(avatarUrl
                   ? {
                       onAvatarClick: () => setExpandedImage({
-                        url: renderProfile.picture!,
+                        url: avatarUrl,
                         alt: `${profileLabel} avatar`,
                         title: `${profileLabel} avatar`,
                       }),
@@ -1093,6 +1233,41 @@ export default function ProfilePage() {
                 )}
               </div>
 
+              <div className="mt-4 rounded-[20px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+                    Profile Insights
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={aiAssistProvider}
+                      onChange={(event) => {
+                        const next = event.target.value as AiAssistProvider
+                        setAiAssistProvider(next)
+                        setAiAssistProviderState(next)
+                      }}
+                      className="rounded-[10px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg-secondary))] px-2 py-1 text-[11px] text-[rgb(var(--color-label-secondary))]"
+                      aria-label="AI provider"
+                    >
+                      <option value="auto">Auto</option>
+                      <option value="gemma">Gemma</option>
+                      <option value="gemini">Gemini</option>
+                    </select>
+                    <span className="text-[11px] text-[rgb(var(--color-label-tertiary))]">
+                      {profileInsightsLoading ? 'Analyzing…' : profileInsightsSource === 'gemma' ? 'Gemma on-device' : profileInsightsSource === 'gemini' ? 'Gemini API' : 'Fallback'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-2 space-y-2">
+                  {profileInsights.map((insight) => (
+                    <p key={insight} className="text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
+                      {insight}
+                    </p>
+                  ))}
+                </div>
+              </div>
+
               {(renderProfile?.website || renderProfile?.lud16 || renderProfile?.lud06 || birthdayLabel) && (
                 <div className="mt-4 grid gap-2 sm:grid-cols-2">
                   {renderProfile?.website && (
@@ -1152,7 +1327,7 @@ export default function ProfilePage() {
                         NIP-38 Music Status
                       </p>
                       <p className="mt-1 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
-                        Live "currently listening" status for this profile.
+                        Live &quot;currently listening&quot; status for this profile.
                       </p>
                     </div>
                     {isSelf && (

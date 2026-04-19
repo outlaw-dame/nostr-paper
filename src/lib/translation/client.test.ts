@@ -20,6 +20,8 @@ const translateWithTranslang = vi.fn()
 
 const listGemmaLanguages = vi.fn(async () => [])
 const translateWithGemma = vi.fn()
+const listGeminiLanguages = vi.fn(async () => [])
+const translateWithGemini = vi.fn()
 
 vi.mock('@/lib/translation/engines/small100', () => ({
   checkSmall100Health,
@@ -41,6 +43,12 @@ vi.mock('@/lib/translation/engines/gemma', () => ({
   getGemmaTransportSummary: () => 'Runs entirely on-device.',
   listGemmaLanguages,
   translateWithGemma,
+}))
+
+vi.mock('@/lib/translation/engines/gemini', () => ({
+  getGeminiTransportSummary: () => 'Uses the Google Gemini cloud API.',
+  listGeminiLanguages,
+  translateWithGemini,
 }))
 
 const {
@@ -73,6 +81,10 @@ function buildConfiguration(overrides: Partial<TranslationConfiguration>): Trans
     opusMtSourceLanguage: 'auto',
     gemmaTargetLanguage: 'en',
     gemmaSourceLanguage: 'auto',
+    geminiModel: 'gemini-2.5-flash',
+    geminiTargetLanguage: 'en',
+    geminiSourceLanguage: 'auto',
+    geminiApiKey: '',
     ...overrides,
   }
 }
@@ -203,5 +215,35 @@ describe('translateTextWithConfiguration', () => {
       targetLanguage: 'en',
     })
     expect(translateWithOpusMt).toHaveBeenCalled()
+  })
+
+  it('dispatches to the Gemini provider with cloud language settings', async () => {
+    translateWithGemini.mockResolvedValue({
+      translation: 'Hello world',
+      detectedSourceLang: 'ja',
+    })
+
+    const result = await translateTextWithConfiguration(buildConfiguration({
+      provider: 'gemini',
+      geminiSourceLanguage: 'auto',
+      geminiTargetLanguage: 'en',
+      geminiModel: 'gemini-2.5-flash',
+      geminiApiKey: 'AIza-test',
+    }), 'こんにちは世界')
+
+    expect(translateWithGemini).toHaveBeenCalledWith(
+      'こんにちは世界',
+      'auto',
+      'en',
+      'AIza-test',
+      'gemini-2.5-flash',
+      undefined,
+    )
+    expect(result).toMatchObject({
+      provider: 'gemini',
+      translatedText: 'Hello world',
+      detectedSourceLanguage: 'ja',
+      targetLanguage: 'en',
+    })
   })
 })

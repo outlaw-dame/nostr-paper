@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { EventPreviewCard } from '@/components/nostr/EventPreviewCard'
 import { useApp } from '@/contexts/app-context'
@@ -6,6 +6,9 @@ import { useEvent } from '@/hooks/useEvent'
 import { useNostrFeed } from '@/hooks/useNostrFeed'
 import { useProfile } from '@/hooks/useProfile'
 import { useActivitySeen } from '@/hooks/useActivitySeen'
+import { buildActivityRecapFallback, getDaySegment, type ActivityRecapSignal } from '@/lib/ai/insights'
+import { generateAssistText, type AiAssistProvider, type AiAssistSource } from '@/lib/ai/gemmaAssist'
+import { AI_ASSIST_PROVIDER_UPDATED_EVENT, getAiAssistProvider, setAiAssistProvider } from '@/lib/ai/provider'
 import { ACTIVITY_KINDS, ACTIVITY_WINDOW_DAYS } from '@/lib/activity/constants'
 import { parseReactionEvent } from '@/lib/nostr/reaction'
 import { parseRepostEvent } from '@/lib/nostr/repost'
@@ -68,6 +71,88 @@ export default function ActivityPage() {
     [groups, seenAt],
   )
   const hasUnread = unreadGroupCount > 0
+  const [recap, setRecap] = useState('')
+  const [recapSource, setRecapSource] = useState<AiAssistSource | 'fallback'>('fallback')
+  const [recapLoading, setRecapLoading] = useState(false)
+  const [aiAssistProvider, setAiAssistProviderState] = useState<AiAssistProvider>(() => getAiAssistProvider())
+
+  useEffect(() => {
+    const onProviderUpdated = () => {
+      setAiAssistProviderState(getAiAssistProvider())
+    }
+
+    window.addEventListener(AI_ASSIST_PROVIDER_UPDATED_EVENT, onProviderUpdated)
+    window.addEventListener('storage', onProviderUpdated)
+
+    return () => {
+      window.removeEventListener(AI_ASSIST_PROVIDER_UPDATED_EVENT, onProviderUpdated)
+      window.removeEventListener('storage', onProviderUpdated)
+    }
+  }, [])
+
+  const recapSignals = useMemo<ActivityRecapSignal[]>(() => groups.map((group) => ({
+    createdAt: group.createdAt,
+    kind: group.kind,
+    actors: group.actors.length,
+    reactionCount: group.stats.reaction,
+    repostCount: group.stats.repost,
+    zapCount: group.stats.zap,
+    mentionCount: group.stats.mention,
+  })), [groups])
+
+  const recapFallback = useMemo(
+    () => buildActivityRecapFallback(recapSignals, getDaySegment()),
+    [recapSignals],
+  )
+
+  useEffect(() => {
+    setRecap(recapFallback)
+    setRecapSource('fallback')
+
+    if (!currentUser?.pubkey || recapSignals.length === 0) {
+      setRecapLoading(false)
+      return
+    }
+
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      setRecapLoading(true)
+
+      const prompt = [
+        'Write 2 to 4 sentences summarising this social media activity.',
+        'Mention the dominant engagement type, any notable patterns across threads, and suggest one specific next action.',
+        'Plain text only, no markdown, no lists.',
+        'Reference actual signal counts — do not give vague generalities.',
+        `Time segment: ${getDaySegment()}`,
+        `Activity groups: ${recapSignals.length}`,
+        `Signals: ${JSON.stringify(recapSignals.slice(0, 18))}`,
+      ].join('\n')
+
+      generateAssistText(prompt, {
+        signal: controller.signal,
+        provider: aiAssistProvider,
+      })
+        .then((result) => {
+          if (controller.signal.aborted) return
+          if (result.text.length > 0) {
+            setRecap(result.text)
+            setRecapSource(result.source)
+          }
+          setRecapLoading(false)
+        })
+        .catch(() => {
+          if (controller.signal.aborted) return
+          setRecap(recapFallback)
+          setRecapSource('fallback')
+          setRecapLoading(false)
+        })
+    }, 550)
+
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [aiAssistProvider, currentUser?.pubkey, recapFallback, recapSignals])
 
   return (
     <div className="min-h-dvh bg-[rgb(var(--color-bg))]">
@@ -108,6 +193,36 @@ export default function ActivityPage() {
       </div>
 
       <div className="px-4 pb-safe pb-8">
+        <div className="app-panel mt-3 rounded-ios-xl p-4">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+              {getDaySegment() === 'morning' ? 'Morning recap' : getDaySegment() === 'evening' ? 'Evening recap' : 'Night recap'}
+            </p>
+            <div className="flex items-center gap-2">
+              <select
+                value={aiAssistProvider}
+                onChange={(event) => {
+                  const next = event.target.value as AiAssistProvider
+                  setAiAssistProvider(next)
+                  setAiAssistProviderState(next)
+                }}
+                className="rounded-[10px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg-secondary))] px-2 py-1 text-[11px] text-[rgb(var(--color-label-secondary))]"
+                aria-label="AI provider"
+              >
+                <option value="auto">Auto</option>
+                <option value="gemma">Gemma</option>
+                <option value="gemini">Gemini</option>
+              </select>
+              <span className="text-[11px] text-[rgb(var(--color-label-tertiary))]">
+                {recapLoading ? 'Analyzing…' : recapSource === 'gemma' ? 'Gemma on-device' : recapSource === 'gemini' ? 'Gemini API' : 'Fallback'}
+              </span>
+            </div>
+          </div>
+          <p className="mt-2 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
+            {recap}
+          </p>
+        </div>
+
         {!currentUser?.pubkey ? (
           <div className="app-panel mt-3 rounded-ios-xl p-5 text-center">
             <p className="text-[15px] text-[rgb(var(--color-label-secondary))]">

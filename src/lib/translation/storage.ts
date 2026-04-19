@@ -1,7 +1,7 @@
 import { createStore, del, get, set } from 'idb-keyval'
 import { getBrowserLanguage } from '@/lib/translation/detect'
 
-export type TranslationProvider = 'deepl' | 'libretranslate' | 'small100' | 'opusmt' | 'translang' | 'lingva' | 'gemma'
+export type TranslationProvider = 'deepl' | 'libretranslate' | 'small100' | 'opusmt' | 'translang' | 'lingva' | 'gemma' | 'gemini'
 export type DeepLApiPlan = 'free' | 'pro'
 export type TranslationStorageMode = 'encrypted-indexeddb' | 'session-only'
 
@@ -26,11 +26,15 @@ export interface TranslationPreferences {
   opusMtSourceLanguage: string
   gemmaTargetLanguage: string
   gemmaSourceLanguage: string
+  geminiModel: string
+  geminiTargetLanguage: string
+  geminiSourceLanguage: string
 }
 
 export interface TranslationSecrets {
   deeplAuthKey: string
   libreApiKey: string
+  geminiApiKey: string
 }
 
 export interface TranslationConfiguration extends TranslationPreferences, TranslationSecrets {}
@@ -43,6 +47,7 @@ interface EncryptedSecretRecord {
 interface EncryptedSecretBundle {
   deeplAuthKey?: EncryptedSecretRecord
   libreApiKey?: EncryptedSecretRecord
+  geminiApiKey?: EncryptedSecretRecord
 }
 
 const TRANSLATION_DB_NAME = 'nostr-paper-translation'
@@ -56,6 +61,11 @@ const DEV_QUEUE_METRICS_PREF_KEY = 'translation-dev-queue-metrics-enabled'
 const DEFAULT_DEEPL_AUTH_KEY = sanitizeSecret(
   typeof import.meta.env.VITE_DEEPL_AUTH_KEY === 'string'
     ? import.meta.env.VITE_DEEPL_AUTH_KEY
+    : '',
+)
+const DEFAULT_GEMINI_API_KEY = sanitizeSecret(
+  typeof import.meta.env.VITE_GEMINI_API_KEY === 'string'
+    ? import.meta.env.VITE_GEMINI_API_KEY
     : '',
 )
 
@@ -82,11 +92,15 @@ const DEFAULT_PREFERENCES: TranslationPreferences = {
   opusMtSourceLanguage: 'auto',
   gemmaTargetLanguage: 'en',
   gemmaSourceLanguage: 'auto',
+  geminiModel: 'gemini-2.5-flash',
+  geminiTargetLanguage: 'en',
+  geminiSourceLanguage: 'auto',
 }
 
 const DEFAULT_SECRETS: TranslationSecrets = {
   deeplAuthKey: DEFAULT_DEEPL_AUTH_KEY,
   libreApiKey: '',
+  geminiApiKey: DEFAULT_GEMINI_API_KEY,
 }
 
 let memoryPreferences = { ...DEFAULT_PREFERENCES }
@@ -279,6 +293,14 @@ function normalizeTranslangLanguage(value: string | undefined, allowAuto = false
   ].join('-')
 }
 
+function normalizeGeminiModel(value: string | undefined): string {
+  const normalized = typeof value === 'string' ? value.trim() : ''
+  if (!normalized) return DEFAULT_PREFERENCES.geminiModel
+  return /^[a-z0-9][a-z0-9._-]*$/i.test(normalized)
+    ? normalized
+    : DEFAULT_PREFERENCES.geminiModel
+}
+
 export function normalizeTranslationPreferences(
   input: Partial<TranslationPreferences> | null | undefined,
 ): TranslationPreferences {
@@ -302,6 +324,7 @@ export function normalizeTranslationPreferences(
       : raw.provider === 'small100' ? 'small100'
       : raw.provider === 'opusmt' ? 'opusmt'
       : raw.provider === 'gemma' ? 'gemma'
+      : raw.provider === 'gemini' ? 'gemini'
       : DEFAULT_PREFERENCES.provider,
     deeplPlan: raw.deeplPlan === 'pro' ? 'pro' : 'free',
     deeplTargetLanguage: normalizeDeepLLanguage(raw.deeplTargetLanguage, false, deeplTargetFallback),
@@ -326,6 +349,9 @@ export function normalizeTranslationPreferences(
     opusMtSourceLanguage: normalizeLibreLanguage(raw.opusMtSourceLanguage, true),
     gemmaTargetLanguage: normalizeLibreLanguage(raw.gemmaTargetLanguage, false, libreTargetFallback),
     gemmaSourceLanguage: normalizeLibreLanguage(raw.gemmaSourceLanguage, true),
+    geminiModel: normalizeGeminiModel(raw.geminiModel),
+    geminiTargetLanguage: normalizeLibreLanguage(raw.geminiTargetLanguage, false, libreTargetFallback),
+    geminiSourceLanguage: normalizeLibreLanguage(raw.geminiSourceLanguage, true),
   }
 }
 
@@ -337,6 +363,7 @@ function mergeConfiguration(
     ...preferences,
     deeplAuthKey: sanitizeSecret(secrets.deeplAuthKey),
     libreApiKey: sanitizeSecret(secrets.libreApiKey),
+    geminiApiKey: sanitizeSecret(secrets.geminiApiKey),
   }
 }
 
@@ -453,10 +480,12 @@ export async function loadTranslationSecrets(): Promise<TranslationSecrets> {
     const nextSecrets: TranslationSecrets = {
       deeplAuthKey: encrypted.deeplAuthKey ? await decryptSecret(encrypted.deeplAuthKey) : '',
       libreApiKey: encrypted.libreApiKey ? await decryptSecret(encrypted.libreApiKey) : '',
+      geminiApiKey: encrypted.geminiApiKey ? await decryptSecret(encrypted.geminiApiKey) : '',
     }
     memorySecrets = {
       deeplAuthKey: sanitizeSecret(nextSecrets.deeplAuthKey),
       libreApiKey: sanitizeSecret(nextSecrets.libreApiKey),
+      geminiApiKey: sanitizeSecret(nextSecrets.geminiApiKey),
     }
     return { ...memorySecrets }
   } catch {
@@ -470,6 +499,7 @@ export async function saveTranslationSecrets(
   const normalized: TranslationSecrets = {
     deeplAuthKey: sanitizeSecret(secrets.deeplAuthKey),
     libreApiKey: sanitizeSecret(secrets.libreApiKey),
+    geminiApiKey: sanitizeSecret(secrets.geminiApiKey),
   }
 
   memorySecrets = normalized
@@ -483,6 +513,9 @@ export async function saveTranslationSecrets(
       }
       if (normalized.libreApiKey) {
         encrypted.libreApiKey = await encryptSecret(normalized.libreApiKey)
+      }
+      if (normalized.geminiApiKey) {
+        encrypted.geminiApiKey = await encryptSecret(normalized.geminiApiKey)
       }
       await set(ENCRYPTED_SECRETS_KEY, encrypted, SECRETS_STORE)
     } catch {

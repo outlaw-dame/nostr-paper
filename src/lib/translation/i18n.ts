@@ -62,6 +62,12 @@ const MESSAGES: Record<TranslationUiLocale, TranslationUiMessages> = {
     gemmaUnavailableError: 'Gemma local translation is unavailable. Configure a local model and use a WebGPU-capable browser.',
     gemmaTranslationFailed: 'Gemma translation failed.',
     gemmaReturnedEmpty: 'Gemma returned an empty translation.',
+    geminiTransportSummary: 'Uses the Google Gemini cloud API over HTTPS. Translated text is sent to Google for processing.',
+    geminiMissingApiKey: 'Enter a Gemini API key in Settings first.',
+    geminiTranslationFailed: 'Gemini translation failed.',
+    geminiReturnedEmpty: 'Gemini returned an empty translation.',
+    geminiMalformedResponse: 'Gemini returned an invalid response payload.',
+    geminiPromptBlocked: 'Gemini blocked this translation request ({reason}).',
   },
   es: {
     translationsPageTitle: 'Traducciones',
@@ -118,6 +124,12 @@ const MESSAGES: Record<TranslationUiLocale, TranslationUiMessages> = {
     gemmaUnavailableError: 'La traduccion local con Gemma no esta disponible. Configura un modelo local y usa un navegador compatible con WebGPU.',
     gemmaTranslationFailed: 'La traduccion con Gemma fallo.',
     gemmaReturnedEmpty: 'Gemma devolvio una traduccion vacia.',
+    geminiTransportSummary: 'Usa la API en la nube de Google Gemini por HTTPS. El texto traducido se envia a Google para su procesamiento.',
+    geminiMissingApiKey: 'Primero agrega una clave API de Gemini en Ajustes.',
+    geminiTranslationFailed: 'La traduccion con Gemini fallo.',
+    geminiReturnedEmpty: 'Gemini devolvio una traduccion vacia.',
+    geminiMalformedResponse: 'Gemini devolvio una respuesta no valida.',
+    geminiPromptBlocked: 'Gemini bloqueo esta solicitud de traduccion ({reason}).',
   },
 }
 

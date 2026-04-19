@@ -151,6 +151,28 @@ Notes:
 - Gemma runtime WASM assets are copied into `public/vendor/mediapipe/tasks-genai/wasm` by `npm install` via `scripts/sync-gemma-wasm.mjs`.
 - Vite is already configured with the required COOP/COEP headers and excludes `@mediapipe/tasks-genai` from dependency pre-bundling.
 
+### Gemini API translation provider (Google cloud)
+
+The translation settings now include a Gemini cloud provider.
+
+1. Create a Gemini API key in Google AI Studio: https://aistudio.google.com/apikey
+2. Open Settings -> Translations in the app.
+3. Choose Provider = Gemini API (cloud).
+4. Enter your API key and optional model ID (default: `gemini-2.5-flash`).
+
+Optional local defaults in `.env.local`:
+
+```bash
+VITE_GEMINI_API_KEY=<your-key>
+VITE_GEMINI_MODEL=gemini-2.5-flash
+```
+
+Security notes:
+
+- API keys in browser apps can be extracted by users with local access.
+- Prefer a server-side proxy for production deployments.
+- Restrict keys to the Generative Language API and rotate them regularly.
+
 ### Build
 
 ```bash

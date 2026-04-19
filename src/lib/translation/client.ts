@@ -24,6 +24,7 @@ import {
 } from '@/lib/translation/detect'
 import { listLingvaLanguages, translateWithLingva } from '@/lib/translation/engines/lingva'
 import { getGemmaTransportSummary, listGemmaLanguages, translateWithGemma } from '@/lib/translation/engines/gemma'
+import { getGeminiTransportSummary, listGeminiLanguages, translateWithGemini } from '@/lib/translation/engines/gemini'
 import { isRecord } from '@/lib/translation/utils'
 
 export interface TranslationLanguage {
@@ -114,6 +115,9 @@ function buildCacheKey(
     opusMtSourceLanguage: configuration.opusMtSourceLanguage,
     gemmaTargetLanguage: configuration.gemmaTargetLanguage,
     gemmaSourceLanguage: configuration.gemmaSourceLanguage,
+    geminiModel: configuration.geminiModel,
+    geminiTargetLanguage: configuration.geminiTargetLanguage,
+    geminiSourceLanguage: configuration.geminiSourceLanguage,
     text,
   })
 }
@@ -127,6 +131,7 @@ function getConfiguredTargetLanguage(configuration: TranslationConfiguration): s
     case 'small100': return configuration.small100TargetLanguage
     case 'opusmt': return configuration.opusMtTargetLanguage
     case 'gemma': return configuration.gemmaTargetLanguage
+    case 'gemini': return configuration.geminiTargetLanguage
   }
 }
 
@@ -139,6 +144,7 @@ function getConfiguredSourceLanguage(configuration: TranslationConfiguration): s
     case 'small100': return configuration.small100SourceLanguage
     case 'opusmt': return configuration.opusMtSourceLanguage
     case 'gemma': return configuration.gemmaSourceLanguage
+    case 'gemini': return configuration.geminiSourceLanguage
   }
 }
 
@@ -718,6 +724,7 @@ export function getOpusMtTransportSummary(): string {
 }
 
 export { getGemmaTransportSummary }
+export { getGeminiTransportSummary }
 
 export function getTranslangTransportSummary(baseUrl: string): string {
   if (!baseUrl) {
@@ -743,6 +750,7 @@ export function getProviderDisplayName(provider: TranslationProvider): string {
     case 'small100': return 'SMaLL-100 (local)'
     case 'opusmt': return 'Opus-MT (in-browser)'
     case 'gemma': return 'Gemma 4 (on-device)'
+    case 'gemini': return 'Gemini API (cloud)'
   }
 }
 
@@ -768,6 +776,8 @@ export async function listProviderLanguages(
     }
     case 'gemma':
       return listGemmaLanguages()
+    case 'gemini':
+      return listGeminiLanguages()
   }
 }
 
@@ -953,6 +963,29 @@ async function callGemma(
   }
 }
 
+async function callGemini(
+  configuration: TranslationConfiguration,
+  text: string,
+  signal?: AbortSignal,
+): Promise<TranslationResult> {
+  const result = await translateWithGemini(
+    text,
+    configuration.geminiSourceLanguage,
+    configuration.geminiTargetLanguage,
+    configuration.geminiApiKey,
+    configuration.geminiModel,
+    signal,
+  )
+
+  return {
+    provider: 'gemini',
+    translatedText: result.translation,
+    targetLanguage: configuration.geminiTargetLanguage,
+    sourceLanguage: configuration.geminiSourceLanguage,
+    ...(result.detectedSourceLang ? { detectedSourceLanguage: result.detectedSourceLang } : {}),
+  }
+}
+
 export async function translateTextWithConfiguration(
   configuration: TranslationConfiguration,
   text: string,
@@ -1004,6 +1037,9 @@ export async function translateTextWithConfiguration(
         break
       case 'gemma':
         result = await callGemma(configuration, normalizedText, signal)
+        break
+      case 'gemini':
+        result = await callGemini(configuration, normalizedText, signal)
         break
     }
 

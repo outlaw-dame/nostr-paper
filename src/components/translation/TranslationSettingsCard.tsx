@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import {
   getDeepLTransportSummary,
   getGemmaTransportSummary,
+  getGeminiTransportSummary,
   getLibreTransportSummary,
   getSmall100TransportSummary,
   getOpusMtTransportSummary,
@@ -66,6 +67,10 @@ function buildDraftConfiguration(input: {
   opusMtSourceLanguage: string
   gemmaTargetLanguage: string
   gemmaSourceLanguage: string
+  geminiModel: string
+  geminiTargetLanguage: string
+  geminiSourceLanguage: string
+  geminiApiKey: string
 }): TranslationConfiguration {
   const preferences = normalizeTranslationPreferences({
     provider: input.provider,
@@ -88,12 +93,16 @@ function buildDraftConfiguration(input: {
     opusMtSourceLanguage: input.opusMtSourceLanguage,
     gemmaTargetLanguage: input.gemmaTargetLanguage,
     gemmaSourceLanguage: input.gemmaSourceLanguage,
+    geminiModel: input.geminiModel,
+    geminiTargetLanguage: input.geminiTargetLanguage,
+    geminiSourceLanguage: input.geminiSourceLanguage,
   })
 
   return {
     ...preferences,
     deeplAuthKey: input.deeplAuthKey.trim(),
     libreApiKey: input.libreApiKey.trim(),
+    geminiApiKey: input.geminiApiKey.trim(),
   }
 }
 
@@ -101,7 +110,8 @@ interface LanguageInputProps {
   id: string
   label: string
   value: string
-  onChange: (value: string) => void
+  // eslint-disable-next-line no-unused-vars
+  onChange: (v: string) => void
   languages: TranslationLanguage[]
   allowAuto?: boolean
   placeholder: string
@@ -187,6 +197,10 @@ export function TranslationSettingsCard() {
   const [opusMtSourceLanguage, setOpusMtSourceLanguage] = useState('auto')
   const [gemmaTargetLanguage, setGemmaTargetLanguage] = useState('en')
   const [gemmaSourceLanguage, setGemmaSourceLanguage] = useState('auto')
+  const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash')
+  const [geminiTargetLanguage, setGeminiTargetLanguage] = useState('en')
+  const [geminiSourceLanguage, setGeminiSourceLanguage] = useState('auto')
+  const [geminiApiKey, setGeminiApiKey] = useState('')
   const [sourceLanguages, setSourceLanguages] = useState<TranslationLanguage[]>([])
   const [targetLanguages, setTargetLanguages] = useState<TranslationLanguage[]>([])
   const [saving, setSaving] = useState(false)
@@ -231,6 +245,10 @@ export function TranslationSettingsCard() {
         setOpusMtSourceLanguage(configuration.opusMtSourceLanguage)
         setGemmaTargetLanguage(configuration.gemmaTargetLanguage)
         setGemmaSourceLanguage(configuration.gemmaSourceLanguage)
+        setGeminiModel(configuration.geminiModel)
+        setGeminiTargetLanguage(configuration.geminiTargetLanguage)
+        setGeminiSourceLanguage(configuration.geminiSourceLanguage)
+        setGeminiApiKey(configuration.geminiApiKey)
       })
       .catch(() => {
         if (cancelled) return
@@ -259,6 +277,8 @@ export function TranslationSettingsCard() {
       setTransportSummary(getOpusMtTransportSummary())
     } else if (provider === 'gemma') {
       setTransportSummary(getGemmaTransportSummary())
+    } else if (provider === 'gemini') {
+      setTransportSummary(getGeminiTransportSummary())
     } else if (provider === 'translang') {
       setTransportSummary(getTranslangTransportSummary(translangBaseUrl))
     } else if (provider === 'lingva') {
@@ -293,6 +313,10 @@ export function TranslationSettingsCard() {
     opusMtSourceLanguage,
     gemmaTargetLanguage,
     gemmaSourceLanguage,
+    geminiModel,
+    geminiTargetLanguage,
+    geminiSourceLanguage,
+    geminiApiKey,
   })
 
   function getSelectedSourceLanguage(): string {
@@ -311,6 +335,8 @@ export function TranslationSettingsCard() {
         return opusMtSourceLanguage
       case 'gemma':
         return gemmaSourceLanguage
+      case 'gemini':
+        return geminiSourceLanguage
     }
   }
 
@@ -330,6 +356,8 @@ export function TranslationSettingsCard() {
         return opusMtTargetLanguage
       case 'gemma':
         return gemmaTargetLanguage
+      case 'gemini':
+        return geminiTargetLanguage
     }
   }
 
@@ -355,6 +383,9 @@ export function TranslationSettingsCard() {
         return
       case 'gemma':
         setGemmaSourceLanguage(value)
+        return
+      case 'gemini':
+        setGeminiSourceLanguage(value)
         return
     }
   }
@@ -382,6 +413,9 @@ export function TranslationSettingsCard() {
       case 'gemma':
         setGemmaTargetLanguage(value)
         return
+      case 'gemini':
+        setGeminiTargetLanguage(value)
+        return
     }
   }
 
@@ -395,6 +429,7 @@ export function TranslationSettingsCard() {
       await saveTranslationSecrets({
         deeplAuthKey: draftConfiguration.deeplAuthKey,
         libreApiKey: draftConfiguration.libreApiKey,
+        geminiApiKey: draftConfiguration.geminiApiKey,
       })
       setMessage(tTranslationUi('saveSettingsSuccess'))
     } catch (saveError) {
@@ -449,6 +484,7 @@ export function TranslationSettingsCard() {
       await clearTranslationSecrets()
       setDeeplAuthKey('')
       setLibreApiKey('')
+      setGeminiApiKey('')
       setMessage(tTranslationUi('clearKeysSuccess'))
     } catch (clearError) {
       setError(clearError instanceof Error ? clearError.message : tTranslationUi('clearKeysFailed'))
@@ -516,6 +552,7 @@ export function TranslationSettingsCard() {
               : value === 'small100' ? 'small100'
               : value === 'opusmt' ? 'opusmt'
               : value === 'gemma' ? 'gemma'
+              : value === 'gemini' ? 'gemini'
               : 'deepl'
             )
             setSourceLanguages([])
@@ -532,6 +569,7 @@ export function TranslationSettingsCard() {
           <option value="small100">SMaLL-100 (local daemon)</option>
           <option value="opusmt">Opus-MT (in-browser)</option>
           <option value="gemma">Gemma 4 (on-device)</option>
+          <option value="gemini">Gemini API (cloud)</option>
         </select>
       </label>
 
@@ -816,6 +854,62 @@ export function TranslationSettingsCard() {
             Runs entirely on your device using the local Gemma 4 model and WebGPU. No translation text is sent to any remote service, but responses are generated by an LLM, so wording can be less literal than dedicated MT engines.
           </p>
         </>
+      ) : provider === 'gemini' ? (
+        <>
+          <label className="mt-3 block">
+            <span className="text-[13px] font-medium text-[rgb(var(--color-label))]">
+              Gemini API key
+            </span>
+            <input
+              type="password"
+              value={geminiApiKey}
+              onChange={(event) => setGeminiApiKey(event.target.value)}
+              placeholder="AIza..."
+              autoComplete="off"
+              spellCheck={false}
+              autoCapitalize="off"
+              className="mt-2 w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.16)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[16px] text-[rgb(var(--color-label))] outline-none"
+            />
+          </label>
+
+          <label className="mt-3 block">
+            <span className="text-[13px] font-medium text-[rgb(var(--color-label))]">
+              Gemini model
+            </span>
+            <input
+              type="text"
+              value={geminiModel}
+              onChange={(event) => setGeminiModel(event.target.value)}
+              placeholder="gemini-2.5-flash"
+              autoComplete="off"
+              spellCheck={false}
+              autoCapitalize="off"
+              className="mt-2 w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.16)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[16px] text-[rgb(var(--color-label))] outline-none"
+            />
+          </label>
+
+          <LanguageInput
+            id="gemini-source-language"
+            label="Source language"
+            value={geminiSourceLanguage}
+            onChange={setGeminiSourceLanguage}
+            languages={sourceLanguages}
+            allowAuto
+            placeholder="auto"
+          />
+          <LanguageInput
+            id="gemini-target-language"
+            label="Target language"
+            value={geminiTargetLanguage}
+            onChange={setGeminiTargetLanguage}
+            languages={targetLanguages}
+            placeholder="en"
+          />
+
+          <p className="mt-3 text-[12px] leading-5 text-[rgb(var(--color-label-secondary))]">
+            Uses Google Gemini REST API. Translation text is sent to Google for processing. Restrict this key to the Generative Language API and rotate it regularly.
+          </p>
+        </>
       ) : null}
 
       <div className="mt-4 rounded-[16px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] p-3">
@@ -865,6 +959,12 @@ export function TranslationSettingsCard() {
       {provider === 'deepl' && (
         <p className="mt-3 text-[12px] leading-5 text-[rgb(var(--color-label-secondary))]">
           DeepL does not allow direct browser-origin API calls. On localhost the built-in dev proxy is used; production requires a configured proxy endpoint.
+        </p>
+      )}
+
+      {provider === 'gemini' && (
+        <p className="mt-3 text-[12px] leading-5 text-[rgb(var(--color-label-secondary))]">
+          Gemini API keys are sensitive. For stronger security, route calls through your own backend so browser clients never see long-lived keys.
         </p>
       )}
 
