@@ -17,7 +17,7 @@ import { NoteContent } from '@/components/cards/NoteContent'
 import { NoteMediaAttachments } from '@/components/nostr/NoteMediaAttachments'
 import { PollPreview } from '@/components/nostr/PollPreview'
 import { ThreadIndexBadge } from '@/components/nostr/ThreadIndexBadge'
-import { mergeResults, useEventFilterCheck, useSemanticFiltering } from '@/hooks/useKeywordFilters'
+import { mergeResults, useEventFilterCheck, useProfileFilterCheck, useSemanticFiltering } from '@/hooks/useKeywordFilters'
 import { useModerationDocuments } from '@/hooks/useModeration'
 import { useSearch } from '@/hooks/useSearch'
 import { useProfile } from '@/hooks/useProfile'
@@ -82,10 +82,15 @@ export default function SearchPage() {
     relayLoading,
     relayError,
     semanticError,
+    rewrittenQuery,
+    synthesis,
+    synthesisLoading,
   } = useSearch({
     kinds: SEARCHABLE_KINDS,
     localLimit: 40,
     relayLimit: 40,
+    enableQueryRewrite: true,
+    enableSynthesis: true,
   })
 
   const {
@@ -96,6 +101,7 @@ export default function SearchPage() {
   } = useMuteList()
   const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
   const checkEvent = useEventFilterCheck()
+  const checkProfile = useProfileFilterCheck()
 
   const parsedQuery = useMemo(() => parseSearchQuery(query), [query])
   const unsupportedKeys = useMemo(
@@ -158,6 +164,16 @@ export default function SearchPage() {
   const visibleProfiles = useMemo(
     () => profiles.filter((profile) => !isMuted(profile.pubkey) && (!profileModerationIds.has(profile.pubkey) || allowedProfileIds.has(profile.pubkey))),
     [allowedProfileIds, profileModerationIds, profiles, isMuted],
+  )
+  const profileFilterResults = useMemo(
+    () => {
+      const next = new Map<string, FilterCheckResult>()
+      for (const profile of visibleProfiles) {
+        next.set(profile.pubkey, checkProfile(profile))
+      }
+      return next
+    },
+    [checkProfile, visibleProfiles],
   )
 
   useEffect(() => {
@@ -263,6 +279,12 @@ export default function SearchPage() {
             {tApp('searchSemanticDegraded', { error: semanticError })}
           </p>
         )}
+
+        {rewrittenQuery && !localLoading && (
+          <p className="mt-2 text-[12px] text-[rgb(var(--color-label-tertiary))]">
+            Refined: <span className="italic">{rewrittenQuery}</span>
+          </p>
+        )}
       </div>
 
       <div className="px-4 pb-safe pb-8">
@@ -278,6 +300,14 @@ export default function SearchPage() {
           <SearchEmpty />
         ) : (
           <div className="space-y-5">
+                        {(synthesis || synthesisLoading) && (
+                          <SearchSynthesisCard
+                            text={synthesis?.text ?? null}
+                            source={synthesis?.source ?? null}
+                            loading={synthesisLoading}
+                          />
+                        )}
+
             {visibleProfiles.length > 0 && (
               <section>
                 <h2 className="section-kicker px-1 mb-3">
@@ -285,7 +315,13 @@ export default function SearchPage() {
                 </h2>
                 <div className="space-y-3">
                   {visibleProfiles.map(profile => (
-                    <ProfileResult key={profile.pubkey} profile={profile} />
+                    <FilteredGate
+                      key={profile.pubkey}
+                      result={profileFilterResults.get(profile.pubkey) ?? { action: null, matches: [] }}
+                      eventId={`profile:${profile.pubkey}`}
+                    >
+                      <ProfileResult profile={profile} />
+                    </FilteredGate>
                   ))}
                 </div>
               </section>
@@ -450,6 +486,46 @@ function EventResult({
         </Link>
       </motion.div>
     </FilteredGate>
+  )
+}
+
+function SearchSynthesisCard({
+  text,
+  source,
+  loading,
+}: {
+  text: string | null
+  source: "gemma" | "gemini" | null
+  loading: boolean
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className="rounded-ios-xl p-4 app-panel card-elevated"
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <span className="section-kicker">AI Summary</span>
+        {source && (
+          <span className="text-[11px] text-[rgb(var(--color-label-tertiary))]">
+            via {source}
+          </span>
+        )}
+      </div>
+      {loading && !text ? (
+        <div className="flex items-center gap-2">
+          <span className="block h-2 w-2 rounded-full bg-[rgb(var(--color-accent))] animate-pulse" />
+          <span className="text-[14px] text-[rgb(var(--color-label-secondary))]">
+            Summarizing results…
+          </span>
+        </div>
+      ) : (
+        <p className="text-[14px] leading-relaxed text-[rgb(var(--color-label))]">
+          {text}
+        </p>
+      )}
+    </motion.div>
   )
 }
 

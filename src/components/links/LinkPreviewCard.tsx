@@ -24,8 +24,10 @@
  *   e.g. page is techcrunch.com, nip05 is sara@techcrunch.com → verified.
  */
 
-import React from 'react'
+import React, { useMemo } from 'react'
 import { useLinkPreview } from '@/hooks/useLinkPreview'
+import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
+import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import { NostrCreatorAttribution } from '@/components/links/NostrCreatorAttribution'
 import type { OGData } from '@/lib/og/types'
 
@@ -63,6 +65,19 @@ export function LinkPreviewCard({
   const [imageFailed, setImageFailed] = React.useState(false)
   const [faviconFailed, setFaviconFailed] = React.useState(false)
 
+  // Moderate the OG image before rendering — fail closed so explicit images
+  // from shared links never flash through unreviewed.
+  const ogImageModerationDoc = useMemo(
+    () => data?.image
+      ? buildMediaModerationDocument({ id: `og:${data.image}`, kind: 'image', url: data.image, updatedAt: 0 })
+      : null,
+    [data?.image],
+  )
+  const { blocked: ogImageBlocked, loading: ogImageModerationLoading } = useMediaModerationDocument(
+    ogImageModerationDoc,
+    { failClosed: true },
+  )
+
   // Skeleton while fetching
   if (loading) {
     return (
@@ -99,8 +114,8 @@ export function LinkPreviewCard({
         ${className}
       `}
     >
-      {/* OG Image */}
-      {data.image && !imageFailed && (
+      {/* OG Image — only shown once classified as safe */}
+      {data.image && !imageFailed && !ogImageBlocked && !ogImageModerationLoading && (
         <div className="aspect-[1.91/1] w-full overflow-hidden bg-[rgb(var(--color-fill)/0.06)]">
           <img
             src={data.image}

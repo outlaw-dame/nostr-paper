@@ -24,6 +24,24 @@ const NSFW_HASHTAGS = new Set([
   'topless',
   'fetish',
   'kink',
+  // Additional common NSFW self-tags
+  '18plus',
+  '18+',
+  'r18',
+  'adultcontent',
+  'adultonly',
+  'nsfwart',
+  'nsfwtwitter',
+  'gore',
+  'graphicviolence',
+  'uncensored',
+  'suggestive',
+  'bdsm',
+  'kinky',
+  'smut',
+  'lemon',
+  'yaoi',
+  'yuri',
 ])
 
 export function hasNsfwHashtag(event: NostrEvent): boolean {

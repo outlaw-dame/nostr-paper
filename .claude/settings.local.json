@@ -24,7 +24,10 @@
       "Bash(grep -rn \"virtualiz\\\\|VirtualList\\\\|useVirtual\\\\|virtual.*scroll\\\\|@tanstack/virtual\" /Users/damonoutlaw/Downloads/nostr-paper/src --include=*.tsx --include=*.ts -l)",
       "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")",
       "Bash(awk '/useEffect\\\\\\(/{p=1} p{print NR\": \"$0} /^\\\\s*}\\\\s*,\\\\s*\\\\[/{if\\(p\\){p=0}}' /Users/damonoutlaw/Downloads/nostr-paper/src/pages/FeedPage.tsx)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(grep -E \"\\\\.ts\\(x\\)?$\")",
+      "Bash(git fetch *)",
+      "Bash(git checkout *)"
     ]
   }
 }

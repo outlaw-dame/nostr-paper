@@ -44,7 +44,9 @@ describe('parseSearchQuery', () => {
   it('normalizes hashtag queries into local keyword terms', () => {
     const parsed = parseSearchQuery('#Apple')
 
-    expect(parsed.relayQuery).toBe('#Apple')
+    // Relay query strips leading # so NIP-50 relays do full-text search for "Apple"
+    // finding both "#Apple" tagged posts and "Apple" text posts, instead of only hashtag-filtered results
+    expect(parsed.relayQuery).toBe('Apple')
     expect(parsed.localQuery).toBe('Apple')
     expect(parsed.domains).toEqual([])
   })

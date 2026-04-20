@@ -9,6 +9,15 @@ import { searchRelays } from '@/lib/nostr/search'
 vi.mock('@/lib/search/hybrid', () => ({
   hybridSearchEvents: vi.fn(),
   hybridSearchProfiles: vi.fn(),
+  classifyQueryIntent: vi.fn(() => 'lexical'),
+}))
+
+vi.mock('@/lib/search/queryRewrite', () => ({
+  rewriteSearchQuery: vi.fn(() => Promise.resolve(null)),
+}))
+
+vi.mock('@/lib/search/searchSynthesis', () => ({
+  synthesizeSearchAnswer: vi.fn(() => Promise.resolve(null)),
 }))
 
 vi.mock('@/lib/nostr/search', () => ({

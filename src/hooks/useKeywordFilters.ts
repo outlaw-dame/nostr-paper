@@ -41,8 +41,8 @@ import {
   deleteFilter,
   FILTERS_UPDATED_EVENT,
 } from '@/lib/filters/storage'
-import { extractEventFields, buildSemanticText } from '@/lib/filters/extract'
-import { checkEventText, mergeResults } from '@/lib/filters/matcher'
+import { extractEventFields, extractProfileFields, buildSemanticText } from '@/lib/filters/extract'
+import { checkEventText, checkProfileText, mergeResults } from '@/lib/filters/matcher'
 import {
   getSemanticFilterSettings,
   SEMANTIC_FILTER_SETTINGS_UPDATED_EVENT,
@@ -148,6 +148,27 @@ export function useEventFilterCheck() {
       if (_loading || effectiveFilters.length === 0) return { action: null, matches: [] }
       const fields = extractEventFields(event, profile)
       return checkEventText(fields, effectiveFilters)
+    },
+    // Intentionally depend on _filters reference — tick() forces a new one
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [_filters, _loading],
+  )
+}
+
+/**
+ * Returns a memoised function that synchronously checks a profile against the
+ * currently active text-based filter rules.
+ */
+export function useProfileFilterCheck() {
+  const [, tick] = useState(0)
+  useEffect(() => _subscribe(() => tick(t => t + 1)), [])
+
+  return useCallback(
+    (profile: Profile): FilterCheckResult => {
+      const effectiveFilters = getEffectiveKeywordFilters(_filters)
+      if (_loading || effectiveFilters.length === 0) return { action: null, matches: [] }
+      const fields = extractProfileFields(profile)
+      return checkProfileText(fields, effectiveFilters)
     },
     // Intentionally depend on _filters reference — tick() forces a new one
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -2,7 +2,7 @@ import type { MediaModerationDecision, MediaModerationScores } from '@/types'
 
 export const DEFAULT_MEDIA_NSFW_MODEL_ID = 'onnx-community/nsfw_image_detection-ONNX'
 export const DEFAULT_MEDIA_VIOLENCE_MODEL_ID = 'onnx-community/vit-base-violence-detection-ONNX'
-export const MEDIA_MODERATION_POLICY_VERSION = 'extreme-media-harm-v1'
+export const MEDIA_MODERATION_POLICY_VERSION = 'media-harm-v2'
 
 export function emptyMediaModerationScores(): MediaModerationScores {
   return {
@@ -75,8 +75,8 @@ export function evaluateMediaModerationScores(
   scores: MediaModerationScores,
   models: { nsfwModel: string | null; violenceModel: string | null },
 ): MediaModerationDecision {
-  const isExplicitAdultContent = scores.nsfw >= 0.85
-  const isGraphicViolence = scores.violence >= 0.90
+  const isExplicitAdultContent = scores.nsfw >= 0.70
+  const isGraphicViolence = scores.violence >= 0.75
 
   let reason: MediaModerationDecision['reason'] = null
   if (isExplicitAdultContent) {

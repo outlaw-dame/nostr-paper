@@ -6,6 +6,24 @@ import { visualizer } from 'rollup-plugin-visualizer'
 
 const DEV_NIP05_PROXY_PATH = '/__dev/nip05'
 const DEV_NIP05_PROXY_TIMEOUT_MS = 8_000
+
+// ── Relay WebSocket Proxy ─────────────────────────────────────
+// Proxies WebSocket relay connections through the Vite dev server.
+// Allows Tagr (and other relay clients) to connect via ws://localhost:PORT/__dev/relay-ws
+// instead of directly to wss:// when firewalls or network conditions prevent direct WSS.
+// Set VITE_TAGR_RELAY_URL=ws://localhost:5173/__dev/relay-ws in .env.local to use it.
+const DEV_RELAY_PROXY_PATH = '/__dev/relay-ws'
+const DEV_RELAY_PROXY_ALLOWED_HOSTS = new Set([
+  'relay.nos.social',
+  'relay.damus.io',
+  'relay.nostr.band',
+  'nos.lol',
+  'relay.snort.social',
+  'relay.primal.net',
+  'nostr.wine',
+  '127.0.0.1',
+  'localhost',
+])
 const DEV_NIP05_PROXY_MAX_BYTES = 256_000
 
 // ── Translation Proxies ─────────────────────────────────────
@@ -99,9 +117,14 @@ function pickManualChunk(id: string): string | undefined {
     }
   }
 
+  if (normalized.includes('/src/lib/ai/')) {
+    return 'ai-tools'
+  }
+
   if (
     normalized.includes('/src/lib/translation/') ||
-    normalized.includes('/src/components/translation/')
+    normalized.includes('/src/components/translation/') ||
+    normalized.includes('/src/lib/gemma/')
   ) {
     return 'translation'
   }
@@ -1188,6 +1211,105 @@ function lingvaDevProxyPlugin() {
   }
 }
 
+function relayDevProxyPlugin() {
+  return {
+    name: 'relay-dev-proxy',
+    configureServer(server: import('vite').ViteDevServer) {
+      if (!server.httpServer) return
+
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const tls = require('tls') as typeof import('tls')
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const net = require('net') as typeof import('net')
+
+      server.httpServer.on(
+        'upgrade',
+        (
+          req: import('http').IncomingMessage,
+          socket: import('stream').Duplex,
+          head: Buffer,
+        ) => {
+          if (!req.url?.startsWith(DEV_RELAY_PROXY_PATH)) return
+
+          const parsedUrl = new URL(req.url, 'http://localhost')
+          const targetParam = parsedUrl.searchParams.get('target') ?? 'wss://relay.nos.social'
+
+          let targetUrl: URL
+          try { targetUrl = new URL(targetParam) }
+          catch { socket.destroy(); return }
+
+          if (!DEV_RELAY_PROXY_ALLOWED_HOSTS.has(targetUrl.hostname)) {
+            socket.destroy(); return
+          }
+          if (targetUrl.protocol !== 'wss:' && targetUrl.protocol !== 'ws:') {
+            socket.destroy(); return
+          }
+
+          const isSecure = targetUrl.protocol === 'wss:'
+          const port = targetUrl.port
+            ? parseInt(targetUrl.port, 10)
+            : (isSecure ? 443 : 80)
+          const hostname = targetUrl.hostname
+          const wsKey = req.headers['sec-websocket-key'] ?? 'dGhlIHNhbXBsZSBub25jZQ=='
+          const wsProtocol = req.headers['sec-websocket-protocol']
+
+          // Build the forwarded HTTP upgrade request
+          const upgradeLines = [
+            `GET ${targetUrl.pathname || '/'} HTTP/1.1`,
+            `Host: ${hostname}`,
+            'Upgrade: websocket',
+            'Connection: Upgrade',
+            'Sec-WebSocket-Version: 13',
+            `Sec-WebSocket-Key: ${wsKey}`,
+            ...(wsProtocol ? [`Sec-WebSocket-Protocol: ${wsProtocol}`] : []),
+            '',
+            '',
+          ].join('\r\n')
+
+          const upstream: import('tls').TLSSocket | import('net').Socket = isSecure
+            ? tls.connect({ host: hostname, port, servername: hostname })
+            : net.connect({ host: hostname, port })
+
+          upstream.once('secureConnect', () => upstream.write(upgradeLines))
+          upstream.once('connect', () => { if (!isSecure) upstream.write(upgradeLines) })
+
+          socket.on('error', () => upstream.destroy())
+          upstream.on('error', () => socket.destroy())
+
+          // Wait for the relay's 101 Switching Protocols response
+          let buf = Buffer.alloc(0)
+          upstream.on('data', (chunk: Buffer) => {
+            buf = Buffer.concat([buf, chunk])
+            const hEnd = buf.indexOf('\r\n\r\n')
+            if (hEnd < 0) return
+
+            if (!buf.slice(0, hEnd).toString('ascii').startsWith('HTTP/1.1 101')) {
+              socket.destroy(); upstream.destroy(); return
+            }
+
+            // Forward the 101 upgrade response to the browser
+            socket.write(
+              'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
+              + buf.slice(0, hEnd + 4).toString('ascii').split('\r\n')
+                .filter(l => l.startsWith('Sec-WebSocket-Accept:'))
+                .join('\r\n')
+              + '\r\n\r\n',
+            )
+            const leftover = buf.slice(hEnd + 4)
+            if (leftover.length) socket.write(leftover)
+            if (head.length) upstream.write(head)
+
+            // Bidirectional pipe
+            upstream.removeAllListeners('data')
+            upstream.pipe(socket)
+            socket.pipe(upstream)
+          })
+        },
+      )
+    },
+  }
+}
+
 function nip05DevProxyPlugin() {
   return {
     name: 'nip05-dev-proxy',
@@ -1296,6 +1418,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       wasmMimePlugin(),
+      relayDevProxyPlugin(),
       tenorDevProxyPlugin(),
       translationDevProxyPlugin(),
       lingvaDevProxyPlugin(),
@@ -1323,7 +1446,7 @@ export default defineConfig(({ mode }) => {
           // Semantic search assets are large and only needed on demand. Keep
           // them out of the install-time precache so the app shell stays small.
           globIgnores: ['assets/ort-wasm-*.wasm', 'assets/semantic.worker-*.js', 'assets/moderation.worker-*.js', 'assets/mediaModeration.worker-*.js'],
-          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+          maximumFileSizeToCacheInBytes: 30 * 1024 * 1024,
         },
         manifest: {
           name: 'Nostr Paper',

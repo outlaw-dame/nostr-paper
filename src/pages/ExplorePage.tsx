@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'motion/react'
+import { FilteredGate } from '@/components/filters/FilteredGate'
 import { SearchBar } from '@/components/search/SearchBar'
 import { FeedSkeleton } from '@/components/feed/FeedSkeleton'
 import { AuthorRow } from '@/components/profile/AuthorRow'
@@ -27,6 +28,7 @@ import { useModerationDocuments } from '@/hooks/useModeration'
 import { useSearch } from '@/hooks/useSearch'
 import { useProfile } from '@/hooks/useProfile'
 import { useSelfThreadIndex } from '@/hooks/useSelfThreadIndex'
+import { mergeResults, useEventFilterCheck, useProfileFilterCheck, useSemanticFiltering } from '@/hooks/useKeywordFilters'
 import { useMuteList } from '@/hooks/useMuteList'
 import { useHideNsfwTaggedPosts } from '@/hooks/useHideNsfwTaggedPosts'
 import { useTrendingTopics } from '@/hooks/useTrendingTopics'
@@ -56,6 +58,7 @@ import { parseCommentEvent, parseThreadEvent } from '@/lib/nostr/thread'
 import { sanitizeText } from '@/lib/security/sanitize'
 import { parseVideoEvent } from '@/lib/nostr/video'
 import { tApp } from '@/lib/i18n/app'
+import type { FilterCheckResult } from '@/lib/filters/types'
 import type { NostrEvent, Profile } from '@/types'
 import { Kind } from '@/types'
 import type { RecentHashtagStat } from '@/lib/db/nostr'
@@ -95,6 +98,8 @@ export default function ExplorePage() {
     relayError,
     semanticError,
   } = useSearch({ kinds: SEARCHABLE_KINDS, localLimit: 40, relayLimit: 40 })
+  const checkEvent = useEventFilterCheck()
+  const checkProfile = useProfileFilterCheck()
 
   const {
     isMuted,
@@ -198,9 +203,20 @@ export default function ExplorePage() {
     ),
     [allowedEventIds, eventModerationIds, events, hideNsfwTaggedPosts, isMuted, mutedWords, mutedHashtags],
   )
+  const semanticFilterResults = useSemanticFiltering(visibleEvents)
   const visibleProfiles = useMemo(
     () => profiles.filter(p => !isMuted(p.pubkey) && (!profileModerationIds.has(p.pubkey) || allowedProfileIds.has(p.pubkey))),
     [allowedProfileIds, profileModerationIds, profiles, isMuted],
+  )
+  const profileFilterResults = useMemo(
+    () => {
+      const next = new Map<string, FilterCheckResult>()
+      for (const profile of visibleProfiles) {
+        next.set(profile.pubkey, checkProfile(profile))
+      }
+      return next
+    },
+    [checkProfile, visibleProfiles],
   )
   const visibleFollowPacks = useMemo(
     () => rankExploreFollowPacks(
@@ -356,7 +372,13 @@ export default function ExplorePage() {
                 <h2 className="section-kicker px-1 mb-3">{tApp('explorePeopleSection')}</h2>
                 <div className="space-y-3">
                   {visibleProfiles.map(profile => (
-                    <ProfileResult key={profile.pubkey} profile={profile} />
+                    <FilteredGate
+                      key={profile.pubkey}
+                      result={profileFilterResults.get(profile.pubkey) ?? { action: null, matches: [] }}
+                      eventId={`profile:${profile.pubkey}`}
+                    >
+                      <ProfileResult profile={profile} />
+                    </FilteredGate>
                   ))}
                 </div>
               </section>
@@ -366,7 +388,12 @@ export default function ExplorePage() {
                 <h2 className="section-kicker px-1 mb-3">{tApp('explorePostsSection')}</h2>
                 <div className="space-y-3">
                   {visibleEvents.map(event => (
-                    <EventResult key={event.id} event={event} />
+                    <EventResult
+                      key={event.id}
+                      event={event}
+                      checkEvent={checkEvent}
+                      semanticResult={semanticFilterResults.get(event.id) ?? { action: null, matches: [] }}
+                    />
                   ))}
                 </div>
               </section>
@@ -791,9 +818,21 @@ function ProfileResult({
   )
 }
 
-function EventResult({ event }: { event: NostrEvent }) {
+function EventResult({
+  event,
+  checkEvent,
+  semanticResult,
+}: {
+  event: NostrEvent
+  checkEvent: (event: NostrEvent, profile?: Profile) => FilterCheckResult
+  semanticResult: FilterCheckResult
+}) {
   const { profile } = useProfile(event.pubkey, { background: false })
   const threadIndex = useSelfThreadIndex(event)
+  const filterResult = useMemo(
+    () => mergeResults(checkEvent(event, profile ?? undefined), semanticResult),
+    [checkEvent, event, profile, semanticResult],
+  )
   const article = parseLongFormEvent(event)
   const poll = parsePollEvent(event)
   const video = parseVideoEvent(event)
@@ -810,12 +849,13 @@ function EventResult({ event }: { event: NostrEvent }) {
   const href = article?.route ?? video?.route ?? `/note/${event.id}`
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.18 }}
-    >
-      <Link to={href} className="app-panel block rounded-ios-xl p-4 card-elevated">
+    <FilteredGate result={filterResult} eventId={event.id}>
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.18 }}
+      >
+        <Link to={href} className="app-panel block rounded-ios-xl p-4 card-elevated">
         <div className="flex items-start justify-between gap-3">
           <AuthorRow pubkey={event.pubkey} profile={profile} timestamp={event.created_at} />
           <span className="px-2 py-1 rounded-full text-[11px] font-semibold uppercase tracking-[0.08em] bg-[rgb(var(--color-fill)/0.1)] text-[rgb(var(--color-label-secondary))]">
@@ -845,9 +885,10 @@ function EventResult({ event }: { event: NostrEvent }) {
             )}
           </>
         )}
-        <EventMetricsRow event={event} interactive />
-      </Link>
-    </motion.div>
+          <EventMetricsRow event={event} interactive />
+        </Link>
+      </motion.div>
+    </FilteredGate>
   )
 }
 

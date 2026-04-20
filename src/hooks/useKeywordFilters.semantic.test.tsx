@@ -30,6 +30,11 @@ vi.mock('@/lib/semantic/client', () => ({
   rankSemanticDocuments: (...args: unknown[]) => mockRefs.rankSemanticDocuments(...args),
 }))
 
+vi.mock('@/lib/filters/semanticSettings', () => ({
+  getSemanticFilterSettings: () => ({ threshold: 0.42 }),
+  SEMANTIC_FILTER_SETTINGS_UPDATED_EVENT: 'nostr-paper:semantic-filter-settings-updated',
+}))
+
 mockRefs = {
   currentFilters: [
     {
@@ -100,6 +105,13 @@ const flush = async () => {
 const syncFilters = async () => {
   await act(async () => {
     window.dispatchEvent(new CustomEvent('nostr-paper:keyword-filters-updated'))
+    await flush()
+  })
+}
+
+const syncSemanticSettings = async (scopeId = 'anon') => {
+  await act(async () => {
+    window.dispatchEvent(new CustomEvent('nostr-paper:semantic-filter-settings-updated', { detail: { scopeId } }))
     await flush()
   })
 }
@@ -232,6 +244,74 @@ describe('useSemanticFiltering', () => {
       await flush()
     })
 
+    expect(latest.size).toBe(0)
+  })
+
+  it('applies warn action when semantic-only warn rule meets threshold', async () => {
+    mockRefs.currentFilters = [semanticFilter({ action: 'warn' })]
+    mockRefs.rankSemanticDocuments.mockResolvedValue([{ id: 'event-1', score: 0.77 }])
+
+    let latest = new Map<string, FilterCheckResult>()
+
+    await act(async () => {
+      root.render(
+        <Harness
+          events={[makeEvent('event-1', 'some text')]}
+          onResult={(result) => {
+            latest = result
+          }}
+        />,
+      )
+      await flush()
+    })
+
+    await syncFilters()
+
+    expect(latest.get('event-1')?.action).toBe('warn')
+    expect(latest.get('event-1')?.matches[0]?.action).toBe('warn')
+  })
+
+  it('re-runs ranking when semantic settings update for the same scope', async () => {
+    mockRefs.rankSemanticDocuments.mockResolvedValue([{ id: 'event-1', score: 0.55 }])
+
+    await act(async () => {
+      root.render(
+        <Harness
+          events={[makeEvent('event-1', 'some text')]}
+          onResult={() => {}}
+        />,
+      )
+      await flush()
+    })
+
+    await syncFilters()
+    const before = mockRefs.rankSemanticDocuments.mock.calls.length
+
+    await syncSemanticSettings('anon')
+
+    expect(mockRefs.rankSemanticDocuments.mock.calls.length).toBeGreaterThan(before)
+  })
+
+  it('fails open when semantic ranking throws', async () => {
+    mockRefs.rankSemanticDocuments.mockRejectedValue(new Error('model unavailable'))
+
+    let latest = new Map<string, FilterCheckResult>()
+
+    await act(async () => {
+      root.render(
+        <Harness
+          events={[makeEvent('event-1', 'some text')]}
+          onResult={(result) => {
+            latest = result
+          }}
+        />,
+      )
+      await flush()
+    })
+
+    await syncFilters()
+
+    expect(mockRefs.rankSemanticDocuments).toHaveBeenCalled()
     expect(latest.size).toBe(0)
   })
 })

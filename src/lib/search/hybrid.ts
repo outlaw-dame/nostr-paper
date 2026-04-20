@@ -327,9 +327,14 @@ function profileToSemanticDocument(profile: Profile): SemanticDocument | null {
 
 export async function hybridSearchEvents(
   query: string,
-  opts: SearchEventsOptions & { signal?: AbortSignal; lexicalOnly?: boolean; explain?: boolean } = {},
+  opts: SearchEventsOptions & {
+    signal?: AbortSignal
+    lexicalOnly?: boolean
+    explain?: boolean
+    semanticQueryOverride?: string
+  } = {},
 ): Promise<HybridSearchResponse<NostrEvent>> {
-  const { signal, lexicalOnly, explain, ...searchOptions } = opts
+  const { signal, lexicalOnly, explain, semanticQueryOverride, ...searchOptions } = opts
   const limit = Math.min(opts.limit ?? 50, 200)
   const lexicalLimit = Math.min(Math.max(limit * 2, limit), 240)
   const lexicalResults = await searchEventsWithScores(query, {
@@ -349,7 +354,8 @@ export async function hybridSearchEvents(
   }
 
   const semanticQuery = getSemanticQuery(query)
-  if (!semanticQuery) {
+  const effectiveSemanticQuery = semanticQueryOverride?.trim() || semanticQuery
+  if (!effectiveSemanticQuery) {
     return {
       items: lexicalItems.slice(0, limit),
       semanticUsed: false,
@@ -382,7 +388,7 @@ export async function hybridSearchEvents(
     }
 
     const rawMatches = await rankSemanticDocuments(
-      semanticQuery,
+      effectiveSemanticQuery,
       semanticDocuments,
       Math.max(limit * 3, 60),
       signal,

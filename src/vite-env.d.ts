@@ -44,6 +44,12 @@ interface ImportMetaEnv {
    * the Apple Developer portal. When absent, Apple Music sign-in is disabled.
    */
   readonly VITE_APPLE_MUSIC_DEVELOPER_TOKEN?: string
+  /**
+   * Override the Tagr moderation relay URL. Defaults to wss://relay.nos.social.
+   * In dev, set to ws://localhost:5173/__dev/relay-ws to route Tagr connections
+   * through the Vite WebSocket relay proxy instead of directly to the relay.
+   */
+  readonly VITE_TAGR_RELAY_URL?: string
 }
 
 interface ImportMeta {

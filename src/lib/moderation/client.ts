@@ -4,6 +4,7 @@ import type {
   ModerationWorkerRequest,
   ModerationWorkerResponse,
 } from '@/types'
+import { refineModerationDecisionsWithAi } from '@/lib/moderation/aiReferee'
 
 const INIT_TIMEOUT_MS = 120_000
 const QUERY_TIMEOUT_MS = 90_000
@@ -181,7 +182,8 @@ export async function moderateContentDocuments(
     throw normalized
   })
 
-  return result.decisions ?? []
+  const decisions = result.decisions ?? []
+  return refineModerationDecisionsWithAi(documents, decisions, signal)
 }
 
 export async function closeContentModeration(): Promise<void> {
