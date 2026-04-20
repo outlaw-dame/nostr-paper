@@ -21,7 +21,16 @@ function safeArray<T>(val: any): T[] | undefined {
 }
 
 function safeNumber(val: any): number | undefined {
-  return typeof val === 'number' && Number.isFinite(val) ? val : undefined;
+  if (typeof val === 'number' && Number.isFinite(val)) {
+    return val;
+  }
+  if (typeof val === 'string' && val.trim() !== '') {
+    const parsed = Number(val);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
 }
 
 function safeString(val: any): string | undefined {
@@ -71,6 +80,7 @@ wss.on('connection', (ws) => {
           // Cursor (option B)
           const cursorScore = safeNumber(filter.cursor_score);
           const cursorTs = safeNumber(filter.cursor_ts);
+          const cursorId = safeString(filter.cursor_id);
 
           const embedding = await embedText(search);
           const pgVector = toPgVector(embedding);
@@ -83,6 +93,7 @@ wss.on('connection', (ws) => {
               ),
               ranked AS (
                 SELECT
+                  er.id AS event_id,
                   er.raw,
                   sd.created_at,
                   ts_rank_cd(sd.fts, q.query) AS lexical_score,
@@ -105,20 +116,27 @@ wss.on('connection', (ws) => {
                   AND er.deleted_at IS NULL
                   AND ($2::int[] IS NULL OR sd.kind = ANY($2))
                   AND ($3::text[] IS NULL OR sd.author_pubkey = ANY($3))
-                  AND ($4::timestamptz IS NULL OR sd.created_at >= to_timestamp($4))
-                  AND ($5::timestamptz IS NULL OR sd.created_at <= to_timestamp($5))
+                  AND ($4::double precision IS NULL OR sd.created_at >= to_timestamp($4))
+                  AND ($5::double precision IS NULL OR sd.created_at <= to_timestamp($5))
                   AND (
                     sd.fts @@ q.query
                     OR sd.embedding IS NOT NULL
                   )
               )
-            SELECT raw, rrf_score, created_at
+            SELECT event_id, raw, rrf_score, created_at
             FROM ranked
             WHERE
-              ($7::float IS NULL OR $8::timestamptz IS NULL)
-              OR (rrf_score, created_at) < ($7, to_timestamp($8))
-            ORDER BY rrf_score DESC, created_at DESC
-            LIMIT $9
+              ($7::double precision IS NULL OR $8::double precision IS NULL)
+              OR (
+                $9::text IS NULL
+                AND (rrf_score, created_at) < ($7, to_timestamp($8))
+              )
+              OR (
+                $9::text IS NOT NULL
+                AND (rrf_score, created_at, event_id) < ($7, to_timestamp($8), $9)
+              )
+            ORDER BY rrf_score DESC, created_at DESC, event_id DESC
+            LIMIT $10
             `,
             [
               search,
@@ -129,26 +147,31 @@ wss.on('connection', (ws) => {
               pgVector,
               cursorScore ?? null,
               cursorTs ?? null,
+              cursorId ?? null,
               limit
             ]
           );
 
           let lastScore: number | null = null;
           let lastTs: number | null = null;
+          let lastId: string | null = null;
 
           for (const row of res.rows) {
             ws.send(JSON.stringify(['EVENT', subId, row.raw]));
-            lastScore = row.rrf_score;
-            lastTs = Math.floor(new Date(row.created_at).getTime() / 1000);
+            const score = Number(row.rrf_score);
+            lastScore = Number.isFinite(score) ? score : null;
+            lastTs = new Date(row.created_at).getTime() / 1000;
+            lastId = safeString(row.event_id) ?? null;
           }
 
-          if (lastScore !== null && lastTs !== null) {
+          if (lastScore !== null && lastTs !== null && lastId !== null) {
             ws.send(JSON.stringify([
               'NOTICE',
               JSON.stringify({
                 type: 'cursor',
                 cursor_score: lastScore,
-                cursor_ts: lastTs
+                cursor_ts: lastTs,
+                cursor_id: lastId
               })
             ]));
           }
