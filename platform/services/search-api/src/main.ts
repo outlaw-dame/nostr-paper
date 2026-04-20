@@ -1,7 +1,7 @@
 import WebSocket, { WebSocketServer } from 'ws';
 import { Client } from 'pg';
 import pino from 'pino';
-import crypto from 'node:crypto';
+import { embedText, warmupEmbedder } from 'semantic-embedder';
 
 const log = pino({ level: process.env.LOG_LEVEL || 'info' });
 
@@ -12,20 +12,6 @@ const db = new Client({
 const PORT = Number(process.env.PORT || 3001);
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 20;
-
-/**
- * Deterministic embedding (must match worker)
- */
-function embedText(text: string, dim = 384): number[] {
-  const hash = crypto.createHash('sha256').update(text).digest();
-  const vector: number[] = [];
-  for (let i = 0; i < dim; i++) {
-    const byte = hash[i % hash.length];
-    vector.push((byte / 255) * 2 - 1);
-  }
-  const norm = Math.sqrt(vector.reduce((s, v) => s + v * v, 0));
-  return norm === 0 ? vector : vector.map(v => v / norm);
-}
 
 /**
  * Sanitizers (strict)
@@ -74,7 +60,7 @@ wss.on('connection', (ws) => {
           const cursorScore = safeNumber(filter.cursor_score);
           const cursorTs = safeNumber(filter.cursor_ts);
 
-          const embedding = embedText(search);
+          const embedding = await embedText(search);
 
           const res = await db.query(
             `
@@ -176,10 +162,12 @@ wss.on('connection', (ws) => {
 
 async function main() {
   await db.connect();
+  log.info('warming semantic embedder');
+  await warmupEmbedder();
   log.info(`search relay (hybrid + RRF + pagination) running on :${PORT}`);
 }
 
-main().catch(err => {
-  log.fatal(err);
+main().catch((err) => {
+  log.fatal({ err }, 'search relay crashed');
   process.exit(1);
 });

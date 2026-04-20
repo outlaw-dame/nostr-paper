@@ -1,23 +1,23 @@
 {
-  "name": "search-api",
+  "name": "embedding-worker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "tsx src/main.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "reindex": "tsx src/reindex.ts"
   },
   "dependencies": {
+    "ioredis": "^5.4.1",
     "pg": "^8.11.5",
     "pino": "^9.3.2",
-    "ws": "^8.18.0",
-    "semantic-embedder": "file:../../packages/semantic-embedder"
+    "semantic-embedder": "file:../../../packages/semantic-embedder"
   },
   "devDependencies": {
-    "@types/node": "^22.10.2",
-    "@types/ws": "^8.5.13",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "@types/node": "^22.10.2"
   }
 }
