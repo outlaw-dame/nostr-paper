@@ -11,6 +11,32 @@ const INGEST_STREAM = process.env.REDIS_STREAM || 'events.ingest';
 const EMBED_STREAM = process.env.EMBED_STREAM || 'events.embed';
 const GROUP = 'lexical-index';
 const CONSUMER = `worker-${Math.random().toString(36).slice(2)}`;
+const MAX_RETRIES = Number(process.env.LEXICAL_MAX_RETRIES || 5);
+
+function backoff(attempt: number) {
+  const base = Math.min(1000 * 2 ** attempt, 30000);
+  return base + Math.floor(Math.random() * 250);
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withRetry<T>(opName: string, fn: () => Promise<T>, maxRetries = MAX_RETRIES): Promise<T> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= maxRetries) {
+        throw err;
+      }
+      const delay = backoff(attempt++);
+      log.warn({ err, opName, attempt, delay }, 'operation failed, retrying');
+      await sleep(delay);
+    }
+  }
+}
 
 function extractHashtags(tags: string[][]): string[] {
   return tags.filter((t) => t[0] === 't' && t[1]).map((t) => t[1]!);
@@ -38,7 +64,7 @@ async function ensureGroup() {
 }
 
 async function enqueueEmbeddingJob(eventId: string, text: string) {
-  await redis.xadd(
+  await withRetry('enqueueEmbeddingJob', () => redis.xadd(
     EMBED_STREAM,
     '*',
     'payload',
@@ -46,7 +72,7 @@ async function enqueueEmbeddingJob(eventId: string, text: string) {
       event_id: eventId,
       text
     })
-  );
+  ));
 }
 
 async function processMessage(payload: string) {
@@ -175,20 +201,25 @@ async function run() {
   while (true) {
     const res = await redis.xreadgroup(
       'GROUP', GROUP, CONSUMER,
-      'BLOCK', 5000,
       'COUNT', 50,
+      'BLOCK', 5000,
       'STREAMS', INGEST_STREAM, '>'
-    );
+    ) as [string, [string, string[]][]][] | null;
 
     if (!res) continue;
 
     for (const [, messages] of res) {
       for (const [id, fields] of messages) {
-        const payloadIndex = fields.findIndex((value) => value === 'payload');
+        const payloadIndex = fields.findIndex((value: string) => value === 'payload');
         const payload =
           payloadIndex >= 0 && fields[payloadIndex + 1]
             ? fields[payloadIndex + 1]
             : fields[1];
+        if (typeof payload !== 'string') {
+          log.warn({ id }, 'invalid payload type');
+          await redis.xack(INGEST_STREAM, GROUP, id);
+          continue;
+        }
         try {
           await processMessage(payload);
           await redis.xack(INGEST_STREAM, GROUP, id);

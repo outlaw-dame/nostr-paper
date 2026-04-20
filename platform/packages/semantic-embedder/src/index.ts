@@ -4,7 +4,10 @@ const MODEL_ID = process.env.EMBEDDING_MODEL_ID || 'Xenova/all-MiniLM-L6-v2';
 const EXPECTED_DIM = Number(process.env.EMBEDDING_DIM || 384);
 const INIT_RETRIES = Number(process.env.EMBEDDING_INIT_RETRIES || 3);
 
-type Extractor = Awaited<ReturnType<typeof pipeline>>;
+type Extractor = (text: string, options: { pooling: 'mean'; normalize: true }) => Promise<{
+  data: Float32Array | number[];
+  dims?: number[];
+}>;
 
 let extractorPromise: Promise<Extractor> | null = null;
 
@@ -22,7 +25,7 @@ async function initExtractor(): Promise<Extractor> {
   let lastError: unknown;
   for (let attempt = 0; attempt < INIT_RETRIES; attempt++) {
     try {
-      return await pipeline('feature-extraction', MODEL_ID);
+      return (await pipeline('feature-extraction', MODEL_ID)) as unknown as Extractor;
     } catch (err) {
       lastError = err;
       if (attempt < INIT_RETRIES - 1) {

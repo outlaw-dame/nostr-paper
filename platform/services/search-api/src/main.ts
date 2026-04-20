@@ -28,6 +28,18 @@ function safeString(val: any): string | undefined {
   return typeof val === 'string' ? val : undefined;
 }
 
+function toPgVector(values: number[]): string {
+  if (values.length === 0) {
+    throw new Error('Embedding cannot be empty');
+  }
+  for (const value of values) {
+    if (!Number.isFinite(value)) {
+      throw new Error('Embedding contains non-finite value');
+    }
+  }
+  return `[${values.join(',')}]`;
+}
+
 const wss = new WebSocketServer({ port: PORT });
 
 wss.on('connection', (ws) => {
@@ -61,6 +73,7 @@ wss.on('connection', (ws) => {
           const cursorTs = safeNumber(filter.cursor_ts);
 
           const embedding = await embedText(search);
+          const pgVector = toPgVector(embedding);
 
           const res = await db.query(
             `
@@ -73,14 +86,14 @@ wss.on('connection', (ws) => {
                   er.raw,
                   sd.created_at,
                   ts_rank_cd(sd.fts, q.query) AS lexical_score,
-                  (1 - (sd.embedding <=> $6)) AS semantic_score,
+                  (1 - (sd.embedding <=> $6::vector)) AS semantic_score,
                   (
                     1.0 / (60 + ROW_NUMBER() OVER (
                       ORDER BY ts_rank_cd(sd.fts, q.query) DESC
                     ))
                     +
                     1.0 / (60 + ROW_NUMBER() OVER (
-                      ORDER BY (1 - (sd.embedding <=> $6)) DESC
+                      ORDER BY (1 - (sd.embedding <=> $6::vector)) DESC
                     ))
                   ) AS rrf_score
                 FROM search_docs sd
@@ -113,7 +126,7 @@ wss.on('connection', (ws) => {
               authors ?? null,
               since ?? null,
               until ?? null,
-              embedding,
+              pgVector,
               cursorScore ?? null,
               cursorTs ?? null,
               limit
