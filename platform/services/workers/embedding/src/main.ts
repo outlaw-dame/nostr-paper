@@ -179,6 +179,12 @@ async function run() {
       }
       attempt = 0;
     } catch (err) {
+      if (String((err as { message?: string })?.message || '').includes('NOGROUP')) {
+        log.warn({ err }, 'redis group missing, recreating group');
+        await ensureGroup();
+        attempt = 0;
+        continue;
+      }
       const delay = backoff(attempt++);
       log.error({ err, delay }, 'embedding worker failure, retrying');
       await new Promise((resolve) => setTimeout(resolve, delay));

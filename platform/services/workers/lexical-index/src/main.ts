@@ -199,12 +199,22 @@ async function run() {
   await ensureGroup();
 
   while (true) {
-    const res = await redis.xreadgroup(
-      'GROUP', GROUP, CONSUMER,
-      'COUNT', 50,
-      'BLOCK', 5000,
-      'STREAMS', INGEST_STREAM, '>'
-    ) as [string, [string, string[]][]][] | null;
+    let res: [string, [string, string[]][]][] | null;
+    try {
+      res = await redis.xreadgroup(
+        'GROUP', GROUP, CONSUMER,
+        'COUNT', 50,
+        'BLOCK', 5000,
+        'STREAMS', INGEST_STREAM, '>'
+      ) as [string, [string, string[]][]][] | null;
+    } catch (err) {
+      if (String((err as { message?: string })?.message || '').includes('NOGROUP')) {
+        log.warn({ err }, 'redis group missing, recreating group');
+        await ensureGroup();
+        continue;
+      }
+      throw err;
+    }
 
     if (!res) continue;
 
