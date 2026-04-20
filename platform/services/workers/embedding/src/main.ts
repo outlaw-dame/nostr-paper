@@ -17,6 +17,18 @@ const MAX_RETRIES = Number(process.env.EMBED_MAX_RETRIES || 5);
 
 let running = true;
 
+redis.on('error', (err) => {
+  log.error({ err }, 'redis client error');
+});
+
+pg.on('error', (err) => {
+  log.error({ err }, 'postgres client error');
+  if (running) {
+    running = false;
+    setImmediate(() => process.exit(1));
+  }
+});
+
 function backoff(attempt: number) {
   const base = Math.min(1000 * 2 ** attempt, 30000);
   return base + Math.floor(Math.random() * 250);
