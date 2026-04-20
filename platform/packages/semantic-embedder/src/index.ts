@@ -29,21 +29,14 @@ function nextDelay(attempt: number, baseMs = 500, maxMs = 5000) {
 async function getTransformers(): Promise<TransformersModule> {
   if (!transformersPromise) {
     transformersPromise = (async () => {
-      if (FORCE_WASM_RUNTIME && !(ORT_SYMBOL in globalThis)) {
-        const ort = (ONNX_WEB_WASM as { default?: unknown }).default ?? ONNX_WEB_WASM;
-        Object.defineProperty(globalThis, ORT_SYMBOL, {
-          value: ort,
-          configurable: true,
-          enumerable: false,
-          writable: false,
-        });
-      }
-
       const mod = await import('@huggingface/transformers');
-
-      if (FORCE_WASM_RUNTIME && mod.env.backends.onnx.wasm) {
-        mod.env.backends.onnx.wasm.proxy = false;
-        mod.env.backends.onnx.wasm.numThreads = 1;
+      
+      if (FORCE_WASM_RUNTIME) {
+        // Just force no-proxy and 1 thread, don't try to inject global ORT
+        if (mod.env.backends.onnx.wasm) {
+          mod.env.backends.onnx.wasm.proxy = false;
+          mod.env.backends.onnx.wasm.numThreads = 1;
+        }
       }
 
       return mod;
@@ -58,11 +51,9 @@ async function initExtractor(): Promise<Extractor> {
   for (let attempt = 0; attempt < INIT_RETRIES; attempt++) {
     try {
       const { pipeline } = await getTransformers();
-      return (await pipeline('feature-extraction', MODEL_ID, {
-        session_options: FORCE_WASM_RUNTIME
-          ? { executionProviders: ['wasm'] }
-          : undefined,
-      })) as unknown as Extractor;
+      // On some platforms, 'cpu' is required. On others, executionProviders must be used.
+      // We try the default (no device/EP specified) first.
+      return (await pipeline('feature-extraction', MODEL_ID)) as unknown as Extractor;
     } catch (err) {
       lastError = err;
       if (attempt < INIT_RETRIES - 1) {

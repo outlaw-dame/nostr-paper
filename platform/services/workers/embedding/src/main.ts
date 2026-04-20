@@ -23,10 +23,7 @@ redis.on('error', (err) => {
 
 pg.on('error', (err) => {
   log.error({ err }, 'postgres client error');
-  if (running) {
-    running = false;
-    setImmediate(() => process.exit(1));
-  }
+  running = false;
 });
 
 function backoff(attempt: number) {

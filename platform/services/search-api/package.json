@@ -11,8 +11,8 @@
   "dependencies": {
     "pg": "^8.11.5",
     "pino": "^9.3.2",
-    "ws": "^8.18.0",
-    "semantic-embedder": "file:../../packages/semantic-embedder"
+    "semantic-embedder": "file:../../packages/semantic-embedder",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
