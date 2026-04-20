@@ -43,6 +43,8 @@ const DEV_FEED_PROXY_TIMEOUT_MS = 12_000
 const DEV_FEED_PROXY_MAX_BYTES = 1 * 1024 * 1024
 const DEV_FEED_PROXY_MAX_REDIRECTS = 3
 const DEV_SERVER_PORT = Number.parseInt(process.env.VITE_DEV_PORT ?? '5173', 10) || 5173
+const SEARCH_RELAY_PROXY_PATH = (process.env.VITE_SEARCH_RELAY_PROXY_PATH ?? '/relay').trim() || '/relay'
+const SEARCH_RELAY_PROXY_TARGET = (process.env.VITE_SEARCH_RELAY_PROXY_TARGET ?? 'ws://127.0.0.1:3301').trim()
 const ENABLE_LOCAL_CROSS_ORIGIN_ISOLATION = process.env.VITE_ENABLE_LOCAL_COI === 'true'
 const SAFE_BROWSING_BACKEND_ORIGIN = (process.env.SAFE_BROWSING_BACKEND_ORIGIN ?? 'http://127.0.0.1:7080').trim()
 const LOCAL_CROSS_ORIGIN_ISOLATION_HEADERS = ENABLE_LOCAL_CROSS_ORIGIN_ISOLATION
@@ -1374,6 +1376,11 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       headers: LOCAL_CROSS_ORIGIN_ISOLATION_HEADERS,
       proxy: {
+        [SEARCH_RELAY_PROXY_PATH]: {
+          target: SEARCH_RELAY_PROXY_TARGET,
+          ws: true,
+          changeOrigin: true,
+        },
         '/api/safe-browsing/check': {
           target: SAFE_BROWSING_BACKEND_ORIGIN,
           changeOrigin: true,
@@ -1387,6 +1394,13 @@ export default defineConfig(({ mode }) => {
 
     preview: {
       headers: LOCAL_CROSS_ORIGIN_ISOLATION_HEADERS,
+      proxy: {
+        [SEARCH_RELAY_PROXY_PATH]: {
+          target: SEARCH_RELAY_PROXY_TARGET,
+          ws: true,
+          changeOrigin: true,
+        },
+      },
     },
 
     optimizeDeps: {

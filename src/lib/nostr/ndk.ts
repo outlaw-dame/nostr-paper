@@ -59,11 +59,40 @@ function isUsableRelayUrl(url: string): boolean {
   return !BLOCKED_RELAY_URLS.has(normalizeRelayCandidate(url))
 }
 
+function normalizeProxyPath(path: string): string {
+  const trimmed = path.trim()
+  if (!trimmed) return '/relay'
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`
+}
+
+function getSameOriginRelayProxyUrl(): string | null {
+  if (typeof window === 'undefined') return null
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const host = window.location.host
+  if (!host) return null
+
+  const configuredPath = typeof import.meta.env.VITE_SEARCH_RELAY_PROXY_PATH === 'string'
+    ? import.meta.env.VITE_SEARCH_RELAY_PROXY_PATH
+    : '/relay'
+  const relayPath = normalizeProxyPath(configuredPath)
+
+  return `${protocol}//${host}${relayPath}`
+}
+
+const SEARCH_RELAY_OVERRIDE = typeof import.meta.env.VITE_SEARCH_RELAY_URL === 'string'
+  ? import.meta.env.VITE_SEARCH_RELAY_URL.trim()
+  : ''
+
+const SEARCH_RELAY_PRIMARY = SEARCH_RELAY_OVERRIDE || getSameOriginRelayProxyUrl() || 'ws://127.0.0.1:3301'
+const SEARCH_RELAY_FALLBACKS = typeof window === 'undefined' ? ['ws://127.0.0.1:3301'] : []
+
 // ── NIP-50 Search Relay Set ───────────────────────────────────
 // Relays explicitly supporting the NIP-50 full-text search filter.
 // Used by searchRelays() so search queries are routed to the best sources
 // without requiring all of them to be in the general subscription pool.
 export const SEARCH_RELAY_URLS = [
+  SEARCH_RELAY_PRIMARY,
+  ...SEARCH_RELAY_FALLBACKS,
   'wss://relay.nostr.band',    // Built specifically for search/indexing
   'wss://search.nos.today',    // Dedicated NIP-50 search relay
   'wss://relay.damus.io',
@@ -74,7 +103,7 @@ export const SEARCH_RELAY_URLS = [
   'wss://nostr.bitcoiner.social',
   'wss://relay.nos.social',
   'wss://relay.nostr.net',
-] as const
+].filter((url, index, all) => isValidRelayURL(url) && all.indexOf(url) === index)
 
 const OUTBOX_RELAYS = [
   'wss://purplepag.es',  // NIP-65 relay list lookups
