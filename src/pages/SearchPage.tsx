@@ -11,6 +11,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'motion/react'
 import { FilteredGate } from '@/components/filters/FilteredGate'
 import { SearchBar } from '@/components/search/SearchBar'
+import { SearchAiAnswer } from '@/components/search/SearchAiAnswer'
 import { FeedSkeleton } from '@/components/feed/FeedSkeleton'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { NoteContent } from '@/components/cards/NoteContent'
@@ -123,13 +124,17 @@ export default function SearchPage() {
     allowedIds: allowedProfileIds,
     loading: profileModerationLoading,
   } = useModerationDocuments(profileModerationDocuments)
-  const visibleEvents = useMemo(
-    () => filterNsfwTaggedEvents(
+  const visibleEvents = useMemo(() => {
+    const filtered = filterNsfwTaggedEvents(
       events.filter((event) => !isMuted(event.pubkey) && (!eventModerationIds.has(event.id) || allowedEventIds.has(event.id))),
       hideNsfwTaggedPosts,
-    ),
-    [allowedEventIds, eventModerationIds, events, hideNsfwTaggedPosts, isMuted],
-  )
+    )
+
+    return [...filtered].sort((left, right) => {
+      if (right.created_at !== left.created_at) return right.created_at - left.created_at
+      return right.id.localeCompare(left.id)
+    })
+  }, [allowedEventIds, eventModerationIds, events, hideNsfwTaggedPosts, isMuted])
   const semanticFilterResults = useSemanticFiltering(visibleEvents)
   const visibleProfiles = useMemo(
     () => profiles.filter((profile) => !isMuted(profile.pubkey) && (!profileModerationIds.has(profile.pubkey) || allowedProfileIds.has(profile.pubkey))),
@@ -246,6 +251,12 @@ export default function SearchPage() {
           <SearchEmpty />
         ) : (
           <div className="space-y-5">
+            <SearchAiAnswer
+              query={query}
+              events={visibleEvents}
+              profiles={visibleProfiles}
+            />
+
             {visibleProfiles.length > 0 && (
               <section>
                 <h2 className="section-kicker px-1 mb-3">

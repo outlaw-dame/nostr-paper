@@ -672,6 +672,31 @@ export type MediaModerationWorkerResponse =
     }
   | { id: number; error: string }
 
+// ── Search Router Types ──────────────────────────────────────
+
+/**
+ * Classified intent for a search query.
+ * - lexical:  exact-match patterns (hashtags, pubkeys, short keywords)
+ * - semantic: conceptual / natural-language queries
+ * - hybrid:   mixed intent; use both strategies
+ */
+export type SearchIntent = 'lexical' | 'semantic' | 'hybrid'
+
+export type RouterWorkerRequest =
+  | { id: number; type: 'init' }
+  | { id: number; type: 'classify'; payload: { query: string } }
+  | { id: number; type: 'close' }
+
+export type RouterWorkerResponse =
+  | {
+      id: number
+      result: {
+        intent?: SearchIntent
+        model?: string
+      }
+    }
+  | { id: number; error: string }
+
 // ── Utility Types ────────────────────────────────────────────
 
 export type Prettify<T> = { [K in keyof T]: T[K] } & {}

@@ -12,6 +12,7 @@ const db = new Client({
 const PORT = Number(process.env.PORT || 3001);
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 20;
+const LOG_RELAY_REQS = process.env.LOG_RELAY_REQS === 'true';
 
 /**
  * Sanitizers (strict)
@@ -61,6 +62,10 @@ wss.on('connection', (ws) => {
         const subId = msg[1];
         const filters = msg.slice(2);
 
+        if (LOG_RELAY_REQS) {
+          log.info({ subId, filterCount: filters.length }, 'relay REQ received');
+        }
+
         for (const filter of filters) {
           if (!filter || typeof filter !== 'object') continue;
 
@@ -81,6 +86,23 @@ wss.on('connection', (ws) => {
           const cursorScore = safeNumber(filter.cursor_score);
           const cursorTs = safeNumber(filter.cursor_ts);
           const cursorId = safeString(filter.cursor_id);
+
+          if (LOG_RELAY_REQS) {
+            log.info(
+              {
+                subId,
+                search,
+                limit,
+                kindsCount: kinds?.length ?? 0,
+                authorsCount: authors?.length ?? 0,
+                since,
+                until,
+                hasCursor: cursorScore !== undefined && cursorTs !== undefined,
+                cursorId: cursorId ?? null,
+              },
+              'relay search request',
+            );
+          }
 
           const embedding = await embedText(search);
           const pgVector = toPgVector(embedding);
@@ -174,6 +196,20 @@ wss.on('connection', (ws) => {
                 cursor_id: lastId
               })
             ]));
+          }
+
+          if (LOG_RELAY_REQS) {
+            log.info(
+              {
+                subId,
+                search,
+                resultCount: res.rows.length,
+                nextCursor: lastId !== null
+                  ? { cursor_score: lastScore, cursor_ts: lastTs, cursor_id: lastId }
+                  : null,
+              },
+              'relay search response',
+            );
           }
         }
 

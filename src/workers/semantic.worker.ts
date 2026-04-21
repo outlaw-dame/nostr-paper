@@ -1,5 +1,4 @@
 import { createStore, getMany, setMany } from 'idb-keyval'
-import { env, pipeline } from '@huggingface/transformers'
 import { withRetry } from '@/lib/retry'
 import type {
   SemanticDocument,
@@ -14,7 +13,35 @@ const ALLOW_REMOTE_MODELS = import.meta.env.VITE_SEMANTIC_ALLOW_REMOTE_MODELS !=
 const LOCAL_MODEL_PATH = typeof import.meta.env.VITE_SEMANTIC_LOCAL_MODEL_PATH === 'string'
   ? import.meta.env.VITE_SEMANTIC_LOCAL_MODEL_PATH.trim()
   : ''
-const MAX_BATCH_SIZE = 16
+const MAX_BATCH_SIZE = (() => {
+  const value = Number(import.meta.env.VITE_SEMANTIC_MAX_BATCH_SIZE)
+  if (!Number.isFinite(value)) return 16
+  return Math.max(1, Math.min(64, Math.floor(value)))
+})()
+const MAX_TEXT_CHARS = (() => {
+  const value = Number(import.meta.env.VITE_SEMANTIC_MAX_TEXT_CHARS)
+  if (!Number.isFinite(value)) return 2_000
+  return Math.max(256, Math.min(12_000, Math.floor(value)))
+})()
+
+type SupportedModelDtype = 'auto' | 'fp32' | 'fp16' | 'q8' | 'int8' | 'uint8' | 'q4' | 'bnb4' | 'q4f16'
+
+function normalizeModelDtype(value: unknown): SupportedModelDtype {
+  switch (value) {
+    case 'auto':
+    case 'fp32':
+    case 'fp16':
+    case 'q8':
+    case 'int8':
+    case 'uint8':
+    case 'q4':
+    case 'bnb4':
+    case 'q4f16':
+      return value
+    default:
+      return 'q8'
+  }
+}
 
 type TextEmbeddingExtractor = (
   texts: string | string[],
@@ -35,6 +62,7 @@ type CachedEmbedding = {
 const embeddingStore = createStore('nostr-paper-semantic', 'embeddings')
 
 let extractorPromise: Promise<TextEmbeddingExtractor> | null = null
+let transformersPromise: Promise<typeof import('@huggingface/transformers')> | null = null
 
 function hashText(value: string): string {
   let hash = 2166136261
@@ -45,12 +73,19 @@ function hashText(value: string): string {
   return (hash >>> 0).toString(16)
 }
 
+function normalizeEmbeddingText(value: string): string {
+  const collapsed = value.trim().replace(/\s+/g, ' ')
+  if (collapsed.length <= MAX_TEXT_CHARS) return collapsed
+  return collapsed.slice(0, MAX_TEXT_CHARS)
+}
+
 function cacheKey(document: SemanticDocument): string {
   return `${MODEL_ID}:${document.kind}:${document.id}`
 }
 
 function fingerprint(document: SemanticDocument): string {
-  return `${document.updatedAt}:${hashText(document.text)}`
+  const normalizedText = normalizeEmbeddingText(document.text)
+  return `${document.updatedAt}:${hashText(normalizedText)}`
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -86,21 +121,44 @@ async function getExtractor(): Promise<TextEmbeddingExtractor> {
       throw new Error('Semantic model loading is disabled by configuration.')
     }
 
+    if (!transformersPromise) {
+      transformersPromise = import('@huggingface/transformers')
+    }
+
+    const { env, pipeline } = await transformersPromise
+
     env.allowLocalModels = LOCAL_MODEL_PATH.length > 0
     env.allowRemoteModels = ALLOW_REMOTE_MODELS
     if (LOCAL_MODEL_PATH) {
       env.localModelPath = LOCAL_MODEL_PATH
     }
 
-    extractorPromise = withRetry(
-      async () => (
-        await pipeline('feature-extraction', MODEL_ID, { dtype: MODEL_DTYPE })
-      ) as unknown as TextEmbeddingExtractor,
-      {
-        maxAttempts: 3,
-        baseDelayMs: 1_000,
-      },
-    )
+    const attemptedDtypes = new Set<SupportedModelDtype | undefined>([
+      normalizeModelDtype(MODEL_DTYPE),
+      'q8',
+      'q4',
+      undefined,
+    ])
+
+    extractorPromise = (async () => {
+      for (const dtype of attemptedDtypes) {
+        try {
+          return await withRetry(
+            async () => (
+              await pipeline('feature-extraction', MODEL_ID, dtype ? { dtype } : {})
+            ) as unknown as TextEmbeddingExtractor,
+            {
+              maxAttempts: 2,
+              baseDelayMs: 1_000,
+            },
+          )
+        } catch {
+          continue
+        }
+      }
+
+      throw new Error(`Unable to load semantic model ${MODEL_ID}`)
+    })()
   }
 
   return extractorPromise
@@ -108,12 +166,13 @@ async function getExtractor(): Promise<TextEmbeddingExtractor> {
 
 async function embedTexts(texts: string[]): Promise<number[][]> {
   const extractor = await getExtractor()
-  const output = await extractor(texts, {
+  const normalizedTexts = texts.map(normalizeEmbeddingText)
+  const output = await extractor(normalizedTexts, {
     pooling: 'mean',
     normalize: true,
   })
 
-  return tensorToVectors(output.data, texts.length, output.dims)
+  return tensorToVectors(output.data, normalizedTexts.length, output.dims)
 }
 
 async function ensureDocumentEmbeddings(documents: SemanticDocument[]): Promise<Map<string, number[]>> {
@@ -221,6 +280,7 @@ self.addEventListener('message', async (event: MessageEvent<SemanticWorkerReques
 
       case 'close': {
         extractorPromise = null
+        transformersPromise = null
         respond({ model: MODEL_ID })
         break
       }

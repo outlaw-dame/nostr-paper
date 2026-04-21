@@ -9,6 +9,32 @@
  * Private keys NEVER enter this module.
  * All signing is delegated to the extension or remote signer.
  * NIP-46 remote signer support is planned for Phase 2.
+ *
+ * ── Relay NIPs We Depend On ───────────────────────────────────
+ * NIP-01  — Basic Protocol (notes, events, subscriptions)
+ * NIP-05  — User Identities & Profiles (metadata, nip05 domain)
+ * NIP-09  — Event Deletion (kind:5 moderation/deletes)
+ * NIP-10  — Text Notes & Threads (reply/thread tagging)
+ * NIP-11  — Relay Information Document (discovers supported NIPs)
+ * NIP-22  — Comments (kind:1111)
+ * NIP-23  — Long-form Content (kind:30023/30024)
+ * NIP-25  — Reactions (kind:7)
+ * NIP-40  — Expiration Timestamp (ephemeral/story-like content)
+ * NIP-50  — Full-Text Search (search filters on compatible relays)
+ * NIP-51  — Lists/Sets (bookmarks, starter packs, curation sets)
+ * NIP-57  — Lightning Zaps (kind:9734/9735)
+ * NIP-65  — Relay List Metadata (kind:10002, outbox model)
+ * NIP-89  — Handler Recommendations
+ * NIP-90  — DVM Job Request/Result/Feedback
+ * NIP-94  — File Metadata (kind:1063)
+ *
+ * ── Event Kinds Handled ──────────────────────────────────────
+ * kind:0  — User Metadata (profiles)
+ * kind:1  — Short Text Notes (social posts)
+ * kind:7  — Reactions (emoji/text reactions)
+ * kind:10002 — Relay List Metadata (NIP-65)
+ * kind:10063 — File Metadata (NIP-94)
+ * kind:30023/30024 — Long-form Content/Draft (NIP-23)
  */
 
 import NDK, {
@@ -29,20 +55,25 @@ import { isValidRelayURL } from '@/lib/security/sanitize'
 import type { Profile, NostrEvent, NostrFilter } from '@/types'
 
 // ── Default Relay Set ────────────────────────────────────────
-// Well-known, reliable relays with broad coverage
+// Tier-1 well-known, reliable relays with broad coverage and strong uptime.
+// Prioritized for general event reads and caching.
+// These are queried first for fast response times.
 const DEFAULT_RELAYS = [
-  'wss://relay.damus.io',
-  'wss://nos.lol',
-  'wss://nostr.wine',
-  'wss://relay.snort.social',
-  'wss://relay.primal.net',
-  'wss://nostr.bitcoiner.social',
-  'wss://relay.nostr.band',
-  'wss://nostr.fmt.wiz.biz',
-  'wss://relay.mostr.pub',
-  'wss://relay.nos.social',
-  'wss://news.nos.social',
-  'wss://relay.nostr.net',
+  'wss://relay.damus.io',      // Oldest & most reliable, broad content coverage
+  'wss://nos.lol',             // Very stable, excellent uptime
+  'wss://nostr.wine',          // Stable, good performance
+  'wss://relay.snort.social',  // Actively maintained, Snort client backed
+  'wss://relay.nostr.band',    // Purpose-built for search/indexing, also good for reads
+] as const
+
+// ── Secondary Relay Set ──────────────────────────────────────
+// Community/niche relays for content discovery and fallback.
+// Added for broader coverage without impacting primary query latency.
+// These are lazy-connected; queries don't wait for them.
+const SECONDARY_RELAYS = [
+  'wss://relay.mostr.pub',     // Mastodon bridge for cross-protocol content
+  'wss://relay.nos.social',    // Community-run relay
+  'wss://news.nos.social',     // News-focused content variant
 ] as const
 
 const BLOCKED_RELAY_URLS = new Set([
@@ -90,29 +121,111 @@ const SEARCH_RELAY_FALLBACKS = typeof window === 'undefined' ? ['ws://127.0.0.1:
 // Relays explicitly supporting the NIP-50 full-text search filter.
 // Used by searchRelays() so search queries are routed to the best sources
 // without requiring all of them to be in the general subscription pool.
+// Prioritizes local search API and specialized search indices for quality.
 export const SEARCH_RELAY_URLS = [
   SEARCH_RELAY_PRIMARY,
   ...SEARCH_RELAY_FALLBACKS,
-  'wss://relay.nostr.band',    // Built specifically for search/indexing
+  'wss://relay.nostr.band',    // Purpose-built for search/indexing, excellent quality scores
   'wss://search.nos.today',    // Dedicated NIP-50 search relay
-  'wss://relay.damus.io',
-  'wss://nostr.wine',
-  'wss://nos.lol',
-  'wss://relay.snort.social',
-  'wss://relay.primal.net',
-  'wss://nostr.bitcoiner.social',
-  'wss://relay.nos.social',
-  'wss://relay.nostr.net',
+  'wss://relay.damus.io',      // Strong NIP-50 support, broad dataset
+  'wss://nostr.wine',          // Good search capability
+  'wss://nos.lol',             // Solid NIP-50 implementation
+  'wss://relay.snort.social',  // Good search quality
 ].filter((url, index, all) => isValidRelayURL(url) && all.indexOf(url) === index)
 
+// ── NIP-65 Outbox Relays ──────────────────────────────────────
+// Used for publishing and discovering relay lists (kind:10002).
+// NIP-65 recommends 2-4 relays; these are well-known indexers.
 const OUTBOX_RELAYS = [
-  'wss://purplepag.es',  // NIP-65 relay list lookups
+  'wss://purplepag.es',         // Canonical NIP-65 relay list indexer
+  'wss://pyramid.fiatjaf.com',  // Relay list indexer, good discoverability
+  'wss://relay.damus.io',       // Tier-1 backbone, broadest client coverage
+  'wss://nostr.band',           // Search/indexing relay, also indexes relay lists
 ] as const
+
+// ── Relay NIPs Required By This App ───────────────────────────
+// Used as a compatibility target when selecting relays.
+// These are relay-side protocol features the app actively uses.
+export const REQUIRED_RELAY_NIPS = [
+  1,   // Basic protocol
+  5,   // Profile metadata / nip05
+  9,   // Event deletion
+  10,  // Threading/reply tags
+  11,  // Relay info discovery
+  22,  // Comments (kind:1111)
+  23,  // Long-form content
+  25,  // Reactions
+  40,  // Expiration tags
+  50,  // Search filter
+  51,  // Lists and sets
+  57,  // Zaps
+  65,  // Relay lists / outbox
+  89,  // Handler recommendations
+  90,  // DVM jobs
+  94,  // File metadata
+] as const
+
+// Relay capability hints derived from known relay behavior.
+// These are used for soft ranking only (never hard exclusion).
+const RELAY_NIP_HINTS: Record<string, readonly number[]> = {
+  'wss://relay.damus.io/': [1, 5, 9, 10, 11, 22, 23, 25, 40, 50, 51, 57, 65],
+  'wss://nos.lol/': [1, 5, 9, 10, 11, 22, 23, 25, 40, 50, 51, 57, 65, 89],
+  'wss://nostr.wine/': [1, 5, 9, 10, 11, 22, 23, 25, 40, 50, 51, 57, 65],
+  'wss://relay.snort.social/': [1, 5, 9, 10, 11, 22, 23, 25, 50, 51],
+  'wss://relay.nostr.band/': [1, 5, 9, 10, 11, 22, 23, 25, 50, 51, 65],
+  'wss://search.nos.today/': [1, 11, 50],
+  'wss://purplepag.es/': [1, 11, 65],
+  'wss://pyramid.fiatjaf.com/': [1, 11, 65],
+  'wss://nostr.band/': [1, 11, 65],
+  'wss://relay.mostr.pub/': [1, 11, 25],
+  'wss://relay.nos.social/': [1, 5, 11, 25],
+  'wss://news.nos.social/': [1, 5, 11],
+}
+
+function getRelayNipHint(url: string): readonly number[] {
+  return RELAY_NIP_HINTS[normalizeRelayCandidate(url)] ?? []
+}
+
+function scoreRelayCompatibility(url: string): number {
+  const hint = getRelayNipHint(url)
+  if (hint.length === 0) {
+    // Unknown relays remain eligible; we keep a neutral baseline score.
+    return 1
+  }
+
+  const required = new Set<number>(REQUIRED_RELAY_NIPS)
+  let matchCount = 0
+  for (const nip of hint) {
+    if (required.has(nip)) matchCount += 1
+  }
+
+  // Prefer relays that support the two most performance-sensitive capabilities.
+  if (hint.includes(50)) matchCount += 2  // NIP-50 search
+  if (hint.includes(65)) matchCount += 2  // NIP-65 relay discovery/outbox
+
+  return matchCount
+}
+
+function rankRelayUrls(urls: string[]): string[] {
+  return [...urls]
+    .map((url, index) => ({ url, index, score: scoreRelayCompatibility(url) }))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score
+      return a.index - b.index
+    })
+    .map(entry => entry.url)
+}
 
 const ENABLE_OUTBOX_MODEL = import.meta.env.PROD
 
 export function getDefaultRelayUrls(): string[] {
   return [...DEFAULT_RELAYS]
+}
+
+export function getAllRelayUrls(): string[] {
+  // Returns primary relays (fast-path) + secondary relays (lazy-connected)
+  // NDK will query all but won't block on secondary relays
+  return [...DEFAULT_RELAYS, ...SECONDARY_RELAYS]
 }
 
 // ── SQLite Cache Adapter ─────────────────────────────────────
@@ -213,10 +326,11 @@ export async function initNDK(options: InitNDKOptions = {}): Promise<NDK> {
   if (_ndk) return _ndk
 
   // Validate and filter relay URLs — use user's stored list if they've customised it
+  // Includes both primary (fast-path) and secondary (lazy-connected) relays
   const storedRelays = getStoredRelayUrls()
-  const relays = (options.relays ?? storedRelays ?? DEFAULT_RELAYS)
+  const relays = rankRelayUrls((options.relays ?? storedRelays ?? getAllRelayUrls())
     .filter(isUsableRelayUrl)
-    .slice(0, 20) // hard cap
+  ).slice(0, 20) // hard cap
 
   // Create signer — NIP-07 preferred, nsec localStorage fallback
   let signer: NDKNip07Signer | NDKPrivateKeySigner | undefined

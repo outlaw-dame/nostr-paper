@@ -6,6 +6,7 @@ import {
   type SearchEventsOptions,
 } from '@/lib/db/nostr'
 import { rankSemanticDocuments } from '@/lib/semantic/client'
+import { classifySearchIntent } from '@/lib/search/router'
 import {
   eventToSemanticText,
   normalizeSemanticQuery,
@@ -19,9 +20,28 @@ import type {
   SemanticMatch,
 } from '@/types'
 
-const HYBRID_LEXICAL_WEIGHT = 0.6
-const HYBRID_SEMANTIC_WEIGHT = 0.4
-const MIN_SEMANTIC_QUERY_CHARS = 3
+function readEnvNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(max, Math.max(min, parsed))
+}
+
+const HYBRID_LEXICAL_WEIGHT = readEnvNumber(import.meta.env.VITE_HYBRID_LEXICAL_WEIGHT, 0.6, 0, 1)
+const HYBRID_SEMANTIC_WEIGHT = readEnvNumber(import.meta.env.VITE_HYBRID_SEMANTIC_WEIGHT, 0.4, 0, 1)
+const HYBRID_WEIGHT_SUM = HYBRID_LEXICAL_WEIGHT + HYBRID_SEMANTIC_WEIGHT
+const NORMALIZED_HYBRID_LEXICAL_WEIGHT = HYBRID_WEIGHT_SUM > 0
+  ? HYBRID_LEXICAL_WEIGHT / HYBRID_WEIGHT_SUM
+  : 0.6
+const NORMALIZED_HYBRID_SEMANTIC_WEIGHT = HYBRID_WEIGHT_SUM > 0
+  ? HYBRID_SEMANTIC_WEIGHT / HYBRID_WEIGHT_SUM
+  : 0.4
+
+const MIN_SEMANTIC_QUERY_CHARS = Math.floor(readEnvNumber(
+  import.meta.env.VITE_SEMANTIC_MIN_QUERY_CHARS,
+  3,
+  1,
+  24,
+))
 const DEFAULT_EVENT_CANDIDATE_LIMIT = 180
 const DEFAULT_PROFILE_CANDIDATE_LIMIT = 80
 
@@ -32,8 +52,19 @@ const SEMANTIC_EXPANSION_THRESHOLD = 15
 
 // Semantic-only items (zero lexical score) must clear this normalized score
 // to appear in results. Prevents low-similarity noise from the candidate pool.
-const MIN_SEMANTIC_ONLY_SCORE = 0.45
-const MIN_LEXICAL_SHARE = 0.5
+const MIN_SEMANTIC_ONLY_SCORE = readEnvNumber(
+  import.meta.env.VITE_HYBRID_MIN_SEMANTIC_ONLY_SCORE,
+  0.45,
+  0,
+  1,
+)
+const MIN_LEXICAL_SHARE = readEnvNumber(import.meta.env.VITE_HYBRID_MIN_LEXICAL_SHARE, 0.5, 0, 1)
+const SEMANTIC_SCORE_GAMMA = readEnvNumber(import.meta.env.VITE_HYBRID_SEMANTIC_GAMMA, 1.15, 0.5, 3)
+const NON_ACTIONABLE_SEMANTIC_ERRORS = [
+  'Semantic search is unavailable in this environment.',
+  'Semantic model assets are unavailable in this environment.',
+  'Semantic worker crashed',
+]
 
 type Timestamped = {
   created_at?: number
@@ -82,14 +113,14 @@ function lexicalRankScore(index: number, total: number): number {
 }
 
 function normalizeSemanticScores(matches: SemanticMatch[]): Map<string, number> {
-  const positiveMatches = matches.filter(match => match.score > 0)
-  const max = Math.max(...positiveMatches.map(match => match.score), 0)
   const normalized = new Map<string, number>()
 
-  if (max <= 0) return normalized
-
-  for (const match of positiveMatches) {
-    normalized.set(match.id, match.score / max)
+  for (const match of matches) {
+    if (!Number.isFinite(match.score)) continue
+    // cosine similarity is in [-1, 1]. remap to [0, 1] then sharpen top hits.
+    const clamped = Math.max(-1, Math.min(1, match.score))
+    const scaled = (clamped + 1) / 2
+    normalized.set(match.id, Math.pow(scaled, SEMANTIC_SCORE_GAMMA))
   }
 
   return normalized
@@ -118,7 +149,10 @@ export function mergeHybridRankings<T extends { id: string } & Timestamped>(
   for (const [id, item] of itemsById) {
     const lexicalScore = lexicalScores.get(id) ?? 0
     const semanticScore = semanticScores.get(id) ?? 0
-    const hybridScore = lexicalScore * HYBRID_LEXICAL_WEIGHT + semanticScore * HYBRID_SEMANTIC_WEIGHT
+    const hybridScore = (
+      lexicalScore * NORMALIZED_HYBRID_LEXICAL_WEIGHT
+      + semanticScore * NORMALIZED_HYBRID_SEMANTIC_WEIGHT
+    )
 
     if (hybridScore <= 0) continue
     // Suppress semantic-only matches that aren't meaningfully similar to the query
@@ -189,6 +223,11 @@ function getSemanticQuery(query: string): string | null {
   return semanticQuery
 }
 
+function isNonActionableSemanticError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return NON_ACTIONABLE_SEMANTIC_ERRORS.some(marker => message.includes(marker))
+}
+
 function shouldUseSemanticSearch(query: string): boolean {
   const semanticQuery = getSemanticQuery(query)
   return semanticQuery !== null && semanticQuery.length >= MIN_SEMANTIC_QUERY_CHARS
@@ -232,6 +271,17 @@ export async function hybridSearchEvents(
   throwIfAborted(signal)
 
   if (lexicalOnly || !shouldUseSemanticSearch(query)) {
+    return {
+      items: lexicalItems.slice(0, limit),
+      semanticUsed: false,
+      semanticError: null,
+    }
+  }
+
+  // Router: classify query intent to skip semantic embedding for exact-match
+  // queries (hashtags, @mentions, pubkeys). Falls back to 'hybrid' on error.
+  const routerIntent = await classifySearchIntent(query)
+  if (routerIntent === 'lexical') {
     return {
       items: lexicalItems.slice(0, limit),
       semanticUsed: false,
@@ -294,7 +344,9 @@ export async function hybridSearchEvents(
     return {
       items: lexicalItems.slice(0, limit),
       semanticUsed: false,
-      semanticError: error instanceof Error ? error.message : 'Semantic search unavailable',
+      semanticError: isNonActionableSemanticError(error)
+        ? null
+        : (error instanceof Error ? error.message : 'Semantic search unavailable'),
     }
   }
 }
@@ -311,6 +363,17 @@ export async function hybridSearchProfiles(
   throwIfAborted(signal)
 
   if (lexicalOnly || !shouldUseSemanticSearch(query)) {
+    return {
+      items: lexicalItems.slice(0, cappedLimit),
+      semanticUsed: false,
+      semanticError: null,
+    }
+  }
+
+  // Router: classify query intent to skip semantic embedding for exact-match
+  // queries (hashtags, @mentions, pubkeys). Falls back to 'hybrid' on error.
+  const routerIntent = await classifySearchIntent(query)
+  if (routerIntent === 'lexical') {
     return {
       items: lexicalItems.slice(0, cappedLimit),
       semanticUsed: false,
@@ -378,7 +441,9 @@ export async function hybridSearchProfiles(
     return {
       items: lexicalItems.slice(0, cappedLimit),
       semanticUsed: false,
-      semanticError: error instanceof Error ? error.message : 'Semantic search unavailable',
+      semanticError: isNonActionableSemanticError(error)
+        ? null
+        : (error instanceof Error ? error.message : 'Semantic search unavailable'),
     }
   }
 }

@@ -163,13 +163,16 @@ export default function ExplorePage() {
     loading: followPackModerationLoading,
   } = useModerationDocuments(followPackModerationDocuments)
 
-  const visibleEvents = useMemo(
-    () => filterNsfwTaggedEvents(
+  const visibleEvents = useMemo(() => {
+    const filtered = filterNsfwTaggedEvents(
       events.filter(e => !isMuted(e.pubkey) && (!eventModerationIds.has(e.id) || allowedEventIds.has(e.id))),
       hideNsfwTaggedPosts,
-    ),
-    [allowedEventIds, eventModerationIds, events, hideNsfwTaggedPosts, isMuted],
-  )
+    )
+    return [...filtered].sort((a, b) => {
+      if (b.created_at !== a.created_at) return b.created_at - a.created_at
+      return b.id.localeCompare(a.id)
+    })
+  }, [allowedEventIds, eventModerationIds, events, hideNsfwTaggedPosts, isMuted])
   const visibleProfiles = useMemo(
     () => profiles.filter(p => !isMuted(p.pubkey) && (!profileModerationIds.has(p.pubkey) || allowedProfileIds.has(p.pubkey))),
     [allowedProfileIds, profileModerationIds, profiles, isMuted],

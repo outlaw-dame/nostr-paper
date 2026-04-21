@@ -16,6 +16,7 @@ import { sanitizeName, sanitizeText } from '@/lib/security/sanitize'
 import { checkSmall100Health } from '@/lib/translation/engines/small100'
 import { getBrowserLanguage } from '@/lib/translation/detect'
 import { loadTranslationConfiguration, TRANSLATION_SETTINGS_UPDATED_EVENT } from '@/lib/translation/storage'
+import { MlDiagnosticsPanel } from '@/components/ml/MlDiagnosticsPanel'
 
 type TranslationHealthTone = 'ok' | 'warn'
 
@@ -559,6 +560,35 @@ export default function SettingsPage() {
                 </p>
                 <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
                   Open Settings / Moderation to manage filters, semantic controls, and muted users.
+                </p>
+              </div>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-[rgb(var(--color-label-tertiary))]">
+                <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+          </div>
+        </section>
+
+        {/* ML Diagnostics */}
+        <section>
+          <h2 className="section-kicker px-1 mb-3">ML Diagnostics</h2>
+          <MlDiagnosticsPanel />
+        </section>
+
+        <section>
+          <h2 className="section-kicker px-1 mb-3">AI Runtime Experiments</h2>
+          <div className="app-panel rounded-ios-xl p-4 card-elevated">
+            <button
+              type="button"
+              onClick={() => navigate('/settings/ai/litert-prototype')}
+              className="flex w-full items-center justify-between text-left transition-opacity active:opacity-70"
+            >
+              <div>
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
+                  AI Runtime Lab
+                </p>
+                <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
+                  Run prompt presets, compare router runtimes, and test moderation evals in-browser.
                 </p>
               </div>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-[rgb(var(--color-label-tertiary))]">

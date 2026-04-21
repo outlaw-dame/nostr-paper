@@ -76,6 +76,7 @@ const TranslationsPage = lazy(() => import('@/pages/TranslationsPage'))
 const ActivityPage = lazy(() => import('@/pages/ActivityPage'))
 const OnboardPage  = lazy(() => import('@/pages/OnboardPage'))
 const ExplorePage  = lazy(() => import('@/pages/ExplorePage'))
+const LiteRtPrototypePage = lazy(() => import('@/pages/LiteRtPrototypePage'))
 
 // ── Inner App (access to context) ────────────────────────────
 
@@ -178,6 +179,7 @@ function InnerApp() {
             <Route path="/settings/translations" element={<TranslationsPage />} />
             <Route path="/settings/moderation/filters" element={<FiltersPage />} />
             <Route path="/settings/relays"     element={<RelaysPage />} />
+            <Route path="/settings/ai/litert-prototype" element={<LiteRtPrototypePage />} />
             <Route path="/filters"             element={<Navigate to="/settings/moderation/filters" replace />} />
             <Route path="/onboard"             element={<OnboardPage />} />
             <Route path="*"                    element={<Navigate to="/" replace />} />

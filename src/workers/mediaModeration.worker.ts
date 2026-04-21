@@ -46,6 +46,11 @@ const ALLOW_REMOTE_MODELS = import.meta.env.VITE_MEDIA_MODERATION_ALLOW_REMOTE_M
 const LOCAL_MODEL_PATH = typeof import.meta.env.VITE_MEDIA_MODERATION_LOCAL_MODEL_PATH === 'string'
   ? import.meta.env.VITE_MEDIA_MODERATION_LOCAL_MODEL_PATH.trim()
   : ''
+const MODERATION_CONCURRENCY = (() => {
+  const value = Number(import.meta.env.VITE_MEDIA_MODERATION_CONCURRENCY)
+  if (!Number.isFinite(value)) return 2
+  return Math.max(1, Math.min(6, Math.floor(value)))
+})()
 const MEDIA_PROXY_BASE = typeof import.meta.env.VITE_MEDIA_MODERATION_PROXY_URL === 'string'
   ? import.meta.env.VITE_MEDIA_MODERATION_PROXY_URL.trim()
   : ''
@@ -277,12 +282,17 @@ async function moderateDocuments(documents: MediaModerationDocument[]): Promise<
     }
   }
 
-  for (const document of missing) {
-    const decision = await classifyDocument(document)
-    decisions.set(document.id, decision)
+  for (let start = 0; start < missing.length; start += MODERATION_CONCURRENCY) {
+    const batch = missing.slice(start, start + MODERATION_CONCURRENCY)
+    const results = await Promise.all(batch.map(async (document) => ({
+      document,
+      decision: await classifyDocument(document),
+    })))
 
-    await setMany([
-      [
+    const writes: Array<[string, CachedMediaModerationDecision]> = []
+    for (const { document, decision } of results) {
+      decisions.set(document.id, decision)
+      writes.push([
         cacheKey(document),
         {
           fingerprint: fingerprint(document),
@@ -294,9 +304,13 @@ async function moderateDocuments(documents: MediaModerationDocument[]): Promise<
             violenceModel: decision.violenceModel,
             policyVersion: decision.policyVersion,
           },
-        } satisfies CachedMediaModerationDecision,
-      ],
-    ], moderationStore).catch(() => {})
+        },
+      ])
+    }
+
+    if (writes.length > 0) {
+      await setMany(writes, moderationStore).catch(() => {})
+    }
   }
 
   return documents
