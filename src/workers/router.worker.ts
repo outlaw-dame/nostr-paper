@@ -10,6 +10,7 @@
 
 import { createRouterRuntimeSession } from '@/lib/llm/routerHarness'
 import { getRouterRuntime } from '@/lib/llm/runtimeSelector'
+import { decideRouterRuntime } from '@/lib/ai/taskPolicy'
 import type { RouterWorkerRequest, RouterWorkerResponse, SearchIntent } from '@/types'
 
 const ROUTER_RUNTIME = getRouterRuntime()
@@ -34,6 +35,12 @@ self.addEventListener('message', async (event: MessageEvent<RouterWorkerRequest>
 
       case 'classify': {
         const { query } = event.data.payload
+        const policy = decideRouterRuntime(query)
+        if (policy.runtime !== activeSession.runtime) {
+          await activeSession.close()
+          activeSession = createRouterRuntimeSession(policy.runtime)
+          await activeSession.init()
+        }
         const intent = await activeSession.classify(query)
         respond({ intent, model: `${activeSession.runtime}:${activeSession.modelId}` })
         break
