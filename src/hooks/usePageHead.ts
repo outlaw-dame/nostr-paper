@@ -83,6 +83,5 @@ export function usePageHead({ title, tags = [] }: PageHeadOptions): void {
     }
   // Tags array identity doesn't change across re-renders unless rebuilt — serialize
   // to a stable string to prevent infinite loops from inline array literals.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [title, tagsKey])
 }

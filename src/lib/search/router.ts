@@ -31,13 +31,11 @@ let seq = 0
 let fatalError: Error | null = null
 let activeRouterModel: string | null = null
 
-/* eslint-disable no-unused-vars */
 const pending = new Map<number, {
   resolve: (...args: [unknown]) => void
   reject: (...args: [unknown]) => void
   timer: ReturnType<typeof setTimeout>
 }>()
-/* eslint-enable no-unused-vars */
 
 function rejectPending(reason: unknown): void {
   for (const [id, entry] of pending) {

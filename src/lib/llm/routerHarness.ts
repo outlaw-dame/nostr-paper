@@ -28,7 +28,6 @@ const SYSTEM_PROMPT = buildSearchIntentSystemPrompt()
 
 type SupportedModelDtype = 'auto' | 'fp32' | 'fp16' | 'q8' | 'int8' | 'uint8' | 'q4' | 'bnb4' | 'q4f16'
 type TextGenMessage = { role: string; content: string }
-/* eslint-disable no-unused-vars */
 type TextGenerationPipeline = (
   ...args: [TextGenMessage[], { max_new_tokens: number; do_sample: boolean }]
 ) => Promise<Array<{ generated_text: TextGenMessage[] }>>
@@ -41,7 +40,6 @@ export interface RouterRuntimeSession {
   classify: (...args: [string]) => Promise<SearchIntent>
   close: () => Promise<void>
 }
-/* eslint-enable no-unused-vars */
 
 const intentCaches: Record<LlmRuntime, Map<string, SearchIntent>> = {
   transformers: new Map(),

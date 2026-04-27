@@ -20,7 +20,18 @@ interface MockRefs {
   checkProfileText: ReturnType<typeof vi.fn>
 }
 
-let mockRefs: MockRefs
+const mockRefs: MockRefs = {
+  currentFilters: [],
+  loadFilters: vi.fn<() => Promise<KeywordFilter[]>>(),
+  createFilter: vi.fn<() => Promise<KeywordFilter>>(),
+  updateFilter: vi.fn<() => Promise<void>>(),
+  deleteFilter: vi.fn<() => Promise<void>>(),
+  getEffectiveKeywordFilters: vi.fn(),
+  extractEventFields: vi.fn(),
+  extractProfileFields: vi.fn(),
+  checkEventText: vi.fn(),
+  checkProfileText: vi.fn(),
+}
 
 vi.mock('@/lib/filters/storage', () => ({
   FILTERS_UPDATED_EVENT: 'nostr-paper:keyword-filters-updated',
@@ -58,19 +69,6 @@ vi.mock('@/lib/filters/semanticSettings', () => ({
 vi.mock('@/lib/semantic/client', () => ({
   rankSemanticDocuments: vi.fn(),
 }))
-
-mockRefs = {
-  currentFilters: [],
-  loadFilters: vi.fn<() => Promise<KeywordFilter[]>>(),
-  createFilter: vi.fn<() => Promise<KeywordFilter>>(),
-  updateFilter: vi.fn<() => Promise<void>>(),
-  deleteFilter: vi.fn<() => Promise<void>>(),
-  getEffectiveKeywordFilters: vi.fn(),
-  extractEventFields: vi.fn(),
-  extractProfileFields: vi.fn(),
-  checkEventText: vi.fn(),
-  checkProfileText: vi.fn(),
-}
 
 function makeFilter(overrides: Partial<KeywordFilter> = {}): KeywordFilter {
   return {
@@ -241,7 +239,8 @@ describe('useKeywordFilters hooks', () => {
     await syncFilters()
 
     expect(latest).not.toBeNull()
-    expect(latest!.filters).toHaveLength(1)
+    if (!latest) throw new Error('expected hook state to be available')
+    expect(latest.filters).toHaveLength(1)
 
     await act(async () => {
       await latest?.toggle('f1')
@@ -281,7 +280,8 @@ describe('useKeywordFilters hooks', () => {
     await syncFilters()
 
     expect(latest).not.toBeNull()
-    expect(latest!.filters).toHaveLength(2)
+    if (!latest) throw new Error('expected hook state to be available after refresh')
+    expect(latest.filters).toHaveLength(2)
   })
 
   it('returns null result while loading/empty and delegates to matcher when filters exist', async () => {

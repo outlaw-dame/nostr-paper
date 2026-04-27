@@ -128,8 +128,8 @@ function InnerApp() {
             onClick={async () => {
               try {
                 const root = await navigator.storage.getDirectory()
-                // @ts-expect-error — standard Web API: FileSystemDirectoryHandle.keys() not yet in TS DOM lib
-                for await (const name of root.keys()) {
+                const rootWithKeys = root as FileSystemDirectoryHandle & { keys(): AsyncIterable<string> }
+                for await (const name of rootWithKeys.keys()) {
                   await root.removeEntry(name, { recursive: true })
                 }
                 window.location.reload()

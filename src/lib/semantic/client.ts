@@ -16,13 +16,11 @@ let fatalInitError: Error | null = null
 
 const SEMANTIC_UNAVAILABLE_MESSAGE = 'Semantic search is unavailable in this environment.'
 
-/* eslint-disable no-unused-vars */
 const pending = new Map<number, {
   resolve: (value: unknown) => void
   reject: (reason: unknown) => void
   timer: ReturnType<typeof setTimeout>
 }>()
-/* eslint-enable no-unused-vars */
 
 function abortError(): DOMException {
   return new DOMException('Aborted', 'AbortError')

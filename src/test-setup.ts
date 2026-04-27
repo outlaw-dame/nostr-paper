@@ -1,7 +1,6 @@
 /**
  * Vitest global test setup
  */
-/* global navigator, window, console, SharedArrayBuffer, DeviceOrientationEvent, btoa, atob, Image */
 /// <reference types="vitest/globals" />
 import { vi, beforeAll, afterAll } from 'vitest'
 

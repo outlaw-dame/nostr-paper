@@ -131,7 +131,6 @@ export default function SettingsPage() {
         setSpotifyConnecting(false)
         navigate('/settings', { replace: true })
       })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -356,7 +355,6 @@ export default function SettingsPage() {
     try {
       const token = await authorizeAppleMusic()
       setAppleMusicConnected(token !== null)
-      // eslint-disable-next-line security/detect-possible-timing-attacks
       if (token === null) {
         setMusicServicesError('Apple Music authorization was not completed.')
       }

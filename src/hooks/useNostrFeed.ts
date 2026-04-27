@@ -125,7 +125,6 @@ export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
    * We serialise to JSON as the stable dependency key.
    */
   const filterKey = JSON.stringify(section.filter)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const stableFilter = useMemo<NostrFilter>(() => section.filter, [filterKey])
 
   const stopActiveSubscription = useCallback(() => {

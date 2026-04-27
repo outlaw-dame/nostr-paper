@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { TranslationServiceError } from '@/lib/translation/errors'
+import type { TranslationServiceError } from '@/lib/translation/errors'
 
 const generateText = vi.fn()
 const isGemmaAvailable = vi.fn()

@@ -164,7 +164,6 @@ export function useModerationDocuments(
     // content, so reference-only changes (same array content, new object) do not
     // re-trigger a relay fetch. Including `documents` caused a Tagr relay query
     // on every parent re-render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, signature])
 
   const allowedIds = useMemo(
@@ -264,7 +263,6 @@ export function useSyndicationFeedModeration(feed: SyndicationFeed | null): {
           .map((item) => buildSyndicationEntryModerationDocument(item, feedSourceUrl))
           .filter((doc): doc is ModerationDocument => doc !== null)
       : [],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [feed, feedSourceUrl],
   )
 

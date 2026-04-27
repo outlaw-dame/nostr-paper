@@ -112,6 +112,13 @@ export function VideoBody({ event, profile, className = '' }: VideoBodyProps) {
     setRevealed(contentWarning === null && followStatus !== false)
   }, [contentWarning, followStatus, event.id])
 
+  const selectedPlan = variantPlans.find((plan) => plan.candidate.url === selectedUrl) ?? variantPlans[0] ?? null
+  const selectedVariant = selectedPlan?.candidate ?? null
+  const selectedSources = useMemo(
+    () => (selectedPlan?.sources ?? []).filter((source) => shouldAttemptMediaUrl(source.url)),
+    [selectedPlan],
+  )
+
   if (!video) return null
   if (mediaModerationDocument && (mediaModerationLoading || mediaBlocked)) {
     return (
@@ -133,12 +140,6 @@ export function VideoBody({ event, profile, className = '' }: VideoBodyProps) {
     )
   }
 
-  const selectedPlan = variantPlans.find((plan) => plan.candidate.url === selectedUrl) ?? variantPlans[0] ?? null
-  const selectedVariant = selectedPlan?.candidate ?? null
-  const selectedSources = useMemo(
-    () => (selectedPlan?.sources ?? []).filter((source) => shouldAttemptMediaUrl(source.url)),
-    [selectedPlan],
-  )
   const requiresReveal = contentWarning !== null || followStatus === false
   const isAudioVariant = (selectedVariant?.mimeType ?? '').startsWith('audio/')
   const trackSources = video.textTracks.filter(track => isSafeURL(track.reference))

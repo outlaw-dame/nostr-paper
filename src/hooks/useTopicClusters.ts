@@ -149,7 +149,6 @@ export function useTopicClusters(
           if (!controller.signal.aborted) setClustering(false)
         })
     }, DEBOUNCE_MS)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, eventIdsKey])
 
   // Cleanup on unmount.

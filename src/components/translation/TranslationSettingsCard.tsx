@@ -110,7 +110,6 @@ interface LanguageInputProps {
   id: string
   label: string
   value: string
-  // eslint-disable-next-line no-unused-vars
   onChange: (v: string) => void
   languages: TranslationLanguage[]
   allowAuto?: boolean
