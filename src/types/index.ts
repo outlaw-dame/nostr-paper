@@ -743,6 +743,25 @@ export type GemmaWorkerResponse =
   | { id: number; type: 'done'; fullText: string }
   | { id: number; type: 'error'; error: string }
 
+// ── Search Router Types ──────────────────────────────────────
+
+export type SearchIntent = 'lexical' | 'semantic' | 'hybrid'
+
+export type RouterWorkerRequest =
+  | { id: number; type: 'init' }
+  | { id: number; type: 'classify'; payload: { query: string } }
+  | { id: number; type: 'close' }
+
+export type RouterWorkerResponse =
+  | {
+      id: number
+      result: {
+        intent?: SearchIntent
+        model?: string
+      }
+    }
+  | { id: number; error: string }
+
 // ── Utility Types ────────────────────────────────────────────
 
 export type Prettify<T> = { [K in keyof T]: T[K] } & {}

@@ -41,8 +41,10 @@
     "note": "Each app must use a unique port. Always open the matching URL for the script you run."
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@huggingface/transformers": "^3.8.1",
     "@mediapipe/tasks-genai": "^0.10.27",
+    "@mlc-ai/web-llm": "^0.2.82",
     "@nostr-dev-kit/ndk": "^2.11.0",
     "@sqlite.org/sqlite-wasm": "^3.51.2-build9",
     "@tanstack/react-virtual": "^3.13.23",

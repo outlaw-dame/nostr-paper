@@ -100,7 +100,7 @@ export async function bootstrap(
     await withRetry(
       () => initNDK(signal !== undefined ? { signal } : {}),
       {
-        maxAttempts: 1,
+        maxAttempts: 2,
         baseDelayMs: 400,
         maxDelayMs:  1_200,
         ...(signal !== undefined ? { signal } : {}),

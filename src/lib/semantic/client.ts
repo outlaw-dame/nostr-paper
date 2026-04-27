@@ -16,11 +16,13 @@ let fatalInitError: Error | null = null
 
 const SEMANTIC_UNAVAILABLE_MESSAGE = 'Semantic search is unavailable in this environment.'
 
+/* eslint-disable no-unused-vars */
 const pending = new Map<number, {
   resolve: (value: unknown) => void
   reject: (reason: unknown) => void
   timer: ReturnType<typeof setTimeout>
 }>()
+/* eslint-enable no-unused-vars */
 
 function abortError(): DOMException {
   return new DOMException('Aborted', 'AbortError')
@@ -98,7 +100,7 @@ function getWorker(): Worker {
   return worker
 }
 
-type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 
 function send<T>(
   request: DistributiveOmit<SemanticWorkerRequest, 'id'>,
@@ -115,7 +117,12 @@ function send<T>(
     const semanticWorker = getWorker()
     let settled = false
 
+    const abortListener = signal
+      ? () => settleReject(abortError())
+      : null
+
     const cleanup = () => {
+      if (abortListener) signal?.removeEventListener('abort', abortListener)
       pending.delete(id)
     }
 
@@ -138,10 +145,6 @@ function send<T>(
     const timer = setTimeout(() => {
       settleReject(new Error(`Semantic worker timeout after ${timeoutMs}ms`))
     }, timeoutMs)
-
-    const abortListener = signal
-      ? () => settleReject(abortError())
-      : null
 
     if (abortListener && signal) {
       signal.addEventListener('abort', abortListener, { once: true })
