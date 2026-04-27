@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { mergeHybridRankings, classifyQueryIntent } from './hybrid'
+import { normalizeSemanticQuery } from '@/lib/semantic/text'
 
 describe('mergeHybridRankings', () => {
   it('prefers exact lexical hits while still admitting semantic-only matches', () => {
@@ -204,5 +205,34 @@ describe('autocut behavior via mergeHybridRankings', () => {
     // tail items: no lexical score, not in semanticMatches → hybridScore=0 → excluded
     expect(ids).not.toContain('tail-1')
     expect(ids).not.toContain('tail-2')
+  })
+})
+
+describe('#hashtag vs plain query parity', () => {
+  it('classifyQueryIntent: "#Apple" and "Apple" both resolve to keyword', () => {
+    expect(classifyQueryIntent('#Apple')).toBe('keyword')
+    expect(classifyQueryIntent('Apple')).toBe('keyword')
+  })
+
+  it('classifyQueryIntent: "#Apple" and "Apple" classify identically', () => {
+    expect(classifyQueryIntent('#Apple')).toBe(classifyQueryIntent('Apple'))
+  })
+
+  it('classifyQueryIntent: multiple hashtags still classify as keyword', () => {
+    expect(classifyQueryIntent('#bitcoin #nostr')).toBe('keyword')
+  })
+
+  it('normalizeSemanticQuery: strips leading # from hashtag tokens', () => {
+    expect(normalizeSemanticQuery('#Apple')).toBe('Apple')
+    expect(normalizeSemanticQuery('#bitcoin #nostr')).toBe('bitcoin nostr')
+  })
+
+  it('normalizeSemanticQuery: "#Apple" and "Apple" produce identical output', () => {
+    expect(normalizeSemanticQuery('#Apple')).toBe(normalizeSemanticQuery('Apple'))
+  })
+
+  it('normalizeSemanticQuery: mixed hashtag and plain tokens normalize uniformly', () => {
+    // "#bitcoin lightning" and "bitcoin lightning" should produce the same semantic query
+    expect(normalizeSemanticQuery('#bitcoin lightning')).toBe(normalizeSemanticQuery('bitcoin lightning'))
   })
 })

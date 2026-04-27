@@ -16,6 +16,10 @@ export function normalizeSemanticQuery(query: string): string | null {
   const normalized = normalizeWhitespace(
     sanitizeText(query)
       .replace(/["'`]/g, ' ')
+      // Strip leading # from hashtag tokens: "#Apple" → "Apple".
+      // Defensive guard — hybridSearch normalises at entry, but override paths
+      // (e.g. LLM rewrites) could still carry a raw hashtag-prefixed string.
+      .replace(/(^|\s)#(\w)/g, '$1$2')
       .slice(0, MAX_QUERY_CHARS),
   )
 
