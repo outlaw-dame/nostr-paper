@@ -1,7 +1,9 @@
-export type LiteRtSession = {
-  generateResponse: (prompt: string, callback?: (partialResult: string, done: boolean) => void) => Promise<string>
+/* eslint-disable no-unused-vars */
+export interface LiteRtSession {
+  generateResponse(prompt: string, callback?: (partialResult: string, done: boolean) => void): Promise<string>
   close?: () => Promise<void> | void
 }
+/* eslint-enable no-unused-vars */
 
 export interface LiteRtSessionOptions {
   modelPath?: string

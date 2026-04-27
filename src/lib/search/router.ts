@@ -31,11 +31,13 @@ let seq = 0
 let fatalError: Error | null = null
 let activeRouterModel: string | null = null
 
+/* eslint-disable no-unused-vars */
 const pending = new Map<number, {
-  resolve: (value: unknown) => void
-  reject: (reason: unknown) => void
+  resolve: (...args: [unknown]) => void
+  reject: (...args: [unknown]) => void
   timer: ReturnType<typeof setTimeout>
 }>()
+/* eslint-enable no-unused-vars */
 
 function rejectPending(reason: unknown): void {
   for (const [id, entry] of pending) {
@@ -85,7 +87,7 @@ function getWorker(): Worker {
   return worker
 }
 
-type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 
 function send<T>(
   request: DistributiveOmit<RouterWorkerRequest, 'id'>,

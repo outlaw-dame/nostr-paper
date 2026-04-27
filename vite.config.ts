@@ -1319,7 +1319,7 @@ export default defineConfig(({ mode }) => {
           // Semantic search assets are large and only needed on demand. Keep
           // them out of the install-time precache so the app shell stays small.
           globIgnores: ['assets/ort-wasm-*.wasm', 'assets/semantic.worker-*.js', 'assets/moderation.worker-*.js', 'assets/mediaModeration.worker-*.js'],
-          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+          maximumFileSizeToCacheInBytes: 7 * 1024 * 1024,
         },
         manifest: {
           name: 'Nostr Paper',

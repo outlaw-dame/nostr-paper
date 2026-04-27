@@ -3,6 +3,7 @@ import { buildSearchIntentSystemPrompt, buildSearchIntentUserPrompt } from '@/li
 import { createLiteRtSession, type LiteRtSession } from '@/lib/llm/litert'
 import type { SearchIntent } from '@/types'
 import type { LlmRuntime } from '@/lib/llm/runtimeSelector'
+import type * as TransformersModule from '@huggingface/transformers'
 
 const MODEL_ID = import.meta.env.VITE_ROUTER_MODEL_ID ?? 'onnx-community/gemma-3-270m-it-ONNX'
 const MODEL_DTYPE = import.meta.env.VITE_ROUTER_MODEL_DTYPE ?? 'q4'
@@ -27,18 +28,20 @@ const SYSTEM_PROMPT = buildSearchIntentSystemPrompt()
 
 type SupportedModelDtype = 'auto' | 'fp32' | 'fp16' | 'q8' | 'int8' | 'uint8' | 'q4' | 'bnb4' | 'q4f16'
 type TextGenMessage = { role: string; content: string }
+/* eslint-disable no-unused-vars */
 type TextGenerationPipeline = (
-  input: TextGenMessage[],
-  options: { max_new_tokens: number; do_sample: boolean },
+  ...args: [TextGenMessage[], { max_new_tokens: number; do_sample: boolean }]
 ) => Promise<Array<{ generated_text: TextGenMessage[] }>>
+type WebllmChatEngine = { chat: { completions: { create: (...args: [unknown]) => Promise<unknown> } } }
 
 export interface RouterRuntimeSession {
   readonly runtime: LlmRuntime
   readonly modelId: string
   init: () => Promise<void>
-  classify: (query: string) => Promise<SearchIntent>
+  classify: (...args: [string]) => Promise<SearchIntent>
   close: () => Promise<void>
 }
+/* eslint-enable no-unused-vars */
 
 const intentCaches: Record<LlmRuntime, Map<string, SearchIntent>> = {
   transformers: new Map(),
@@ -47,7 +50,7 @@ const intentCaches: Record<LlmRuntime, Map<string, SearchIntent>> = {
 }
 
 let generatorPromise: Promise<TextGenerationPipeline> | null = null
-let transformersPromise: Promise<typeof import('@huggingface/transformers')> | null = null
+let transformersPromise: Promise<typeof TransformersModule> | null = null
 let webllmEnginePromise: Promise<unknown> | null = null
 let litertSessionPromise: Promise<LiteRtSession> | null = null
 
@@ -133,7 +136,7 @@ async function getGenerator(): Promise<TextGenerationPipeline> {
   return generatorPromise
 }
 
-async function getWebllmEngine(): Promise<{ chat: { completions: { create: (request: unknown) => Promise<unknown> } } }> {
+async function getWebllmEngine(): Promise<WebllmChatEngine> {
   if (!webllmEnginePromise) {
     webllmEnginePromise = (async () => {
       const webllm = await import('@mlc-ai/web-llm')
@@ -141,7 +144,7 @@ async function getWebllmEngine(): Promise<{ chat: { completions: { create: (requ
     })()
   }
 
-  return webllmEnginePromise as Promise<{ chat: { completions: { create: (request: unknown) => Promise<unknown> } } }>
+  return webllmEnginePromise as Promise<WebllmChatEngine>
 }
 
 // Classification parameters for the router LiteRT session:

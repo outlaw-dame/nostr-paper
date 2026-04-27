@@ -4,6 +4,7 @@ import { createLiteRtSession, getDefaultLiteRtOptions, type LiteRtSession } from
 import { createRouterRuntimeSession } from '@/lib/llm/routerHarness'
 import { getRouterRuntime, type LlmRuntime } from '@/lib/llm/runtimeSelector'
 import {
+  type PromptPreset,
   PROMPT_PRESETS,
   SEARCH_INTENT_EVAL_CASES,
 } from '@/lib/llm/promptPlaybook'
@@ -128,11 +129,24 @@ function statusClassName(status: ModelResponsibilityRow['status']): string {
   }
 }
 
+const FALLBACK_PRESET: PromptPreset = {
+  id: 'router-intent',
+  title: 'Search Intent Router',
+  description: 'Fallback preset used when no prompt presets are available.',
+  buildInput: () => '',
+}
+
+const DEFAULT_PRESET: PromptPreset = PROMPT_PRESETS[0] ?? FALLBACK_PRESET
+
+function nowMs(): number {
+  return globalThis.performance?.now?.() ?? Date.now()
+}
+
 export default function LiteRtPrototypePage() {
   const navigate = useNavigate()
   const [status, setStatus] = useState('Idle')
-  const [selectedPresetId, setSelectedPresetId] = useState(PROMPT_PRESETS[0]!.id)
-  const [input, setInput] = useState(PROMPT_PRESETS[0]!.buildInput())
+  const [selectedPresetId, setSelectedPresetId] = useState(DEFAULT_PRESET.id)
+  const [input, setInput] = useState(DEFAULT_PRESET.buildInput())
   const [output, setOutput] = useState('')
   const [promptLoading, setPromptLoading] = useState(false)
   const [routerEvalLoading, setRouterEvalLoading] = useState(false)
@@ -154,7 +168,7 @@ export default function LiteRtPrototypePage() {
   ), [liteRtOptions.modelPath, routerLitertModelPath])
   const modelResponsibilities = useMemo(() => getModelResponsibilityRows(), [])
   const selectedPreset = useMemo(
-    () => PROMPT_PRESETS.find((preset) => preset.id === selectedPresetId) ?? PROMPT_PRESETS[0]!,
+    () => PROMPT_PRESETS.find((preset) => preset.id === selectedPresetId) ?? DEFAULT_PRESET,
     [selectedPresetId],
   )
 
@@ -225,15 +239,15 @@ export default function LiteRtPrototypePage() {
     for (const runtime of ['transformers', 'webllm', 'litert'] as const) {
       const routerSession = createRouterRuntimeSession(runtime)
       const caseResults: RouterEvalResult['cases'] = []
-      const startedAt = performance.now()
+      const startedAt = nowMs()
 
       try {
         await routerSession.init()
         for (const evalCase of SEARCH_INTENT_EVAL_CASES) {
-          const caseStartedAt = performance.now()
+          const caseStartedAt = nowMs()
           try {
             const actual = await routerSession.classify(evalCase.query)
-            const latencyMs = performance.now() - caseStartedAt
+            const latencyMs = nowMs() - caseStartedAt
             caseResults.push({
               query: evalCase.query,
               expected: evalCase.expectedIntent,
@@ -242,7 +256,7 @@ export default function LiteRtPrototypePage() {
               passed: actual === evalCase.expectedIntent,
             })
           } catch (error) {
-            const latencyMs = performance.now() - caseStartedAt
+            const latencyMs = nowMs() - caseStartedAt
             caseResults.push({
               query: evalCase.query,
               expected: evalCase.expectedIntent,
@@ -270,7 +284,7 @@ export default function LiteRtPrototypePage() {
           model: `${routerSession.runtime}:${routerSession.modelId}`,
           passed: 0,
           total: SEARCH_INTENT_EVAL_CASES.length,
-          averageLatencyMs: performance.now() - startedAt,
+          averageLatencyMs: nowMs() - startedAt,
           error: error instanceof Error ? error.message : String(error),
           cases: caseResults,
         })
@@ -299,7 +313,7 @@ export default function LiteRtPrototypePage() {
 
       const results: ModerationEvalResult[] = []
       for (const evalCase of EXTREME_HARM_MODERATION_EVAL_CASES) {
-        const startedAt = performance.now()
+        const startedAt = nowMs()
         try {
           const raw = await evalSession.generateResponse(buildExtremeHarmModerationPrompt(evalCase.content))
           const parsed = parseModerationResponse(raw)
@@ -310,7 +324,7 @@ export default function LiteRtPrototypePage() {
             actualAction: parsed.action,
             actualReason: parsed.reason,
             passed: parsed.action === evalCase.expected.action && parsed.reason === evalCase.expected.reason,
-            latencyMs: performance.now() - startedAt,
+            latencyMs: nowMs() - startedAt,
           })
         } catch (error) {
           results.push({
@@ -320,7 +334,7 @@ export default function LiteRtPrototypePage() {
             actualAction: null,
             actualReason: null,
             passed: false,
-            latencyMs: performance.now() - startedAt,
+            latencyMs: nowMs() - startedAt,
             error: error instanceof Error ? error.message : String(error),
           })
         }
