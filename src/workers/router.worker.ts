@@ -11,6 +11,7 @@
 import { createRouterRuntimeSession } from '@/lib/llm/routerHarness'
 import { getRouterRuntime } from '@/lib/llm/runtimeSelector'
 import { decideRouterRuntime } from '@/lib/ai/taskPolicy'
+import { recordTaskPolicyOutcome } from '@/lib/ai/taskPolicyTelemetry'
 import type { RouterWorkerRequest, RouterWorkerResponse, SearchIntent } from '@/types'
 
 const ROUTER_RUNTIME = getRouterRuntime()
@@ -35,6 +36,7 @@ self.addEventListener('message', async (event: MessageEvent<RouterWorkerRequest>
 
       case 'classify': {
         const { query } = event.data.payload
+        const startedAt = performance.now()
         const policy = decideRouterRuntime(query)
         if (policy.runtime !== activeSession.runtime) {
           await activeSession.close()
@@ -42,6 +44,17 @@ self.addEventListener('message', async (event: MessageEvent<RouterWorkerRequest>
           await activeSession.init()
         }
         const intent = await activeSession.classify(query)
+        recordTaskPolicyOutcome({
+          task: 'search_intent',
+          runtime: activeSession.runtime,
+          success: true,
+          latencyMs: Math.round(performance.now() - startedAt),
+          context: {
+            intent,
+            queryLength: query.trim().length,
+            switchedRuntime: policy.runtime !== ROUTER_RUNTIME,
+          },
+        })
         respond({ intent, model: `${activeSession.runtime}:${activeSession.modelId}` })
         break
       }
@@ -59,6 +72,14 @@ self.addEventListener('message', async (event: MessageEvent<RouterWorkerRequest>
       }
     }
   } catch (error) {
+    if (event.data.type === 'classify') {
+      recordTaskPolicyOutcome({
+        task: 'search_intent',
+        runtime: activeSession.runtime,
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
     respondError(error)
   }
 })

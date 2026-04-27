@@ -1,5 +1,6 @@
 import { generateAssistText } from '@/lib/ai/gemmaAssist'
 import { decideModerationAssistProvider } from '@/lib/ai/taskPolicy'
+import { recordTaskPolicyOutcome } from '@/lib/ai/taskPolicyTelemetry'
 import { normalizeModerationText } from '@/lib/moderation/content'
 import type { ModerationDecision, ModerationDocument } from '@/types'
 
@@ -144,10 +145,15 @@ export async function refineModerationDecisionsWithAi(
     maxDocumentLength: candidates.reduce((max, entry) => Math.max(max, entry.document.text.length), 0),
   })
 
+  const startedAt = performance.now()
+  let attempts = 0
+  let blocksApplied = 0
+
   for (const candidate of candidates) {
     if (signal?.aborted) break
 
     try {
+      attempts += 1
       const options = signal ? { provider: moderationPolicy.provider, signal } : { provider: moderationPolicy.provider }
       const result = await generateAssistText(buildPrompt(candidate.document), options)
       const vote = parseVote(result.text)
@@ -155,11 +161,27 @@ export async function refineModerationDecisionsWithAi(
 
       const current = byId.get(candidate.decision.id)
       if (!current) continue
-      byId.set(current.id, applyVote(current, vote, result.source))
+      const updated = applyVote(current, vote, result.source)
+      if (updated.action === 'block' && current.action !== 'block') {
+        blocksApplied += 1
+      }
+      byId.set(current.id, updated)
     } catch {
       // Fail open: base moderation decision remains authoritative.
     }
   }
+
+  recordTaskPolicyOutcome({
+    task: 'moderation_referee',
+    runtime: moderationPolicy.provider,
+    success: true,
+    latencyMs: Math.round(performance.now() - startedAt),
+    context: {
+      candidates: candidates.length,
+      attempts,
+      blocksApplied,
+    },
+  })
 
   return baseDecisions.map((decision) => byId.get(decision.id) ?? decision)
 }
