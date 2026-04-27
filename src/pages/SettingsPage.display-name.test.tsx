@@ -135,6 +135,7 @@ describe('SettingsPage display name publishing', () => {
       .find((node) => (node as HTMLInputElement).placeholder === 'How your name appears') as HTMLInputElement | undefined
 
     expect(input).toBeTruthy()
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     await setInputValue(input!, 'Alice 🚀 Updated')
 
     const saveButton = Array
@@ -142,6 +143,7 @@ describe('SettingsPage display name publishing', () => {
       .find((button) => button.textContent?.includes('Save Profile'))
 
     expect(saveButton).toBeTruthy()
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     await click(saveButton!)
 
     await act(async () => {
@@ -152,6 +154,7 @@ describe('SettingsPage display name publishing', () => {
     expect(publishMock).toHaveBeenCalledTimes(1)
     expect(eventInstances.length).toBeGreaterThan(0)
 
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const published = eventInstances[eventInstances.length - 1]!
     expect(published.kind).toBe(0)
 

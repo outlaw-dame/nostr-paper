@@ -128,7 +128,7 @@ function InnerApp() {
             onClick={async () => {
               try {
                 const root = await navigator.storage.getDirectory()
-                // @ts-expect-error — standard Web API
+                // @ts-expect-error — standard Web API: FileSystemDirectoryHandle.keys() not yet in TS DOM lib
                 for await (const name of root.keys()) {
                   await root.removeEntry(name, { recursive: true })
                 }
@@ -217,7 +217,9 @@ export default function App() {
     <AppProvider>
       <KonstaApp theme="ios" dark={false} safeAreas>
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-          <InnerApp />
+          <AppErrorBoundary>
+            <InnerApp />
+          </AppErrorBoundary>
         </BrowserRouter>
       </KonstaApp>
     </AppProvider>

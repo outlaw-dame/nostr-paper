@@ -29,6 +29,9 @@ export default [
         clearTimeout: 'readonly',
         setInterval: 'readonly',
         clearInterval: 'readonly',
+        requestAnimationFrame: 'readonly',
+        cancelAnimationFrame: 'readonly',
+        alert: 'readonly',
         crypto: 'readonly',
         fetch: 'readonly',
         URL: 'readonly',
@@ -85,7 +88,7 @@ export default [
         prefer: 'type-imports',
       }],
       '@typescript-eslint/no-empty-object-type': 'warn',
-      'no-unused-vars': 'warn',
+      'no-unused-vars': 'off', // replaced by @typescript-eslint/no-unused-vars above
       'no-control-regex': 'warn',
       'no-useless-escape': 'warn',
       'no-undef': 'warn',

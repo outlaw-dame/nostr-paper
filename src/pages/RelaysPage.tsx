@@ -274,9 +274,9 @@ function RelayRow({
   health: RelayHealthSnapshot | undefined
   retryAvailable: boolean
   retrying: boolean
-  onRetry: (url: string) => void
-  onToggleCapability: (url: string, capability: 'read' | 'write') => void
-  onRemove: (url: string) => void
+  onRetry: (_url: string) => void
+  onToggleCapability: (_url: string, _capability: 'read' | 'write') => void
+  onRemove: (_url: string) => void
 }) {
   const { label } = statusMeta(entry.status)
   const hostname = hostnameOf(entry.url)
@@ -441,7 +441,7 @@ export default function RelaysPage() {
   const [adding, setAdding] = useState(false)
   const [relayError, setRelayError] = useState<string | null>(null)
   const [relayHealth, setRelayHealth] = useState<Record<string, RelayHealthSnapshot>>({})
-  const [relayHealthCheckedAt, setRelayHealthCheckedAt] = useState<Record<string, number>>({})
+  const [_relayHealthCheckedAt, setRelayHealthCheckedAt] = useState<Record<string, number>>({})
   const [importingRemote, setImportingRemote] = useState(false)
   const [importNotice, setImportNotice] = useState<string | null>(null)
   const [retryingRelayUrl, setRetryingRelayUrl] = useState<string | null>(null)
@@ -598,7 +598,7 @@ export default function RelaysPage() {
         refresh()
         setAdding(false)
       }, 300)
-    } catch (err) {
+    } catch (_err) {
       setAddError(tApp('relaysAddFailed'))
       setAdding(false)
     }

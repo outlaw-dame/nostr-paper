@@ -356,6 +356,7 @@ export default function SettingsPage() {
     try {
       const token = await authorizeAppleMusic()
       setAppleMusicConnected(token !== null)
+      // eslint-disable-next-line security/detect-possible-timing-attacks
       if (token === null) {
         setMusicServicesError('Apple Music authorization was not completed.')
       }

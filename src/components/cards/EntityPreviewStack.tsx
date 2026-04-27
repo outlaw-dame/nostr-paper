@@ -156,6 +156,27 @@ function PrimaryUrlSlot({
   const vimeoId = React.useMemo(() => getVimeoVideoId(candidate.url), [candidate.url])
   const peertubeEmbed = React.useMemo(() => getPeerTubeEmbedUrl(candidate.url), [candidate.url])
 
+  // All hooks must be declared unconditionally before any early returns
+  const feedLike = React.useMemo(() => looksLikeFeedUrl(candidate.url), [candidate.url])
+  const { data, loading } = useLinkPreview(candidate.url, { enabled: !feedLike })
+  const shouldTryFeed = feedLike || (!loading && !data)
+  const { feed, loading: syndicationLoading } = useSyndicationPreview(candidate.url, { enabled: shouldTryFeed })
+
+  const moderationDocuments = React.useMemo(() => {
+    if (!data) return []
+    const text = [data.title, data.description].filter(Boolean).join('\n\n')
+    if (!text.trim()) return []
+    return [{
+      id: `link:${candidate.url}`,
+      kind: 'event',
+      text,
+      updatedAt: 0,
+    }] satisfies ModerationDocument[]
+  }, [data, candidate.url])
+  const { allowedIds, loading: moderationLoading } = useModerationDocuments(moderationDocuments)
+  const blocked = moderationDocuments.length > 0 && !allowedIds.has(moderationDocuments[0]?.id ?? '')
+  const [override, setOverride] = React.useState(false)
+
   if (youtubeId) {
     return (
       <div className="mt-3 overflow-hidden rounded-ios-xl border border-[rgb(var(--color-fill)/0.10)] bg-black aspect-video">
@@ -197,26 +218,6 @@ function PrimaryUrlSlot({
       </div>
     )
   }
-
-  const feedLike = React.useMemo(() => looksLikeFeedUrl(candidate.url), [candidate.url])
-  const { data, loading } = useLinkPreview(candidate.url, { enabled: !feedLike })
-  const shouldTryFeed = feedLike || (!loading && !data)
-  const { feed, loading: syndicationLoading } = useSyndicationPreview(candidate.url, { enabled: shouldTryFeed })
-
-  const moderationDocuments = React.useMemo(() => {
-    if (!data) return []
-    const text = [data.title, data.description].filter(Boolean).join('\n\n')
-    if (!text.trim()) return []
-    return [{
-      id: `link:${candidate.url}`,
-      kind: 'event',
-      text,
-      updatedAt: 0,
-    }] satisfies ModerationDocument[]
-  }, [data, candidate.url])
-  const { allowedIds, loading: moderationLoading } = useModerationDocuments(moderationDocuments)
-  const blocked = moderationDocuments.length > 0 && !allowedIds.has(moderationDocuments[0]?.id ?? '')
-  const [override, setOverride] = React.useState(false)
 
   if (loading || syndicationLoading || moderationLoading) return <EntityCardSkeleton />
 

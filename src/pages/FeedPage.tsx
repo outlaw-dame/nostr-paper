@@ -218,12 +218,15 @@ const DEFAULT_SECTIONS: FeedRailSection[] = [
   },
 ]
 
+// Safe: DEFAULT_SECTIONS is a non-empty module-level constant
+const DEFAULT_FIRST_SECTION = DEFAULT_SECTIONS[0] as FeedRailSection
+
 const TAG_FEEDS_SECTION: FeedRailSection = {
   id: 'tag-feeds:manage',
   label: 'Tags',
   summary: 'Create and manage saved tag feeds.',
   href: '/settings/tag-feeds',
-  filter: DEFAULT_SECTIONS[0]!.filter,
+  filter: DEFAULT_FIRST_SECTION.filter,
 }
 
 const COMPOSE_TRIGGER_OFFSET = 85  // px downward pull to open compose sheet
@@ -580,7 +583,7 @@ export default function FeedPage() {
       emptyTagSection: TAG_FEEDS_SECTION,
     })
   }, [routeSection, savedTagSections])
-  const [activeSectionId, setActiveSectionId] = useState(DEFAULT_SECTIONS[0]!.id)
+  const [activeSectionId, setActiveSectionId] = useState(DEFAULT_FIRST_SECTION.id)
   const [activeArticleFeedId, setActiveArticleFeedId] = useState('articles:all-feeds')
   const [repostCarouselVisible, setRepostCarouselVisible] = useState(true)
   const [feedInlineAutoplayEnabled, setFeedInlineAutoplayEnabled] = useState(true)
@@ -597,7 +600,7 @@ export default function FeedPage() {
   const activeSection = useMemo<FeedRailSection>(() => (
     routeSection
       ?? railSections.find((section) => section.id === activeSectionId)
-      ?? DEFAULT_SECTIONS[0]!
+      ?? DEFAULT_FIRST_SECTION
   ), [activeSectionId, railSections, routeSection])
   const {
     sections: articleFeedSections,
@@ -637,7 +640,7 @@ export default function FeedPage() {
     [activeTagTimeline],
   )
   const headerSection = useMemo(
-    () => getFeedHeaderSection(activeSection, DEFAULT_SECTIONS[0]!),
+    () => getFeedHeaderSection(activeSection, DEFAULT_FIRST_SECTION),
     [activeSection],
   )
 
@@ -654,7 +657,7 @@ export default function FeedPage() {
   useEffect(() => {
     if (articleFeedSections.length === 0) return
     if (!articleFeedSections.some((section) => section.id === activeArticleFeedId)) {
-      setActiveArticleFeedId(articleFeedSections[0]!.id)
+      setActiveArticleFeedId(articleFeedSections[0]?.id ?? '')
     }
   }, [activeArticleFeedId, articleFeedSections])
 
@@ -781,7 +784,7 @@ export default function FeedPage() {
   const heroEvent = topicFilteredEvents[0] ?? null
   const secondaryEvents = topicFilteredEvents.slice(1)
   const feedSurfaceLoading = loading || moderationLoading
-  const feedLoading = loading || semanticTimelineLoading || moderationLoading || muteListLoading
+  const _feedLoading = loading || semanticTimelineLoading || moderationLoading || muteListLoading
 
   useEffect(() => {
     warmSelfThreadIndexCache(visibleEvents)
@@ -972,9 +975,9 @@ export default function FeedPage() {
     overscan: 5,
   })
   const virtualItems = virtualizer.getVirtualItems()
-  const virtualPaddingTop = virtualItems.length > 0 ? virtualItems[0]!.start : 0
+  const virtualPaddingTop = virtualItems.length > 0 ? (virtualItems[0]?.start ?? 0) : 0
   const virtualPaddingBottom = virtualItems.length > 0
-    ? virtualizer.getTotalSize() - virtualItems[virtualItems.length - 1]!.end
+    ? virtualizer.getTotalSize() - (virtualItems.at(-1)?.end ?? 0)
     : 0
 
   const handleCompose = useCallback(() => {
@@ -1386,7 +1389,7 @@ export default function FeedPage() {
               ) : (
                   <div style={{ paddingTop: `${virtualPaddingTop}px`, paddingBottom: `${virtualPaddingBottom}px` }}>
                     {virtualItems.map((virtualRow) => {
-                      const event = secondaryEvents[virtualRow.index]!
+                      const event = secondaryEvents[virtualRow.index] as NostrEvent
                       return (
                         <div
                           key={event.id}
@@ -1419,7 +1422,7 @@ export default function FeedPage() {
 interface SecondaryCardProps {
   event: NostrEvent
   index: number
-  checkEvent: (event: NostrEvent, profile?: Profile) => FilterCheckResult
+  checkEvent: (_event: NostrEvent, _profile?: Profile) => FilterCheckResult
   semanticResult: FilterCheckResult
   feedInlineAutoplayEnabled: boolean
 }
@@ -1444,7 +1447,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
     quoteBody,
     contentWarning,
     isArticleStory,
-    isVideoStory,
+    isVideoStory: _isVideoStory,
     isStoryCard,
     articlePreview,
     videoPoster,
