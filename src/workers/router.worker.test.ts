@@ -46,6 +46,30 @@ describe('getRouterRuntime()', () => {
     vi.unstubAllEnvs()
   })
 
+  it('returns litert when VITE_ROUTER_RUNTIME=mediapipe', async () => {
+    vi.stubEnv('VITE_ROUTER_RUNTIME', 'mediapipe')
+    vi.resetModules()
+    const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
+    expect(getRouterRuntime()).toBe('litert')
+    vi.unstubAllEnvs()
+  })
+
+  it('returns litert when VITE_ROUTER_RUNTIME=mediapipeline', async () => {
+    vi.stubEnv('VITE_ROUTER_RUNTIME', 'mediapipeline')
+    vi.resetModules()
+    const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
+    expect(getRouterRuntime()).toBe('litert')
+    vi.unstubAllEnvs()
+  })
+
+  it('returns cloudflare when VITE_ROUTER_RUNTIME=cloudflare', async () => {
+    vi.stubEnv('VITE_ROUTER_RUNTIME', 'cloudflare')
+    vi.resetModules()
+    const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
+    expect(getRouterRuntime()).toBe('cloudflare')
+    vi.unstubAllEnvs()
+  })
+
   it('falls back to transformers for unknown values', async () => {
     vi.stubEnv('VITE_ROUTER_RUNTIME', 'gpt5000')
     vi.resetModules()

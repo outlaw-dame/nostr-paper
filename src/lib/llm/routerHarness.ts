@@ -12,6 +12,13 @@ const LOCAL_MODEL_PATH = typeof import.meta.env.VITE_ROUTER_LOCAL_MODEL_PATH ===
   ? import.meta.env.VITE_ROUTER_LOCAL_MODEL_PATH.trim()
   : ''
 const WEBLLM_MODEL_ID = import.meta.env.VITE_WEBLLM_MODEL_ID ?? 'Llama-3.2-1B-Instruct-q4f32_1-MLC'
+const CLOUDFLARE_ACCOUNT_ID = typeof import.meta.env.VITE_CLOUDFLARE_ACCOUNT_ID === 'string'
+  ? import.meta.env.VITE_CLOUDFLARE_ACCOUNT_ID.trim()
+  : ''
+const CLOUDFLARE_API_TOKEN = typeof import.meta.env.VITE_CLOUDFLARE_API_TOKEN === 'string'
+  ? import.meta.env.VITE_CLOUDFLARE_API_TOKEN.trim()
+  : ''
+const CLOUDFLARE_MODEL_ID = import.meta.env.VITE_CLOUDFLARE_ROUTER_MODEL_ID ?? '@cf/meta/llama-3.1-8b-instruct'
 // Router-specific LiteRT model path. Use VITE_ROUTER_LITERT_MODEL_PATH to deploy a small
 // classification-optimised model (e.g. Gemma 2B int4 or a fine-tuned intent classifier).
 // Falls back to VITE_LITERT_MODEL_PATH so existing single-model deployments keep working,
@@ -45,6 +52,7 @@ const intentCaches: Record<LlmRuntime, Map<string, SearchIntent>> = {
   transformers: new Map(),
   webllm: new Map(),
   litert: new Map(),
+  cloudflare: new Map(),
 }
 
 let generatorPromise: Promise<TextGenerationPipeline> | null = null
@@ -220,7 +228,73 @@ async function classifyWithLiteRt(query: string): Promise<SearchIntent> {
   return intent
 }
 
+function getCloudflareConfig(): { accountId: string; apiToken: string; modelId: string } {
+  if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_API_TOKEN) {
+    throw new Error('Cloudflare runtime requires VITE_CLOUDFLARE_ACCOUNT_ID and VITE_CLOUDFLARE_API_TOKEN.')
+  }
+  return {
+    accountId: CLOUDFLARE_ACCOUNT_ID,
+    apiToken: CLOUDFLARE_API_TOKEN,
+    modelId: CLOUDFLARE_MODEL_ID,
+  }
+}
+
+async function classifyWithCloudflare(query: string): Promise<SearchIntent> {
+  const cached = getCachedIntent('cloudflare', query)
+  if (cached !== undefined) return cached
+
+  const { accountId, apiToken, modelId } = getCloudflareConfig()
+  const response = await withRetry(async () => {
+    const result = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${encodeURIComponent(modelId)}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiToken}`,
+        },
+        body: JSON.stringify({
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: buildSearchIntentUserPrompt(query) },
+          ],
+          max_tokens: 4,
+          temperature: 0,
+        }),
+      },
+    )
+
+    if (!result.ok) {
+      const detail = await result.text().catch(() => '')
+      throw new Error(`Cloudflare AI request failed (${result.status}): ${detail}`)
+    }
+
+    return result.json() as Promise<{
+      result?: {
+        response?: string
+      }
+    }>
+  }, { maxAttempts: 2, baseDelayMs: 300 })
+
+  const text = response.result?.response ?? ''
+  const intent = parseRouterIntent(text)
+  setCachedIntent('cloudflare', query, intent)
+  return intent
+}
+
 export function createRouterRuntimeSession(runtime: LlmRuntime): RouterRuntimeSession {
+  if (runtime === 'cloudflare') {
+    return {
+      runtime,
+      modelId: CLOUDFLARE_MODEL_ID,
+      init: async () => { void getCloudflareConfig() },
+      classify: classifyWithCloudflare,
+      close: async () => {
+        intentCaches.cloudflare.clear()
+      },
+    }
+  }
+
   if (runtime === 'webllm') {
     return {
       runtime,

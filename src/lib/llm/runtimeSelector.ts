@@ -1,9 +1,10 @@
-export type LlmRuntime = 'transformers' | 'webllm' | 'litert'
+export type LlmRuntime = 'transformers' | 'webllm' | 'litert' | 'cloudflare'
 
 function normalizeRuntime(value: unknown): LlmRuntime {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (normalized === 'cloudflare' || normalized === 'cf') return 'cloudflare'
   if (normalized === 'webllm') return 'webllm'
-  if (normalized === 'litert') return 'litert'
+  if (normalized === 'litert' || normalized === 'mediapipe' || normalized === 'mediapipeline') return 'litert'
   return 'transformers'
 }
 
