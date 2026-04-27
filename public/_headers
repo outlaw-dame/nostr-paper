@@ -17,8 +17,14 @@
   Cache-Control: public, max-age=31536000, immutable
   Cross-Origin-Embedder-Policy: credentialless
 
+/assets/*.wasm
+  # WASM files in /assets/ — explicit MIME required for iOS Safari streaming compilation
+  Cache-Control: public, max-age=31536000, immutable
+  Content-Type: application/wasm
+  Cross-Origin-Embedder-Policy: credentialless
+
 /*.wasm
-  # WASM files — immutable with correct MIME
+  # WASM files in root — immutable with correct MIME
   Cache-Control: public, max-age=31536000, immutable
   Content-Type: application/wasm
   Cross-Origin-Embedder-Policy: credentialless

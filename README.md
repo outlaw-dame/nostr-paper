@@ -104,6 +104,75 @@ POST /safe-browsing/check
 
 and it reads `GOOGLE_SAFE_BROWSING_API_KEY` from environment variables.
 
+### Gemma 4 local inference (Google AI Edge)
+
+This repo includes an on-device Gemma runtime built on `@mediapipe/tasks-genai`.
+It runs entirely in a Web Worker and requires a WebGPU-capable browser.
+
+1. Install dependencies with `npm install`.
+2. Download one or both model files into `public/models/`:
+
+```bash
+mkdir -p public/models
+
+curl -L "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it-web.task" \
+      -o public/models/gemma-4-E2B-it-web.task
+
+curl -L "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it-web.task" \
+      -o public/models/gemma-4-E4B-it-web.task
+```
+
+3. Add the model paths to `.env.local`:
+
+```bash
+VITE_GEMMA_E2B_MODEL_PATH=/models/gemma-4-E2B-it-web.task
+VITE_GEMMA_E4B_MODEL_PATH=/models/gemma-4-E4B-it-web.task
+VITE_GEMMA_MAX_TOKENS=1024
+VITE_GEMMA_TEMPERATURE=0.8
+VITE_GEMMA_TOP_K=40
+```
+
+4. Use the client from `src/lib/gemma/client.ts`:
+
+```ts
+import { generateText, isGemmaAvailable } from '@/lib/gemma/client'
+
+if (isGemmaAvailable()) {
+      const text = await generateText('Summarize this note...', {
+            onToken: (partial) => console.log(partial),
+      })
+}
+```
+
+Notes:
+
+- If both model paths are configured, the runtime prefers E4B by default.
+- `public/models/` is ignored by git because the model assets are multi-GB local files.
+- Gemma runtime WASM assets are copied into `public/vendor/mediapipe/tasks-genai/wasm` by `npm install` via `scripts/sync-gemma-wasm.mjs`.
+- Vite is already configured with the required COOP/COEP headers and excludes `@mediapipe/tasks-genai` from dependency pre-bundling.
+
+### Gemini API translation provider (Google cloud)
+
+The translation settings now include a Gemini cloud provider.
+
+1. Create a Gemini API key in Google AI Studio: https://aistudio.google.com/apikey
+2. Open Settings -> Translations in the app.
+3. Choose Provider = Gemini API (cloud).
+4. Enter your API key and optional model ID (default: `gemini-2.5-flash`).
+
+Optional local defaults in `.env.local`:
+
+```bash
+VITE_GEMINI_API_KEY=<your-key>
+VITE_GEMINI_MODEL=gemini-2.5-flash
+```
+
+Security notes:
+
+- API keys in browser apps can be extracted by users with local access.
+- Prefer a server-side proxy for production deployments.
+- Restrict keys to the Generative Language API and rotate them regularly.
+
 ### Build
 
 ```bash

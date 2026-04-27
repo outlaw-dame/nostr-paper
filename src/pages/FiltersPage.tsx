@@ -19,28 +19,58 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'motion/react'
+import { tApp } from '@/lib/i18n/app'
 import { useKeywordFilters } from '@/hooks/useKeywordFilters'
+import { SYSTEM_FILTER_GROUPS, SYSTEM_KEYWORD_FILTERS, type SystemFilterGroup } from '@/lib/filters/systemFilters'
 import type { CreateFilterInput, FilterAction, FilterScope, KeywordFilter } from '@/lib/filters/types'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const SCOPE_LABELS: Record<FilterScope, string> = {
-  any:     'Everywhere',
-  content: 'Content only',
-  author:  'Author only',
-  hashtag: 'Hashtags only',
+function getScopeLabel(scope: FilterScope): string {
+  const map: Record<FilterScope, string> = {
+    any:     tApp('filtersScopeAny'),
+    content: tApp('filtersScopeContent'),
+    author:  tApp('filtersScopeAuthor'),
+    hashtag: tApp('filtersScopeHashtag'),
+  }
+  return map[scope]
 }
 
-const SCOPE_DESCRIPTIONS: Record<FilterScope, string> = {
-  any:     'Note body, title, summary, poll options, hashtags, author name, bio, and NIP-05 ID',
-  content: 'Note body, article title/summary, poll options, and hashtags',
-  author:  'Author display name, username, bio, and NIP-05 identifier',
-  hashtag: '#t tags only (exact normalised match)',
+function getScopeDescription(scope: FilterScope): string {
+  const map: Record<FilterScope, string> = {
+    any:     tApp('filtersScopeDescAny'),
+    content: tApp('filtersScopeDescContent'),
+    author:  tApp('filtersScopeDescAuthor'),
+    hashtag: tApp('filtersScopeDescHashtag'),
+  }
+  return map[scope]
 }
 
-const ACTION_LABELS: Record<FilterAction, string> = {
-  hide: 'Hide',
-  warn: 'Warn',
+function getActionLabel(action: FilterAction): string {
+  const map: Record<FilterAction, string> = {
+    warn:  tApp('filtersActionWarn'),
+    hide:  tApp('filtersActionHide'),
+    block: tApp('filtersActionBlock'),
+  }
+  return map[action]
+}
+
+function getActionDescription(action: FilterAction): string {
+  const map: Record<FilterAction, string> = {
+    warn:  tApp('filtersActionDescWarn'),
+    hide:  tApp('filtersActionDescHide'),
+    block: tApp('filtersActionDescBlock'),
+  }
+  return map[action]
+}
+
+function getExpiryPresets(): Array<{ label: string; value: number | null }> {
+  return [
+    { label: tApp('filtersExpiryNever'), value: null },
+    { label: tApp('filtersExpiry24h'),   value: 24 * 60 * 60 * 1_000 },
+    { label: tApp('filtersExpiry7d'),    value: 7  * 24 * 60 * 60 * 1_000 },
+    { label: tApp('filtersExpiry30d'),   value: 30 * 24 * 60 * 60 * 1_000 },
+  ]
 }
 
 // ── Blank form state ──────────────────────────────────────────────────────────
@@ -59,13 +89,6 @@ function blankForm(): Omit<CreateFilterInput, 'createdAt'> {
 
 // ── Expiry helpers ────────────────────────────────────────────────────────────
 
-const EXPIRY_PRESETS = [
-  { label: 'Never',    value: null        },
-  { label: '24 hours', value: 24 * 60 * 60 * 1_000  },
-  { label: '7 days',   value: 7  * 24 * 60 * 60 * 1_000 },
-  { label: '30 days',  value: 30 * 24 * 60 * 60 * 1_000 },
-]
-
 function presetToExpiry(ms: number | null): number | null {
   if (ms === null) return null
   return Date.now() + ms
@@ -73,12 +96,12 @@ function presetToExpiry(ms: number | null): number | null {
 
 function formatExpiry(ts: number): string {
   const diff = ts - Date.now()
-  if (diff <= 0) return 'Expired'
+  if (diff <= 0) return tApp('filtersExpired')
   const days = Math.floor(diff / (24 * 60 * 60 * 1_000))
-  if (days > 0) return `${days}d left`
+  if (days > 0) return tApp('filtersDaysLeft', { days })
   const hrs  = Math.floor(diff / (60 * 60 * 1_000))
-  if (hrs  > 0) return `${hrs}h left`
-  return 'Expiring soon'
+  if (hrs  > 0) return tApp('filtersHoursLeft', { hrs })
+  return tApp('filtersExpiringSoon')
 }
 
 // ── FilterRow ─────────────────────────────────────────────────────────────────
@@ -121,7 +144,7 @@ function FilterRow({ filter, onToggle, onEdit, onDelete }: FilterRowProps) {
             ? 'rgb(var(--color-system-green))'
             : 'rgb(var(--color-fill-secondary) / 0.3)',
         }}
-        aria-label={`${filter.enabled ? 'Disable' : 'Enable'} filter for "${filter.term}"`}
+        aria-label={filter.enabled ? tApp('filtersToggleDisable', { term: filter.term }) : tApp('filtersToggleEnable', { term: filter.term })}
       >
         <motion.span
           layout
@@ -148,15 +171,19 @@ function FilterRow({ filter, onToggle, onEdit, onDelete }: FilterRowProps) {
               text-[11px] font-semibold px-1.5 py-0.5 rounded-full uppercase tracking-wide
             "
             style={{
-              backgroundColor: filter.action === 'hide'
-                ? 'rgb(var(--color-system-red) / 0.12)'
-                : 'rgb(var(--color-system-yellow) / 0.15)',
-              color: filter.action === 'hide'
+              backgroundColor: filter.action === 'block'
+                ? 'rgb(var(--color-system-red) / 0.18)'
+                : filter.action === 'hide'
+                  ? 'rgb(var(--color-system-red) / 0.12)'
+                  : 'rgb(var(--color-system-yellow) / 0.15)',
+              color: filter.action === 'block'
                 ? 'rgb(var(--color-system-red))'
-                : 'rgb(160 120 0)',
+                : filter.action === 'hide'
+                  ? 'rgb(var(--color-system-red))'
+                  : 'rgb(160 120 0)',
             }}
           >
-            {ACTION_LABELS[filter.action]}
+            {getActionLabel(filter.action)}
           </span>
 
           {/* Semantic badge */}
@@ -172,8 +199,8 @@ function FilterRow({ filter, onToggle, onEdit, onDelete }: FilterRowProps) {
         </div>
 
         <p className="text-[12px] text-[rgb(var(--color-label-tertiary))] mt-0.5">
-          {SCOPE_LABELS[filter.scope]}
-          {filter.wholeWord && ' · whole word'}
+          {getScopeLabel(filter.scope)}
+          {filter.wholeWord && tApp('filtersWholeWordChip')}
           {filter.expiresAt !== null && (
             <>
               {' · '}
@@ -197,13 +224,41 @@ function FilterRow({ filter, onToggle, onEdit, onDelete }: FilterRowProps) {
           active:opacity-60
           transition-opacity
         "
-        aria-label={`Delete filter for "${filter.term}"`}
+        aria-label={tApp('filtersDeleteAria', { term: filter.term })}
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
           <path d="M2 2l8 8M10 2L2 10" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round"/>
         </svg>
       </button>
     </motion.div>
+  )
+}
+
+function SystemRuleGroupCard({ group }: { group: SystemFilterGroup }) {
+  return (
+    <div className="rounded-ios-xl border border-[rgb(var(--color-fill)/0.08)] bg-[rgb(var(--color-bg))] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="text-[14px] font-semibold text-[rgb(var(--color-label))]">
+              {group.title}
+            </h3>
+            <span className="rounded-full bg-[rgb(var(--color-system-red)/0.12)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[rgb(var(--color-system-red))]">
+              {tApp('filtersSystemBlockBadge')}
+            </span>
+            <span className="rounded-full bg-[rgb(var(--color-system-purple)/0.10)] px-2 py-0.5 text-[11px] font-medium text-[rgb(var(--color-system-purple))]">
+              {tApp('filtersSemanticBadge')}
+            </span>
+          </div>
+          <p className="mt-1 text-[12px] leading-relaxed text-[rgb(var(--color-label-secondary))]">
+            {group.description}
+          </p>
+        </div>
+        <span className="shrink-0 rounded-full bg-[rgb(var(--color-fill)/0.10)] px-2 py-1 text-[11px] font-medium text-[rgb(var(--color-label-secondary))]">
+          {group.filters.length}
+        </span>
+      </div>
+    </div>
   )
 }
 
@@ -273,7 +328,7 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
           htmlFor="filter-term"
           className="block text-[12px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))] mb-1.5"
         >
-          Keyword, phrase, or #hashtag
+          {tApp('filtersTermLabel')}
         </label>
         <input
           id="filter-term"
@@ -281,7 +336,7 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
           type="text"
           value={form.term}
           onChange={e => set('term', e.target.value)}
-          placeholder="e.g. violence, #politics, crypto scam"
+          placeholder={tApp('filtersTermPlaceholder')}
           autoCapitalize="none"
           autoCorrect="off"
           spellCheck={false}
@@ -296,7 +351,7 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
         />
         {termTrimmed.startsWith('#') && (
           <p className="text-[12px] text-[rgb(var(--color-label-tertiary))] mt-1">
-            Hashtag mode — exact match against #t tags (case-insensitive)
+            {tApp('filtersHashtagHint')}
           </p>
         )}
       </div>
@@ -307,10 +362,10 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
         {/* Action */}
         <div>
           <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))] mb-1.5">
-            Action
+            {tApp('filtersActionLabel')}
           </p>
           <div className="flex rounded-[10px] overflow-hidden bg-[rgb(var(--color-fill)/0.08)]">
-            {(['warn', 'hide'] as FilterAction[]).map(a => (
+            {(['warn', 'hide', 'block'] as FilterAction[]).map(a => (
               <button
                 key={a}
                 type="button"
@@ -318,26 +373,28 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
                 className={`
                   flex-1 py-2 text-[13px] font-medium transition-colors duration-150
                   ${form.action === a
-                    ? a === 'hide'
+                    ? a === 'block'
                       ? 'bg-[rgb(var(--color-system-red))] text-white'
-                      : 'bg-[rgb(var(--color-system-yellow)/0.90)] text-black'
+                      : a === 'hide'
+                        ? 'bg-[rgb(var(--color-system-orange))] text-white'
+                        : 'bg-[rgb(var(--color-system-yellow)/0.90)] text-black'
                     : 'text-[rgb(var(--color-label-secondary))]'
                   }
                 `}
               >
-                {ACTION_LABELS[a]}
+                {getActionLabel(a)}
               </button>
             ))}
           </div>
           <p className="text-[11px] text-[rgb(var(--color-label-tertiary))] mt-1">
-            {form.action === 'hide' ? 'Remove from feed' : 'Collapse with reveal'}
+            {getActionDescription(form.action)}
           </p>
         </div>
 
         {/* Expiry */}
         <div>
           <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))] mb-1.5">
-            Expires
+            {tApp('filtersExpiresLabel')}
           </p>
           <select
             value={form.expiryPreset === null ? 'null' : String(form.expiryPreset)}
@@ -350,7 +407,7 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
               appearance-none
             "
           >
-            {EXPIRY_PRESETS.map(p => (
+            {getExpiryPresets().map(p => (
               <option key={String(p.value)} value={p.value === null ? 'null' : String(p.value)}>
                 {p.label}
               </option>
@@ -362,10 +419,10 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
       {/* Scope */}
       <div>
         <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))] mb-1.5">
-          Apply to
+          {tApp('filtersApplyToLabel')}
         </p>
         <div className="flex flex-wrap gap-2">
-          {(Object.keys(SCOPE_LABELS) as FilterScope[]).map(s => (
+          {(['any', 'content', 'author', 'hashtag'] as FilterScope[]).map(s => (
             <button
               key={s}
               type="button"
@@ -378,12 +435,12 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
                 }
               `}
             >
-              {SCOPE_LABELS[s]}
+              {getScopeLabel(s)}
             </button>
           ))}
         </div>
         <p className="text-[12px] text-[rgb(var(--color-label-tertiary))] mt-1.5 leading-relaxed">
-          {SCOPE_DESCRIPTIONS[form.scope]}
+          {getScopeDescription(form.scope)}
         </p>
       </div>
 
@@ -393,10 +450,10 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
         <label className="flex items-start gap-3">
           <div className="mt-0.5 flex-1">
             <p className="text-[14px] font-medium text-[rgb(var(--color-label))]">
-              Whole word
+              {tApp('filtersWholeWordLabel')}
             </p>
             <p className="text-[12px] text-[rgb(var(--color-label-tertiary))] mt-0.5">
-              Requires word boundaries — &ldquo;ass&rdquo; won&apos;t match &ldquo;class&rdquo;
+              {tApp('filtersWholeWordHint')}
             </p>
           </div>
           <button
@@ -423,11 +480,11 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
           </button>
         </label>
 
-        {/* Semantic */}
-        <label className="flex items-start gap-3">
+        {/* Semantic — not applicable to 'block' (ingest-layer is sync only) */}
+        <label className={`flex items-start gap-3 ${form.action === 'block' ? 'opacity-40 pointer-events-none' : ''}`}>
           <div className="mt-0.5 flex-1">
             <p className="text-[14px] font-medium text-[rgb(var(--color-label))]">
-              Semantic matching
+              {tApp('filtersSemanticLabel')}
               <span className="
                 ml-1.5 text-[11px] font-semibold px-1.5 py-0.5 rounded-full
                 bg-[rgb(var(--color-system-purple)/0.12)]
@@ -437,21 +494,23 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
               </span>
             </p>
             <p className="text-[12px] text-[rgb(var(--color-label-tertiary))] mt-0.5">
-              Also matches related concepts — &ldquo;violence&rdquo; catches &ldquo;assault&rdquo;,
-              &ldquo;shooting&rdquo;, &ldquo;conflict&rdquo;. Uses the on-device embedding model.
+              {form.action === 'block'
+                ? tApp('filtersSemanticBlockHint')
+                : tApp('filtersSemanticHint')}
             </p>
           </div>
           <button
             type="button"
             role="switch"
-            aria-checked={form.semantic}
+            aria-checked={form.action !== 'block' && form.semantic}
             onClick={() => set('semantic', !form.semantic)}
+            disabled={form.action === 'block'}
             className="
               shrink-0 mt-0.5 w-11 h-6 rounded-full
               transition-colors duration-200
             "
             style={{
-              backgroundColor: form.semantic
+              backgroundColor: form.action !== 'block' && form.semantic
                 ? 'rgb(var(--color-system-purple))'
                 : 'rgb(var(--color-fill-secondary) / 0.3)',
             }}
@@ -459,7 +518,7 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
             <motion.span
               layout
               className="block w-5 h-5 rounded-full bg-white shadow-sm"
-              animate={{ x: form.semantic ? '22px' : '2px' }}
+              animate={{ x: form.action !== 'block' && form.semantic ? '22px' : '2px' }}
               transition={{ type: 'spring', stiffness: 500, damping: 35 }}
             />
           </button>
@@ -473,24 +532,16 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
         border border-[rgb(var(--color-fill)/0.08)]
       ">
         <p className="text-[12px] text-[rgb(var(--color-label-secondary))] leading-relaxed">
-          <span className="font-semibold text-[rgb(var(--color-label))]">Will check: </span>
-          {form.scope === 'any' && (
-            <>note body, article title/summary, poll options, hashtags, author name/bio/NIP-05</>
-          )}
-          {form.scope === 'content' && (
-            <>note body, article title/summary, poll options, hashtags</>
-          )}
-          {form.scope === 'author' && (
-            <>author display name, username, bio, NIP-05 identifier</>
-          )}
-          {form.scope === 'hashtag' && (
-            <>#hashtag tags only (exact, case-insensitive)</>
-          )}
-          {form.semantic && (
+          <span className="font-semibold text-[rgb(var(--color-label))]">{tApp('filtersWillCheckLabel')}</span>
+          {form.scope === 'any' && tApp('filtersWillCheckAny')}
+          {form.scope === 'content' && tApp('filtersWillCheckContent')}
+          {form.scope === 'author' && tApp('filtersWillCheckAuthor')}
+          {form.scope === 'hashtag' && tApp('filtersWillCheckHashtag')}
+          {form.semantic && form.action !== 'block' && (
             <>
               {' '}
               <span className="text-[rgb(var(--color-system-purple))]">
-                + semantic embedding similarity
+                {tApp('filtersWillCheckSemantic')}
               </span>
             </>
           )}
@@ -509,7 +560,7 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
             active:opacity-70 transition-opacity
           "
         >
-          Cancel
+          {tApp('filtersButtonCancel')}
         </button>
         <button
           type="submit"
@@ -522,7 +573,7 @@ function AddEditForm({ initial, onSave, onCancel, saving }: AddEditFormProps) {
             active:opacity-80 transition-opacity
           "
         >
-          {saving ? 'Saving…' : initial.id ? 'Save changes' : 'Add filter'}
+          {saving ? tApp('filtersButtonSaving') : initial.id ? tApp('filtersButtonSaveChanges') : tApp('filtersButtonAddFilter')}
         </button>
       </div>
     </form>
@@ -540,6 +591,7 @@ export default function FiltersPage() {
   const [saving, setSaving]           = useState(false)
   const [saveError, setSaveError]     = useState<string | null>(null)
   const [flashMessage, setFlashMessage] = useState<string | null>(null)
+  const systemRuleCount = SYSTEM_KEYWORD_FILTERS.length
 
   const handleSave = useCallback(async (
     data: CreateFilterInput,
@@ -550,10 +602,10 @@ export default function FiltersPage() {
     try {
       if (id) {
         await update(id, data)
-        setFlashMessage('Filter updated.')
+        setFlashMessage(tApp('filtersFlashUpdated'))
       } else {
         await add(data)
-        setFlashMessage('Filter added.')
+        setFlashMessage(tApp('filtersFlashAdded'))
       }
       setShowForm(false)
       setEditTarget(null)
@@ -576,12 +628,12 @@ export default function FiltersPage() {
 
   const handleDelete = useCallback(async (id: string) => {
     await remove(id)
-    setFlashMessage('Filter deleted.')
+    setFlashMessage(tApp('filtersFlashDeleted'))
   }, [remove])
 
   const handleToggle = useCallback(async (id: string) => {
     await toggle(id)
-    setFlashMessage('Filter updated.')
+    setFlashMessage(tApp('filtersFlashUpdated'))
   }, [toggle])
 
   useEffect(() => {
@@ -610,17 +662,17 @@ export default function FiltersPage() {
         <div className="px-4 flex items-center justify-between">
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            onClick={() => navigate('/settings/moderation')}
             className="flex items-center gap-1 text-[#007AFF] active:opacity-60"
           >
             <svg width="8" height="14" viewBox="0 0 8 14" fill="none" aria-hidden="true">
               <path d="M7 1L1 7l6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            <span className="text-[17px]">Moderation</span>
+            <span className="text-[17px]">{tApp('filtersBackToModeration')}</span>
           </button>
 
           <h1 className="text-[17px] font-semibold text-[rgb(var(--color-label))] absolute left-1/2 -translate-x-1/2">
-            Content Filters
+            {tApp('filtersTitle')}
           </h1>
 
           {!showForm && (
@@ -629,12 +681,12 @@ export default function FiltersPage() {
               onClick={() => { setEditTarget(null); setShowForm(true) }}
               className="text-[17px] text-[#007AFF] font-medium active:opacity-60"
             >
-              Add
+              {tApp('filtersAdd')}
             </button>
           )}
         </div>
         <p className="px-4 mt-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-tertiary))]">
-          Settings / Moderation / Filters
+          {tApp('filtersBreadcrumb')}
         </p>
       </div>
 
@@ -649,11 +701,14 @@ export default function FiltersPage() {
         )}
 
         {/* Summary strip */}
-        {!loading && filters.length > 0 && (
+        {!loading && (
           <div className="px-4 pb-3">
             <p className="text-[13px] text-[rgb(var(--color-label-secondary))]">
-              {activeCount} active filter{activeCount !== 1 ? 's' : ''}
-              {expiredCount > 0 && ` · ${expiredCount} expired`}
+              {activeCount !== 1
+                ? tApp('filtersActiveCustomFilters', { count: activeCount })
+                : tApp('filtersActiveCustomFilter', { count: activeCount })}
+              {expiredCount > 0 && ` ${tApp('filtersExpiredCount', { count: expiredCount })}`}
+              {systemRuleCount > 0 && ` ${tApp('filtersSystemRulesAlwaysOn', { count: systemRuleCount })}`}
             </p>
           </div>
         )}
@@ -674,7 +729,7 @@ export default function FiltersPage() {
             >
               <div className="px-4 pt-4 pb-2 border-b border-[rgb(var(--color-fill)/0.08)]">
                 <h2 className="text-[15px] font-semibold text-[rgb(var(--color-label))]">
-                  {editTarget ? `Edit "${editTarget.term}"` : 'New filter'}
+                  {editTarget ? tApp('filtersFormEditTitle', { term: editTarget.term }) : tApp('filtersFormNewTitle')}
                 </h2>
               </div>
               <AddEditForm
@@ -703,7 +758,7 @@ export default function FiltersPage() {
           )}
         </AnimatePresence>
 
-        {/* Filter list */}
+        {/* Custom filter list */}
         {loading ? (
           <div className="px-4 space-y-3">
             {[1, 2].map(i => (
@@ -718,58 +773,90 @@ export default function FiltersPage() {
           >
             <p className="text-[40px] mb-3">🔕</p>
             <p className="text-[17px] font-semibold text-[rgb(var(--color-label))] mb-1">
-              No filters yet
+              {tApp('filtersNoFiltersTitle')}
             </p>
             <p className="text-[14px] text-[rgb(var(--color-label-secondary))] max-w-xs mx-auto leading-relaxed">
-              Add words, phrases, or #hashtags to hide or warn on matching posts, profiles, and bios.
+              {tApp('filtersNoFiltersHint')}
             </p>
           </motion.div>
         ) : (
-          <div className="mx-4 rounded-ios-2xl bg-[rgb(var(--color-bg-secondary))] overflow-hidden">
-            <AnimatePresence initial={false}>
-              {sorted.map((filter, i) => (
-                <div key={filter.id}>
-                  {i > 0 && (
-                    <div className="mx-4 h-px bg-[rgb(var(--color-fill)/0.08)]" />
-                  )}
-                  <FilterRow
-                    filter={filter}
-                    onToggle={handleToggle}
-                    onEdit={handleEdit}
-                    onDelete={handleDelete}
-                  />
-                </div>
+          <>
+            <div className="px-4 pb-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-tertiary))]">
+                {tApp('filtersCustomSection')}
+              </p>
+            </div>
+            <div className="mx-4 rounded-ios-2xl bg-[rgb(var(--color-bg-secondary))] overflow-hidden">
+              <AnimatePresence initial={false}>
+                {sorted.map((filter, i) => (
+                  <div key={filter.id}>
+                    {i > 0 && (
+                      <div className="mx-4 h-px bg-[rgb(var(--color-fill)/0.08)]" />
+                    )}
+                    <FilterRow
+                      filter={filter}
+                      onToggle={handleToggle}
+                      onEdit={handleEdit}
+                      onDelete={handleDelete}
+                    />
+                  </div>
+                ))}
+              </AnimatePresence>
+            </div>
+          </>
+        )}
+
+        {/* System rules */}
+        {!loading && systemRuleCount > 0 && (
+          <div className="px-4 pt-6">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-tertiary))]">
+                  {tApp('filtersSystemSection')}
+                </p>
+                <p className="mt-1 max-w-[38rem] text-[13px] leading-relaxed text-[rgb(var(--color-label-secondary))]">
+                  {tApp('filtersSystemHint')}
+                </p>
+              </div>
+              <span className="shrink-0 rounded-full bg-[rgb(var(--color-fill)/0.10)] px-2.5 py-1 text-[11px] font-medium text-[rgb(var(--color-label-secondary))]">
+                {systemRuleCount}
+              </span>
+            </div>
+
+            <div className="mt-3 space-y-3">
+              {SYSTEM_FILTER_GROUPS.map((group) => (
+                <SystemRuleGroupCard key={group.id} group={group} />
               ))}
-            </AnimatePresence>
+            </div>
           </div>
         )}
 
         {/* How it works */}
         <div className="mx-4 mt-6 rounded-ios-2xl bg-[rgb(var(--color-bg-secondary))] px-4 py-4">
           <p className="text-[13px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))] mb-3">
-            How it works
+            {tApp('filtersHowItWorksTitle')}
           </p>
           <div className="space-y-3">
             {[
               {
                 icon: '🔍',
-                title: 'Text matching',
-                body: 'Instant, always active. Checks every field — note body, title, poll options, author name, bio, NIP-05 identifier, and hashtags.',
+                title: tApp('filtersHowItWorksTextTitle'),
+                body:  tApp('filtersHowItWorksTextBody'),
               },
               {
                 icon: '🧠',
-                title: 'Semantic matching',
-                body: 'When enabled, uses an on-device AI model (all-MiniLM-L6-v2) to catch related concepts. "violence" also matches "assault", "shooting", "conflict". Results are cached — each post is embedded once.',
+                title: tApp('filtersHowItWorksSemanticTitle'),
+                body:  tApp('filtersHowItWorksSemanticBody'),
               },
               {
                 icon: '⚠️',
-                title: 'Warn vs. Hide',
-                body: '"Warn" collapses the post with a label; tap to reveal. "Hide" removes it from the feed entirely.',
+                title: tApp('filtersHowItWorksWarnTitle'),
+                body:  tApp('filtersHowItWorksWarnBody'),
               },
               {
                 icon: '⏱️',
-                title: 'Expiry',
-                body: 'Set filters to auto-disable after 24 h, 7 days, or 30 days for temporary topics.',
+                title: tApp('filtersHowItWorksExpiryTitle'),
+                body:  tApp('filtersHowItWorksExpiryBody'),
               },
             ].map(item => (
               <div key={item.title} className="flex gap-3">

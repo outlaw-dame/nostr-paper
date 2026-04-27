@@ -4,6 +4,7 @@ import type {
   SyndicationAttachment,
   SyndicationEntry,
   SyndicationFeed,
+  SyndicationPodcastMeta,
 } from '@/lib/syndication/types'
 
 type DeepPartial<T> =
@@ -12,6 +13,9 @@ type DeepPartial<T> =
     : T extends object
       ? { [K in keyof T]?: DeepPartial<T[K]> }
       : T
+
+type PodcastValue = NonNullable<SyndicationPodcastMeta['value']>
+type PodcastValueRecipient = PodcastValue['recipients'][number]
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -69,6 +73,306 @@ function toPositiveNumber(value: unknown): number | undefined {
 
 function uniq<T>(values: T[]): T[] {
   return [...new Set(values)]
+}
+
+function hasOwnProperties(value: Record<string, unknown>): boolean {
+  return Object.keys(value).length > 0
+}
+
+function toPositiveFloat(value: unknown): number | undefined {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value > 0 ? value : undefined
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Number.parseFloat(value)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+  }
+
+  return undefined
+}
+
+function toBoolean(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value !== 'string') return undefined
+
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return undefined
+  if (['true', 'yes', '1'].includes(normalized)) return true
+  if (['false', 'no', '0'].includes(normalized)) return false
+  return undefined
+}
+
+function toDurationSeconds(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0 ? value : undefined
+  if (typeof value !== 'string') return undefined
+
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+
+  const direct = Number.parseFloat(trimmed)
+  if (Number.isFinite(direct) && direct > 0) return direct
+
+  const hhmmss = trimmed.split(':').map((part) => Number.parseFloat(part))
+  if (hhmmss.some((part) => !Number.isFinite(part) || part < 0)) return undefined
+  if (hhmmss.length === 3) {
+    const [hours, minutes, seconds] = hhmmss
+    if (hours === undefined || minutes === undefined || seconds === undefined) return undefined
+    return hours * 3600 + minutes * 60 + seconds
+  }
+  if (hhmmss.length === 2) {
+    const [minutes, seconds] = hhmmss
+    if (minutes === undefined || seconds === undefined) return undefined
+    return minutes * 60 + seconds
+  }
+
+  return undefined
+}
+
+function getCaseInsensitiveValue(record: Record<string, unknown>, key: string): unknown {
+  const direct = record[key]
+  if (direct !== undefined) return direct
+
+  const lowered = key.toLowerCase()
+  for (const [entryKey, entryValue] of Object.entries(record)) {
+    if (entryKey.toLowerCase() === lowered) return entryValue
+  }
+
+  return undefined
+}
+
+function toPascalCase(value: string): string {
+  return value.slice(0, 1).toUpperCase() + value.slice(1)
+}
+
+function getPodcastValue(value: unknown, key: string): unknown {
+  if (!isRecord(value)) return undefined
+
+  const namespacedKey = `podcast:${key}`
+  const underscoredKey = `podcast_${key}`
+  const camelNamespacedKey = `podcast${toPascalCase(key)}`
+
+  const nested = getCaseInsensitiveValue(value, 'podcast')
+  if (isRecord(nested)) {
+    const nestedValue = getCaseInsensitiveValue(nested, key)
+    if (nestedValue !== undefined) return nestedValue
+  }
+
+  return (
+    getCaseInsensitiveValue(value, key)
+    ?? getCaseInsensitiveValue(value, namespacedKey)
+    ?? getCaseInsensitiveValue(value, underscoredKey)
+    ?? getCaseInsensitiveValue(value, camelNamespacedKey)
+  )
+}
+
+function normalizePodcastFunding(value: unknown): SyndicationPodcastMeta['funding'] {
+  const entries = Array.isArray(value) ? value : value === undefined ? [] : [value]
+  const funding = entries.flatMap((entry) => {
+    if (typeof entry === 'string') {
+      const url = asUrl(entry)
+      return url ? [{ url }] : []
+    }
+
+    if (!isRecord(entry)) return []
+    const url = asUrl(entry.url)
+    if (!url) return []
+
+    return [compactRecord({
+      url,
+      value: asText(entry.value),
+    }) as SyndicationPodcastMeta['funding'][number]]
+  })
+
+  return funding
+}
+
+function normalizePodcastPersons(value: unknown): SyndicationPodcastMeta['persons'] {
+  const entries = Array.isArray(value) ? value : value === undefined ? [] : [value]
+
+  return entries.flatMap((entry) => {
+    if (typeof entry === 'string') {
+      const name = asText(entry)
+      return name ? [{ name }] : []
+    }
+
+    if (!isRecord(entry)) return []
+
+    const name = asText(entry.name)
+    if (!name) return []
+
+    return [compactRecord({
+      name,
+      role: asText(entry.role),
+      group: asText(entry.group),
+      href: asUrl(entry.href),
+      image: asUrl(entry.img ?? entry.image),
+    }) as SyndicationPodcastMeta['persons'][number]]
+  })
+}
+
+function normalizePodcastTranscripts(value: unknown): SyndicationPodcastMeta['transcripts'] {
+  const entries = Array.isArray(value) ? value : value === undefined ? [] : [value]
+
+  return entries.flatMap((entry) => {
+    if (!isRecord(entry)) return []
+    const url = asUrl(entry.url)
+    if (!url) return []
+
+    return [compactRecord({
+      url,
+      type: asString(entry.type),
+      language: asText(entry.language),
+      rel: asText(entry.rel),
+    }) as SyndicationPodcastMeta['transcripts'][number]]
+  })
+}
+
+function normalizePodcastChapters(value: unknown): SyndicationPodcastMeta['chapters'] {
+  if (!isRecord(value)) return undefined
+  const url = asUrl(value.url)
+  if (!url) return undefined
+
+  return compactRecord({
+    url,
+    type: asString(value.type),
+  }) as SyndicationPodcastMeta['chapters']
+}
+
+function normalizePodcastSoundbites(value: unknown): SyndicationPodcastMeta['soundbites'] {
+  const entries = Array.isArray(value) ? value : value === undefined ? [] : [value]
+
+  return entries.flatMap((entry) => {
+    if (!isRecord(entry)) return []
+    const startTime = toDurationSeconds(entry.startTime ?? entry.start)
+    const duration = toDurationSeconds(entry.duration)
+    if (!startTime || !duration) return []
+
+    return [compactRecord({
+      startTime,
+      duration,
+      title: asText(entry.title),
+    }) as SyndicationPodcastMeta['soundbites'][number]]
+  })
+}
+
+function normalizePodcastSocial(value: unknown): SyndicationPodcastMeta['social'] {
+  const entries = Array.isArray(value) ? value : value === undefined ? [] : [value]
+
+  return entries.flatMap((entry) => {
+    if (!isRecord(entry)) return []
+    const url = asUrl(entry.url)
+    const protocol = asText(entry.protocol)
+    const accountId = asText(entry.accountId)
+    if (!url && !protocol && !accountId) return []
+
+    return [compactRecord({
+      url,
+      protocol,
+      accountId,
+      priority: toPositiveNumber(entry.priority),
+    }) as SyndicationPodcastMeta['social'][number]]
+  })
+}
+
+function normalizePodcastValueRecipients(value: unknown): PodcastValue['recipients'] {
+  if (!Array.isArray(value)) return []
+
+  return value.flatMap((entry) => {
+    if (!isRecord(entry)) return []
+    const address = asText(entry.address)
+    if (!address) return []
+
+    return [compactRecord({
+      address,
+      name: asText(entry.name),
+      type: asText(entry.type),
+      split: toPositiveFloat(entry.split),
+      customKey: asText(entry.customKey),
+      customValue: asText(entry.customValue),
+    }) as PodcastValueRecipient]
+  })
+}
+
+function normalizePodcastValue(value: unknown): SyndicationPodcastMeta['value'] {
+  if (!isRecord(value)) return undefined
+
+  const recipients = normalizePodcastValueRecipients(value.recipients ?? value.valueRecipient)
+  const candidate = compactRecord({
+    type: asText(value.type),
+    method: asText(value.method),
+    currency: asText(value.currency),
+    suggested: toPositiveFloat(value.suggested),
+    ...(recipients.length > 0 ? { recipients } : {}),
+  })
+
+  if (!hasOwnProperties(candidate)) return undefined
+
+  return {
+    recipients,
+    ...(candidate.type ? { type: candidate.type as string } : {}),
+    ...(candidate.method ? { method: candidate.method as string } : {}),
+    ...(candidate.currency ? { currency: candidate.currency as string } : {}),
+    ...(candidate.suggested ? { suggested: candidate.suggested as number } : {}),
+  }
+}
+
+function normalizePodcastMeta(value: unknown): SyndicationPodcastMeta | undefined {
+  if (!isRecord(value)) return undefined
+
+  const funding = normalizePodcastFunding(getPodcastValue(value, 'funding'))
+  const persons = normalizePodcastPersons(getPodcastValue(value, 'person'))
+  const transcripts = normalizePodcastTranscripts(getPodcastValue(value, 'transcript'))
+  const soundbites = normalizePodcastSoundbites(getPodcastValue(value, 'soundbite'))
+  const social = normalizePodcastSocial(getPodcastValue(value, 'socialInteract'))
+  const valueSplit = normalizePodcastValue(getPodcastValue(value, 'value'))
+
+  const candidate = compactRecord({
+    guid: asText(getPodcastValue(value, 'guid')),
+    medium: asText(getPodcastValue(value, 'medium')),
+    episode: toPositiveNumber(getPodcastValue(value, 'episode')),
+    season: toPositiveNumber(getPodcastValue(value, 'season')),
+    episodeType: asText(getPodcastValue(value, 'episodeType')),
+    image: asUrl(getPodcastValue(value, 'image')),
+    trailer: toBoolean(getPodcastValue(value, 'trailer')),
+    explicit: toBoolean(getPodcastValue(value, 'explicit')),
+    complete: toBoolean(getPodcastValue(value, 'complete')),
+    block: toBoolean(getPodcastValue(value, 'block')),
+    locked: toBoolean(getPodcastValue(value, 'locked')),
+    chapters: normalizePodcastChapters(getPodcastValue(value, 'chapters')),
+    value: valueSplit,
+  })
+
+  const hasCollections =
+    funding.length > 0 ||
+    persons.length > 0 ||
+    transcripts.length > 0 ||
+    soundbites.length > 0 ||
+    social.length > 0
+
+  if (!hasOwnProperties(candidate) && !hasCollections) return undefined
+
+  return {
+    funding,
+    persons,
+    transcripts,
+    soundbites,
+    social,
+    ...(candidate.guid ? { guid: candidate.guid as string } : {}),
+    ...(candidate.medium ? { medium: candidate.medium as string } : {}),
+    ...(candidate.episode ? { episode: candidate.episode as number } : {}),
+    ...(candidate.season ? { season: candidate.season as number } : {}),
+    ...(candidate.episodeType ? { episodeType: candidate.episodeType as string } : {}),
+    ...(candidate.image ? { image: candidate.image as string } : {}),
+    ...(candidate.trailer !== undefined ? { trailer: candidate.trailer as boolean } : {}),
+    ...(candidate.explicit !== undefined ? { explicit: candidate.explicit as boolean } : {}),
+    ...(candidate.complete !== undefined ? { complete: candidate.complete as boolean } : {}),
+    ...(candidate.block !== undefined ? { block: candidate.block as boolean } : {}),
+    ...(candidate.locked !== undefined ? { locked: candidate.locked as boolean } : {}),
+    ...(candidate.chapters ? { chapters: candidate.chapters as NonNullable<SyndicationPodcastMeta['chapters']> } : {}),
+    ...(candidate.value ? { value: candidate.value as NonNullable<SyndicationPodcastMeta['value']> } : {}),
+  }
 }
 
 function normalizeAuthors(value: unknown): string[] {
@@ -275,6 +579,7 @@ function normalizeJsonEntry(item: DeepPartial<Json.Item<string>>): SyndicationEn
     authors: normalizeAuthors(item.authors),
     tags: normalizeCategories(item.tags),
     attachments: normalizeJsonAttachments(item.attachments),
+    podcast: normalizePodcastMeta(item),
   }) as SyndicationEntry
 }
 
@@ -304,6 +609,7 @@ function normalizeRssEntry(item: DeepPartial<Rss.Item<string>>): SyndicationEntr
       ...normalizeRssEnclosures(item.enclosures),
       ...normalizeMediaAttachments(item.media),
     ]),
+    podcast: normalizePodcastMeta(item),
   }) as SyndicationEntry
 }
 
@@ -326,6 +632,7 @@ function normalizeAtomEntry(item: DeepPartial<Atom.Entry<string>>): SyndicationE
       ...normalizeAtomAttachments(item.links),
       ...normalizeMediaAttachments(item.media),
     ]),
+    podcast: normalizePodcastMeta(item),
   }) as SyndicationEntry
 }
 
@@ -345,6 +652,7 @@ function normalizeRdfEntry(item: DeepPartial<Rdf.Item<string>>): SyndicationEntr
     authors: normalizeAuthors(item.dc?.creators),
     tags: normalizeCategories(item.media?.keywords),
     attachments: normalizeMediaAttachments(item.media),
+    podcast: normalizePodcastMeta(item),
   }) as SyndicationEntry
 }
 
@@ -366,6 +674,7 @@ function normalizeJsonFeed(feed: DeepPartial<Json.Feed<string>>, sourceUrl?: str
     items: (feed.items ?? [])
       .map(normalizeJsonEntry)
       .filter((item): item is SyndicationEntry => item !== null),
+    podcast: normalizePodcastMeta(feed),
   }) as SyndicationFeed
 }
 
@@ -391,6 +700,7 @@ function normalizeRssFeed(feed: DeepPartial<Rss.Feed<string>>, sourceUrl?: strin
     items: (feed.items ?? [])
       .map(normalizeRssEntry)
       .filter((item): item is SyndicationEntry => item !== null),
+    podcast: normalizePodcastMeta(feed),
   }) as SyndicationFeed
 }
 
@@ -415,6 +725,7 @@ function normalizeAtomFeed(feed: DeepPartial<Atom.Feed<string>>, sourceUrl?: str
     items: (feed.entries ?? [])
       .map(normalizeAtomEntry)
       .filter((item): item is SyndicationEntry => item !== null),
+    podcast: normalizePodcastMeta(feed),
   }) as SyndicationFeed
 }
 
@@ -434,7 +745,53 @@ function normalizeRdfFeed(feed: DeepPartial<Rdf.Feed<string>>, sourceUrl?: strin
     items: (feed.items ?? [])
       .map(normalizeRdfEntry)
       .filter((item): item is SyndicationEntry => item !== null),
+    podcast: normalizePodcastMeta(feed),
   }) as SyndicationFeed
+}
+
+function parseJsonRecord(value: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (!isRecord(parsed)) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function mergeJsonPodcastMetaFromRaw(
+  feed: SyndicationFeed,
+  rawJson: Record<string, unknown> | null,
+): SyndicationFeed {
+  if (!rawJson) return feed
+
+  const rawFeedPodcast = normalizePodcastMeta(rawJson)
+  const rawItems = Array.isArray(rawJson.items) ? rawJson.items : []
+
+  let itemsChanged = false
+  const mergedItems = feed.items.map((item, index) => {
+    if (item.podcast) return item
+
+    const rawItem = rawItems[index]
+    const rawPodcast = normalizePodcastMeta(rawItem)
+    if (!rawPodcast) return item
+
+    itemsChanged = true
+    return {
+      ...item,
+      podcast: rawPodcast,
+    }
+  })
+
+  if (!rawFeedPodcast && !itemsChanged) {
+    return feed
+  }
+
+  return {
+    ...feed,
+    ...(feed.podcast ? {} : rawFeedPodcast ? { podcast: rawFeedPodcast } : {}),
+    items: itemsChanged ? mergedItems : feed.items,
+  }
 }
 
 export function looksLikeFeedUrl(url: string): boolean {
@@ -479,7 +836,12 @@ export async function parseSyndicationFeedDocument(
 
     switch (parsed.format) {
       case 'json':
-        return normalizeJsonFeed(parsed.feed, sourceUrl)
+        {
+          const normalized = normalizeJsonFeed(parsed.feed, sourceUrl)
+          if (!normalized) return null
+          const rawJson = parseJsonRecord(trimmed)
+          return mergeJsonPodcastMetaFromRaw(normalized, rawJson)
+        }
       case 'rss':
         return normalizeRssFeed(parsed.feed, sourceUrl)
       case 'atom':

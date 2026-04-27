@@ -55,7 +55,17 @@ export interface ParsedSearchQuery {
 function normalizeRelaySearchQuery(raw: string): string | null {
   if (typeof raw !== 'string') return null
   const query = raw.trim().replace(/\s+/g, ' ').slice(0, MAX_SEARCH_QUERY_CHARS)
-  return query.length > 0 ? query : null
+  if (!query) return null
+  // Strip leading # from individual tokens so "#NFL" → "NFL" on relays.
+  // NIP-50 relays that interpret "#word" as a hashtag-only tag filter would
+  // otherwise miss posts that contain "NFL" as plain text; stripping # lets
+  // the relay do full-text search, which finds both "#NFL" and "NFL" posts.
+  const normalized = query
+    .split(' ')
+    .map((token) => token.replace(/^#+/, ''))
+    .filter(Boolean)
+    .join(' ')
+  return normalized || null
 }
 
 function tokenizeLocalSearchInput(input: string): SearchToken[] {
@@ -197,6 +207,70 @@ export interface RelaySearchOptions {
 
 // Maximum time to wait for relay search results before returning whatever arrived.
 const RELAY_SEARCH_TIMEOUT_MS = 7_000
+const RELAY_SEARCH_MAX_ATTEMPTS = 3
+const RELAY_SEARCH_BACKOFF_BASE_MS = 300
+const RELAY_SEARCH_BACKOFF_MAX_MS = 1_500
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError'
+}
+
+async function waitWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0) return
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+
+  await new Promise<void>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+
+    const onAbort = () => {
+      clearTimeout(timeoutId)
+      signal?.removeEventListener('abort', onAbort)
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+async function fetchRelayEventsWithTimeout(
+  filter: NostrFilter,
+  relaySet: NDKRelaySet,
+  signal?: AbortSignal,
+): Promise<Set<unknown>> {
+  if (signal?.aborted) return new Set()
+
+  let timeoutId: ReturnType<typeof setTimeout> | null = null
+  let abortHandler: (() => void) | null = null
+
+  const abortPromise = new Promise<Set<never>>((resolve) => {
+    abortHandler = () => resolve(new Set())
+    signal?.addEventListener('abort', abortHandler, { once: true })
+  })
+  const timeoutPromise = new Promise<Set<never>>((resolve) => {
+    timeoutId = setTimeout(() => resolve(new Set()), RELAY_SEARCH_TIMEOUT_MS)
+  })
+
+  let ndk
+  try {
+    ndk = getNDK()
+  } catch {
+    return new Set()
+  }
+
+  try {
+    return await Promise.race([
+      ndk.fetchEvents(filter, undefined, relaySet),
+      abortPromise,
+      timeoutPromise,
+    ])
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+    if (abortHandler) signal?.removeEventListener('abort', abortHandler)
+  }
+}
 
 /**
  * Pre-warm WebSocket connections to NIP-50 search relays so the first
@@ -244,31 +318,46 @@ export async function searchRelays(
 
   const seen = new Set<string>()
   const results: NostrEvent[] = []
+  let lastError: unknown = null
 
-  try {
-    const abortPromise = new Promise<Set<never>>((resolve) => {
-      opts.signal?.addEventListener('abort', () => resolve(new Set()), { once: true })
-    })
-    const timeoutPromise = new Promise<Set<never>>((resolve) => {
-      setTimeout(() => resolve(new Set()), RELAY_SEARCH_TIMEOUT_MS)
-    })
+  for (let attempt = 0; attempt < RELAY_SEARCH_MAX_ATTEMPTS; attempt += 1) {
+    if (opts.signal?.aborted) break
 
-    const ndkEvents = await Promise.race([
-      ndk.fetchEvents(filter, undefined, searchRelaySet),
-      abortPromise,
-      timeoutPromise,
-    ])
+    try {
+      const ndkEvents = await fetchRelayEventsWithTimeout(filter, searchRelaySet, opts.signal)
 
-    for (const ndkEvent of ndkEvents) {
-      const raw = ndkEvent.rawEvent() as NostrEvent
-      if (!raw.id || seen.has(raw.id) || !isValidEvent(raw)) continue
+      for (const ndkEvent of ndkEvents) {
+        const raw = (ndkEvent as { rawEvent: () => NostrEvent }).rawEvent()
+        if (!raw.id || seen.has(raw.id) || !isValidEvent(raw)) continue
 
-      seen.add(raw.id)
-      results.push(raw)
+        seen.add(raw.id)
+        results.push(raw)
+      }
+
+      if (results.length > 0) break
+    } catch (error) {
+      if (isAbortError(error)) break
+      lastError = error
     }
-  } catch (err) {
+
+    const isLastAttempt = attempt >= RELAY_SEARCH_MAX_ATTEMPTS - 1
+    if (isLastAttempt) break
+
+    const backoffMs = Math.min(
+      RELAY_SEARCH_BACKOFF_MAX_MS,
+      RELAY_SEARCH_BACKOFF_BASE_MS * (2 ** attempt),
+    )
+
+    try {
+      await waitWithAbort(backoffMs, opts.signal)
+    } catch (error) {
+      if (isAbortError(error)) break
+    }
+  }
+
+  if (lastError && results.length === 0) {
     // Network errors, relay rejections, timeout — non-fatal
-    console.warn('[search] Relay search error:', err)
+    console.warn('[search] Relay search error after retries:', lastError)
   }
 
   return results

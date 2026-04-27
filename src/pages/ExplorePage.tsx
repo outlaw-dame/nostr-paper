@@ -2,7 +2,7 @@
  * ExplorePage
  *
  * Combined explore + search screen. When idle (no query typed), shows trending
- * topics from the local cache and recently-active accounts. When the user types,
+ * topics from the local cache plus account discovery lanes. When the user types,
  * the same inline search results used by SearchPage appear in place.
  *
  * The FeedPage search button navigates here so tapping it lands on content
@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'motion/react'
+import { FilteredGate } from '@/components/filters/FilteredGate'
 import { SearchBar } from '@/components/search/SearchBar'
 import { FeedSkeleton } from '@/components/feed/FeedSkeleton'
 import { AuthorRow } from '@/components/profile/AuthorRow'
@@ -27,10 +28,13 @@ import { useModerationDocuments } from '@/hooks/useModeration'
 import { useSearch } from '@/hooks/useSearch'
 import { useProfile } from '@/hooks/useProfile'
 import { useSelfThreadIndex } from '@/hooks/useSelfThreadIndex'
+import { mergeResults, useEventFilterCheck, useProfileFilterCheck, useSemanticFiltering } from '@/hooks/useKeywordFilters'
 import { useMuteList } from '@/hooks/useMuteList'
 import { useHideNsfwTaggedPosts } from '@/hooks/useHideNsfwTaggedPosts'
 import { useTrendingTopics } from '@/hooks/useTrendingTopics'
 import { usePopularProfiles } from '@/hooks/usePopularProfiles'
+import { useSuggestedProfiles } from '@/hooks/useSuggestedProfiles'
+import { useSemanticFollowPacks } from '@/hooks/useSemanticFollowPacks'
 import {
   getExploreFollowPackLabel,
   getExploreFollowPackSummary,
@@ -49,9 +53,12 @@ import { filterNsfwTaggedEvents } from '@/lib/moderation/nsfwTags'
 import { formatNip05Identifier } from '@/lib/nostr/nip05'
 import { parsePollEvent } from '@/lib/nostr/polls'
 import { parseSearchQuery, warmSearchRelays } from '@/lib/nostr/search'
+import { extractEventHashtags } from '@/lib/feed/tagTimeline'
 import { parseCommentEvent, parseThreadEvent } from '@/lib/nostr/thread'
 import { sanitizeText } from '@/lib/security/sanitize'
 import { parseVideoEvent } from '@/lib/nostr/video'
+import { tApp } from '@/lib/i18n/app'
+import type { FilterCheckResult } from '@/lib/filters/types'
 import type { NostrEvent, Profile } from '@/types'
 import { Kind } from '@/types'
 import type { RecentHashtagStat } from '@/lib/db/nostr'
@@ -91,11 +98,20 @@ export default function ExplorePage() {
     relayError,
     semanticError,
   } = useSearch({ kinds: SEARCHABLE_KINDS, localLimit: 40, relayLimit: 40 })
+  const checkEvent = useEventFilterCheck()
+  const checkProfile = useProfileFilterCheck()
 
-  const { isMuted, loading: muteListLoading } = useMuteList()
+  const {
+    isMuted,
+    mutedWords,
+    mutedHashtags,
+    loading: muteListLoading,
+  } = useMuteList()
   const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
-  const { topics, loading: topicsLoading } = useTrendingTopics(24)
+  const [topicsWindow, setTopicsWindow] = useState<'today' | 'week'>('week')
+  const { topics, loading: topicsLoading } = useTrendingTopics(24, topicsWindow)
   const { packs: followPackCandidates, loading: followPackLoading } = useExploreFollowPacks(18)
+  const { profiles: suggestedProfiles, loading: suggestedLoading } = useSuggestedProfiles(currentUser?.pubkey, 8)
   const { profiles: popularProfiles, loading: popularLoading } = usePopularProfiles(8)
 
   useEffect(() => {
@@ -163,19 +179,44 @@ export default function ExplorePage() {
     loading: followPackModerationLoading,
   } = useModerationDocuments(followPackModerationDocuments)
 
-  const visibleEvents = useMemo(() => {
-    const filtered = filterNsfwTaggedEvents(
-      events.filter(e => !isMuted(e.pubkey) && (!eventModerationIds.has(e.id) || allowedEventIds.has(e.id))),
+  const visibleEvents = useMemo(
+    () => filterNsfwTaggedEvents(
+      events.filter((event) => {
+        if (isMuted(event.pubkey)) return false
+        if (eventModerationIds.has(event.id) && !allowedEventIds.has(event.id)) return false
+
+        if (mutedWords.size > 0) {
+          const lower = event.content.toLowerCase()
+          for (const word of mutedWords) {
+            if (lower.includes(word)) return false
+          }
+        }
+
+        if (mutedHashtags.size > 0) {
+          const tags = extractEventHashtags(event)
+          if (tags.some((tag) => mutedHashtags.has(tag))) return false
+        }
+
+        return true
+      }),
       hideNsfwTaggedPosts,
-    )
-    return [...filtered].sort((a, b) => {
-      if (b.created_at !== a.created_at) return b.created_at - a.created_at
-      return b.id.localeCompare(a.id)
-    })
-  }, [allowedEventIds, eventModerationIds, events, hideNsfwTaggedPosts, isMuted])
+    ),
+    [allowedEventIds, eventModerationIds, events, hideNsfwTaggedPosts, isMuted, mutedWords, mutedHashtags],
+  )
+  const semanticFilterResults = useSemanticFiltering(visibleEvents)
   const visibleProfiles = useMemo(
     () => profiles.filter(p => !isMuted(p.pubkey) && (!profileModerationIds.has(p.pubkey) || allowedProfileIds.has(p.pubkey))),
     [allowedProfileIds, profileModerationIds, profiles, isMuted],
+  )
+  const profileFilterResults = useMemo(
+    () => {
+      const next = new Map<string, FilterCheckResult>()
+      for (const profile of visibleProfiles) {
+        next.set(profile.pubkey, checkProfile(profile))
+      }
+      return next
+    },
+    [checkProfile, visibleProfiles],
   )
   const visibleFollowPacks = useMemo(
     () => rankExploreFollowPacks(
@@ -191,10 +232,14 @@ export default function ExplorePage() {
     ),
     [allowedFollowPackIds, currentUser?.pubkey, followPackCandidates, followPackModerationIds, followedPubkeys, isMuted],
   )
+  const {
+    packs: semanticFollowPacks,
+    semanticApplied: followPackSemanticApplied,
+  } = useSemanticFollowPacks(visibleFollowPacks, currentUser?.pubkey)
 
   const handleFollowPack = useCallback(async (pack: RankedExploreFollowPack) => {
     if (!currentUser) {
-      throw new Error('Connect a signer to follow pack profiles together.')
+      throw new Error(tApp('explorePackReasonConnectSigner'))
     }
     if (pack.missingProfiles.length === 0) return
 
@@ -228,6 +273,9 @@ export default function ExplorePage() {
   const hasResults = visibleEvents.length > 0 || visibleProfiles.length > 0
   const showSkeleton = fetchLoading && !hasResults && !idle
   const empty = !fetchLoading && query.length > 0 && !hasResults
+  const localResultText = hasResults
+    ? tApp('exploreStatusLocalResultsCount', { count: visibleProfiles.length })
+    : tApp('exploreStatusNoLocalResults')
 
   return (
     <div className="min-h-dvh bg-[rgb(var(--color-bg))]">
@@ -239,16 +287,16 @@ export default function ExplorePage() {
             type="button"
             onClick={() => navigate(-1)}
             className="app-panel-muted h-10 w-10 rounded-full text-[rgb(var(--color-label))] flex items-center justify-center active:opacity-80"
-            aria-label="Go back"
+            aria-label={tApp('exploreGoBack')}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
               <path d="M9.5 3.25L4.75 8l4.75 4.75" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
           <div className="min-w-0 flex-1">
-            <p className="section-kicker">Explore</p>
+            <p className="section-kicker">{tApp('exploreKicker')}</p>
             <h1 className="mt-1 text-[28px] font-semibold leading-[1.02] tracking-[-0.035em] text-[rgb(var(--color-label))]">
-              Discover
+              {tApp('exploreTitle')}
             </h1>
           </div>
         </div>
@@ -265,24 +313,29 @@ export default function ExplorePage() {
         {query.length > 0 && (
           <p className="mt-2 text-[13px] text-[rgb(var(--color-label-secondary))]">
             {localLoading
-              ? 'Searching local cache…'
+              ? tApp('exploreStatusSearchingLocal')
               : relayLoading
-                ? `${hasResults ? `${visibleProfiles.length} local results` : 'No local results'} — fetching from relays…`
-                : `Showing ${visibleProfiles.length} people and ${visibleEvents.length} posts.`}
+                ? tApp('exploreStatusLocalResultsFetchingRelays', {
+                  resultsText: localResultText,
+                })
+                : tApp('exploreStatusShowingResults', {
+                  people: visibleProfiles.length,
+                  posts: visibleEvents.length,
+                })}
           </p>
         )}
 
         {unsupportedKeys.length > 0 && (
           <p className="mt-2 text-[13px] text-[rgb(var(--color-label-secondary))]">
-            Relay-only filters in use: {unsupportedKeys.join(', ')}.
+            {tApp('exploreUnsupportedFilters', { filters: unsupportedKeys.join(', ') })}
           </p>
         )}
 
         {relayError && (
-          <p className="mt-2 text-[13px] text-[#C65D2E]">Relay search degraded: {relayError}</p>
+          <p className="mt-2 text-[13px] text-[#C65D2E]">{tApp('exploreRelayDegraded', { error: relayError })}</p>
         )}
         {semanticError && (
-          <p className="mt-2 text-[13px] text-[#C65D2E]">Semantic reranking degraded: {semanticError}</p>
+          <p className="mt-2 text-[13px] text-[#C65D2E]">{tApp('exploreSemanticDegraded', { error: semanticError })}</p>
         )}
       </div>
 
@@ -292,10 +345,15 @@ export default function ExplorePage() {
           <ExploreContent
             topics={topics}
             topicsLoading={topicsLoading}
-            followPacks={visibleFollowPacks}
+            topicsWindow={topicsWindow}
+            onTopicsWindowChange={setTopicsWindow}
+            followPacks={semanticFollowPacks}
+            followPackSemanticApplied={followPackSemanticApplied}
             followPacksLoading={followPackLoading || followPackModerationLoading}
             canBulkFollow={Boolean(currentUser)}
             onFollowPack={handleFollowPack}
+            suggestedProfiles={suggestedProfiles}
+            suggestedLoading={suggestedLoading}
             popularProfiles={popularProfiles}
             popularLoading={popularLoading}
           />
@@ -311,20 +369,31 @@ export default function ExplorePage() {
           <div className="space-y-5 mt-4">
             {visibleProfiles.length > 0 && (
               <section>
-                <h2 className="section-kicker px-1 mb-3">People</h2>
+                <h2 className="section-kicker px-1 mb-3">{tApp('explorePeopleSection')}</h2>
                 <div className="space-y-3">
                   {visibleProfiles.map(profile => (
-                    <ProfileResult key={profile.pubkey} profile={profile} />
+                    <FilteredGate
+                      key={profile.pubkey}
+                      result={profileFilterResults.get(profile.pubkey) ?? { action: null, matches: [] }}
+                      eventId={`profile:${profile.pubkey}`}
+                    >
+                      <ProfileResult profile={profile} />
+                    </FilteredGate>
                   ))}
                 </div>
               </section>
             )}
             {visibleEvents.length > 0 && (
               <section>
-                <h2 className="section-kicker px-1 mb-3">Posts</h2>
+                <h2 className="section-kicker px-1 mb-3">{tApp('explorePostsSection')}</h2>
                 <div className="space-y-3">
                   {visibleEvents.map(event => (
-                    <EventResult key={event.id} event={event} />
+                    <EventResult
+                      key={event.id}
+                      event={event}
+                      checkEvent={checkEvent}
+                      semanticResult={semanticFilterResults.get(event.id) ?? { action: null, matches: [] }}
+                    />
                   ))}
                 </div>
               </section>
@@ -341,19 +410,29 @@ export default function ExplorePage() {
 function ExploreContent({
   topics,
   topicsLoading,
+  topicsWindow,
+  onTopicsWindowChange,
   followPacks,
+  followPackSemanticApplied,
   followPacksLoading,
   canBulkFollow,
   onFollowPack,
+  suggestedProfiles,
+  suggestedLoading,
   popularProfiles,
   popularLoading,
 }: {
   topics: RecentHashtagStat[]
   topicsLoading: boolean
+  topicsWindow: 'today' | 'week'
+  onTopicsWindowChange: (w: 'today' | 'week') => void
   followPacks: RankedExploreFollowPack[]
+  followPackSemanticApplied: boolean
   followPacksLoading: boolean
   canBulkFollow: boolean
   onFollowPack: (pack: RankedExploreFollowPack) => Promise<void>
+  suggestedProfiles: Array<{ profile: Profile; reason: string }>
+  suggestedLoading: boolean
   popularProfiles: Profile[]
   popularLoading: boolean
 }) {
@@ -362,7 +441,31 @@ function ExploreContent({
 
       {/* Trending topics */}
       <section>
-        <h2 className="section-kicker px-1 mb-3">Trending Topics</h2>
+        <div className="flex items-center justify-between px-1 mb-3">
+          <div>
+            <h2 className="section-kicker">{tApp('exploreTrendingTopics')}</h2>
+            <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">
+              {tApp('exploreTrendingTopicsHint')}
+            </p>
+          </div>
+          <div className="flex items-center gap-1 rounded-full bg-[rgb(var(--color-fill)/0.10)] p-0.5">
+            {(['today', 'week'] as const).map((w) => (
+              <button
+                key={w}
+                onClick={() => onTopicsWindowChange(w)}
+                className={`
+                  px-3 py-1 rounded-full text-[12px] font-medium transition-all
+                  ${topicsWindow === w
+                    ? 'bg-[rgb(var(--color-bg))] text-[rgb(var(--color-label))] shadow-sm'
+                    : 'text-[rgb(var(--color-label-secondary))]'
+                  }
+                `}
+              >
+                {w === 'today' ? tApp('exploreWindowToday') : tApp('exploreWindowWeek')}
+              </button>
+            ))}
+          </div>
+        </div>
         {topicsLoading ? (
           <div className="flex flex-wrap gap-2">
             {Array.from({ length: 12 }).map((_, i) => (
@@ -402,13 +505,20 @@ function ExploreContent({
           </div>
         ) : (
           <p className="px-1 text-[14px] text-[rgb(var(--color-label-tertiary))]">
-            No trending topics yet — sync more content to see what's popular.
+            {tApp('exploreNoTrendingTopics')}
           </p>
         )}
       </section>
 
       <section>
-        <h2 className="section-kicker px-1 mb-3">Follow Packs</h2>
+        <div className="px-1 mb-3">
+          <h2 className="section-kicker">{tApp('exploreFollowPacks')}</h2>
+          <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">
+            {followPackSemanticApplied
+              ? tApp('exploreFollowPacksSemanticHint')
+              : tApp('exploreFollowPacksNetworkHint')}
+          </p>
+        </div>
         {followPacksLoading ? (
           <div className="space-y-3">
             {Array.from({ length: 3 }).map((_, i) => (
@@ -434,14 +544,52 @@ function ExploreContent({
           </div>
         ) : (
           <p className="px-1 text-[14px] text-[rgb(var(--color-label-tertiary))]">
-            No starter packs cached yet. Explore will surface them here as your relays publish more curated follow lists.
+            {tApp('exploreNoFollowPacks')}
+          </p>
+        )}
+      </section>
+
+      <section>
+        <div className="px-1 mb-3">
+          <h2 className="section-kicker">{tApp('exploreSuggestedAccounts')}</h2>
+          <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">
+            {tApp('exploreSuggestedAccountsHint')}
+          </p>
+        </div>
+        {suggestedLoading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-[72px] rounded-ios-xl bg-[rgb(var(--color-fill)/0.08)] animate-pulse" />
+            ))}
+          </div>
+        ) : suggestedProfiles.length > 0 ? (
+          <div className="space-y-3">
+            {suggestedProfiles.map((item, i) => (
+              <motion.div
+                key={item.profile.pubkey}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.18, delay: i * 0.04 }}
+              >
+                <ProfileResult profile={item.profile} subtitle={item.reason} />
+              </motion.div>
+            ))}
+          </div>
+        ) : (
+          <p className="px-1 text-[14px] text-[rgb(var(--color-label-tertiary))]">
+            {tApp('exploreSuggestedAccountsEmpty')}
           </p>
         )}
       </section>
 
       {/* Popular accounts */}
       <section>
-        <h2 className="section-kicker px-1 mb-3">Popular Accounts</h2>
+        <div className="px-1 mb-3">
+          <h2 className="section-kicker">{tApp('explorePopularAccounts')}</h2>
+          <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">
+            {tApp('explorePopularAccountsHint')}
+          </p>
+        </div>
         {popularLoading ? (
           <div className="space-y-3">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -457,13 +605,13 @@ function ExploreContent({
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.18, delay: i * 0.04 }}
               >
-                <ProfileResult profile={profile} />
+                <ProfileResult profile={profile} subtitle={tApp('explorePopularInGraph')} />
               </motion.div>
             ))}
           </div>
         ) : (
           <p className="px-1 text-[14px] text-[rgb(var(--color-label-tertiary))]">
-            No profiles cached yet.
+            {tApp('exploreNoProfilesCached')}
           </p>
         )}
       </section>
@@ -488,7 +636,7 @@ function FollowPackPreviewPerson({ entry }: { entry: FollowPackProfileEntry }) {
       <AuthorRow pubkey={entry.pubkey} profile={profile} />
       {(entry.petname || entry.relayUrl) && (
         <p className="mt-2 break-all text-[12px] leading-5 text-[rgb(var(--color-label-tertiary))]">
-          {[entry.petname ? `Pack note: ${entry.petname}` : null, entry.relayUrl].filter(Boolean).join(' • ')}
+          {[entry.petname ? tApp('explorePackNotePrefix', { petname: entry.petname }) : null, entry.relayUrl].filter(Boolean).join(' • ')}
         </p>
       )}
     </Link>
@@ -509,9 +657,12 @@ function ExploreFollowPackCard({
   const [followMessage, setFollowMessage] = useState<string | null>(null)
   const [followError, setFollowError] = useState<string | null>(null)
   const hiddenPreviewCount = Math.max(pack.totalProfiles - pack.previewProfiles.length, 0)
+  const profileWord = tApp(pack.missingCount === 1 ? 'exploreProfileSingular' : 'exploreProfilePlural')
+  const totalProfileWord = tApp(pack.totalProfiles === 1 ? 'exploreProfileSingular' : 'exploreProfilePlural')
+  const hiddenProfileWord = tApp(hiddenPreviewCount === 1 ? 'exploreProfileSingular' : 'exploreProfilePlural')
   const followLabel = pack.missingCount > 0
-    ? `Follow ${pack.missingCount}`
-    : 'Already Following'
+    ? tApp('explorePackFollowCount', { count: pack.missingCount })
+    : tApp('explorePackAlreadyFollowing')
 
   const handleFollow = async () => {
     if (!canBulkFollow || following || pack.missingCount === 0) return
@@ -523,10 +674,13 @@ function ExploreFollowPackCard({
     try {
       await onFollowPack(pack)
       setFollowMessage(
-        `Added ${pack.missingCount} new profile${pack.missingCount === 1 ? '' : 's'} from this pack to your follows.`,
+        tApp('explorePackAddedProfiles', {
+          count: pack.missingCount,
+          profileWord,
+        }),
       )
     } catch (error) {
-      setFollowError(error instanceof Error ? error.message : 'Failed to follow this pack.')
+      setFollowError(error instanceof Error ? error.message : tApp('explorePackFailedFollow'))
     } finally {
       setFollowing(false)
     }
@@ -559,14 +713,14 @@ function ExploreFollowPackCard({
 
       <div className="mt-4 flex flex-wrap gap-2">
         <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
-          {pack.totalProfiles} profile{pack.totalProfiles === 1 ? '' : 's'}
+          {tApp('explorePackProfileCount', { count: pack.totalProfiles, profileWord: totalProfileWord })}
         </span>
         <span className="rounded-full bg-[rgb(var(--color-accent)/0.14)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label))]">
-          {pack.missingCount} new
+          {tApp('explorePackNewCount', { count: pack.missingCount })}
         </span>
         {pack.overlapCount > 0 && (
           <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
-            {pack.overlapCount} already follow
+            {tApp('explorePackAlreadyFollowCount', { count: pack.overlapCount })}
           </span>
         )}
       </div>
@@ -579,7 +733,10 @@ function ExploreFollowPackCard({
 
       {hiddenPreviewCount > 0 && (
         <p className="mt-3 text-[13px] text-[rgb(var(--color-label-tertiary))]">
-          +{hiddenPreviewCount} more profile{hiddenPreviewCount === 1 ? '' : 's'} inside this pack
+          {tApp('explorePackHiddenProfiles', {
+            count: hiddenPreviewCount,
+            profileWord: hiddenProfileWord,
+          })}
         </p>
       )}
 
@@ -591,7 +748,7 @@ function ExploreFollowPackCard({
             disabled={following || pack.missingCount === 0}
             className="rounded-[14px] bg-[rgb(var(--color-label))] px-3 py-2 text-[13px] font-semibold text-white transition-opacity active:opacity-80 disabled:opacity-40"
           >
-            {following ? 'Following…' : followLabel}
+            {following ? tApp('explorePackFollowingAction') : followLabel}
           </button>
         )}
 
@@ -599,13 +756,13 @@ function ExploreFollowPackCard({
           to={pack.parsed.route}
           className="rounded-[14px] border border-[rgb(var(--color-fill)/0.14)] px-3 py-2 text-[13px] font-semibold text-[rgb(var(--color-label))] transition-opacity active:opacity-80"
         >
-          Open Pack
+          {tApp('explorePackOpenPack')}
         </Link>
       </div>
 
       {!canBulkFollow && (
         <p className="mt-3 text-[13px] leading-6 text-[rgb(var(--color-label-tertiary))]">
-          Connect a signer to follow the missing profiles from this pack together.
+          {tApp('explorePackConnectSignerHint')}
         </p>
       )}
 
@@ -624,7 +781,13 @@ function ExploreFollowPackCard({
   )
 }
 
-function ProfileResult({ profile }: { profile: Profile }) {
+function ProfileResult({
+  profile,
+  subtitle,
+}: {
+  profile: Profile
+  subtitle?: string
+}) {
   const about = profile.about ? sanitizeText(profile.about).slice(0, 180) : ''
 
   return (
@@ -633,6 +796,12 @@ function ProfileResult({ profile }: { profile: Profile }) {
       className="app-panel block rounded-ios-xl p-4 card-elevated"
     >
       <AuthorRow pubkey={profile.pubkey} profile={profile} />
+
+      {subtitle && (
+        <p className="mt-2 text-[13px] text-[rgb(var(--color-label-secondary))]">
+          {subtitle}
+        </p>
+      )}
 
       {profile.nip05 && profile.nip05Verified && (
         <p className="mt-2 text-[13px] text-[rgb(var(--color-label-secondary))]">
@@ -649,9 +818,21 @@ function ProfileResult({ profile }: { profile: Profile }) {
   )
 }
 
-function EventResult({ event }: { event: NostrEvent }) {
+function EventResult({
+  event,
+  checkEvent,
+  semanticResult,
+}: {
+  event: NostrEvent
+  checkEvent: (event: NostrEvent, profile?: Profile) => FilterCheckResult
+  semanticResult: FilterCheckResult
+}) {
   const { profile } = useProfile(event.pubkey, { background: false })
   const threadIndex = useSelfThreadIndex(event)
+  const filterResult = useMemo(
+    () => mergeResults(checkEvent(event, profile ?? undefined), semanticResult),
+    [checkEvent, event, profile, semanticResult],
+  )
   const article = parseLongFormEvent(event)
   const poll = parsePollEvent(event)
   const video = parseVideoEvent(event)
@@ -668,12 +849,13 @@ function EventResult({ event }: { event: NostrEvent }) {
   const href = article?.route ?? video?.route ?? `/note/${event.id}`
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.18 }}
-    >
-      <Link to={href} className="app-panel block rounded-ios-xl p-4 card-elevated">
+    <FilteredGate result={filterResult} eventId={event.id}>
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.18 }}
+      >
+        <Link to={href} className="app-panel block rounded-ios-xl p-4 card-elevated">
         <div className="flex items-start justify-between gap-3">
           <AuthorRow pubkey={event.pubkey} profile={profile} timestamp={event.created_at} />
           <span className="px-2 py-1 rounded-full text-[11px] font-semibold uppercase tracking-[0.08em] bg-[rgb(var(--color-fill)/0.1)] text-[rgb(var(--color-label-secondary))]">
@@ -703,9 +885,10 @@ function EventResult({ event }: { event: NostrEvent }) {
             )}
           </>
         )}
-        <EventMetricsRow event={event} interactive />
-      </Link>
-    </motion.div>
+          <EventMetricsRow event={event} interactive />
+        </Link>
+      </motion.div>
+    </FilteredGate>
   )
 }
 

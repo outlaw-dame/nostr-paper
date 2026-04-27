@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 interface UseVisibilityOnceOptions {
   disabled?: boolean
@@ -13,6 +13,7 @@ export function useVisibilityOnce<T extends Element = HTMLElement>({
 }: UseVisibilityOnceOptions = {}) {
   const [node, setNode] = useState<T | null>(null)
   const [visible, setVisible] = useState(disabled)
+  const forcedVisibleRef = useRef(disabled)
 
   const ref = useCallback((nextNode: T | null) => {
     setNode(nextNode)
@@ -20,10 +21,19 @@ export function useVisibilityOnce<T extends Element = HTMLElement>({
 
   useEffect(() => {
     if (disabled) {
+      forcedVisibleRef.current = true
       setVisible(true)
       return
     }
 
+    if (forcedVisibleRef.current) {
+      forcedVisibleRef.current = false
+      setVisible(false)
+    }
+  }, [disabled])
+
+  useEffect(() => {
+    if (disabled) return
     if (visible) return
     if (!node) return
 

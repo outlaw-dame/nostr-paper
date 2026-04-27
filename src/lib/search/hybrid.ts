@@ -1,12 +1,11 @@
 import {
   listSemanticEventCandidates,
   listSemanticProfileCandidates,
-  searchEvents,
-  searchProfiles,
+  searchEventsWithScores,
+  searchProfilesWithScores,
   type SearchEventsOptions,
 } from '@/lib/db/nostr'
 import { rankSemanticDocuments } from '@/lib/semantic/client'
-import { classifySearchIntent } from '@/lib/search/router'
 import {
   eventToSemanticText,
   normalizeSemanticQuery,
@@ -20,28 +19,7 @@ import type {
   SemanticMatch,
 } from '@/types'
 
-function readEnvNumber(value: unknown, fallback: number, min: number, max: number): number {
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed)) return fallback
-  return Math.min(max, Math.max(min, parsed))
-}
-
-const HYBRID_LEXICAL_WEIGHT = readEnvNumber(import.meta.env.VITE_HYBRID_LEXICAL_WEIGHT, 0.6, 0, 1)
-const HYBRID_SEMANTIC_WEIGHT = readEnvNumber(import.meta.env.VITE_HYBRID_SEMANTIC_WEIGHT, 0.4, 0, 1)
-const HYBRID_WEIGHT_SUM = HYBRID_LEXICAL_WEIGHT + HYBRID_SEMANTIC_WEIGHT
-const NORMALIZED_HYBRID_LEXICAL_WEIGHT = HYBRID_WEIGHT_SUM > 0
-  ? HYBRID_LEXICAL_WEIGHT / HYBRID_WEIGHT_SUM
-  : 0.6
-const NORMALIZED_HYBRID_SEMANTIC_WEIGHT = HYBRID_WEIGHT_SUM > 0
-  ? HYBRID_SEMANTIC_WEIGHT / HYBRID_WEIGHT_SUM
-  : 0.4
-
-const MIN_SEMANTIC_QUERY_CHARS = Math.floor(readEnvNumber(
-  import.meta.env.VITE_SEMANTIC_MIN_QUERY_CHARS,
-  3,
-  1,
-  24,
-))
+const MIN_SEMANTIC_QUERY_CHARS = 3
 const DEFAULT_EVENT_CANDIDATE_LIMIT = 180
 const DEFAULT_PROFILE_CANDIDATE_LIMIT = 80
 
@@ -52,29 +30,42 @@ const SEMANTIC_EXPANSION_THRESHOLD = 15
 
 // Semantic-only items (zero lexical score) must clear this normalized score
 // to appear in results. Prevents low-similarity noise from the candidate pool.
-const MIN_SEMANTIC_ONLY_SCORE = readEnvNumber(
-  import.meta.env.VITE_HYBRID_MIN_SEMANTIC_ONLY_SCORE,
-  0.45,
-  0,
-  1,
-)
-const MIN_LEXICAL_SHARE = readEnvNumber(import.meta.env.VITE_HYBRID_MIN_LEXICAL_SHARE, 0.5, 0, 1)
-const SEMANTIC_SCORE_GAMMA = readEnvNumber(import.meta.env.VITE_HYBRID_SEMANTIC_GAMMA, 1.15, 0.5, 3)
-const NON_ACTIONABLE_SEMANTIC_ERRORS = [
-  'Semantic search is unavailable in this environment.',
-  'Semantic model assets are unavailable in this environment.',
-  'Semantic worker crashed',
-]
+const MIN_SEMANTIC_ONLY_SCORE = 0.45
+const MIN_LEXICAL_SHARE = 0.5
+
+// Autocut: cut the semantic tail when a score gap exceeds this fraction of
+// the top score. E.g. 0.2 means a 20% relative drop triggers a cut.
+const AUTOCUT_MIN_RELATIVE_GAP = 0.2
+
+// Per-intent alpha weights (lexical + semantic must sum to 1).
+// keyword:  exact handles, hashtags, quoted phrases, short token queries
+// semantic: long natural-language sentences
+// balanced: everything in between
+type QueryIntent = 'keyword' | 'balanced' | 'semantic'
+
+const INTENT_WEIGHTS: Record<QueryIntent, { lexical: number; semantic: number }> = {
+  keyword:  { lexical: 0.85, semantic: 0.15 },
+  balanced: { lexical: 0.60, semantic: 0.40 },
+  semantic: { lexical: 0.45, semantic: 0.55 },
+}
 
 type Timestamped = {
   created_at?: number
   updatedAt?: number
 }
 
+export interface ScoreExplanation {
+  lexical: number
+  semantic: number
+  hybrid: number
+}
+
 export interface HybridSearchResponse<T> {
   items: T[]
   semanticUsed: boolean
   semanticError: string | null
+  /** Per-item score breakdown keyed by item id. Only populated when explain: true. */
+  explainScores?: Map<string, ScoreExplanation>
 }
 
 export interface RankedHybridMatch<T> {
@@ -112,18 +103,104 @@ function lexicalRankScore(index: number, total: number): number {
   return (total - index) / total
 }
 
-function normalizeSemanticScores(matches: SemanticMatch[]): Map<string, number> {
+function normalizeRelativeScores(rawScores: Map<string, number>): Map<string, number> {
   const normalized = new Map<string, number>()
+  const positiveEntries = [...rawScores.entries()].filter(([, score]) => score > 0)
 
-  for (const match of matches) {
-    if (!Number.isFinite(match.score)) continue
-    // cosine similarity is in [-1, 1]. remap to [0, 1] then sharpen top hits.
-    const clamped = Math.max(-1, Math.min(1, match.score))
-    const scaled = (clamped + 1) / 2
-    normalized.set(match.id, Math.pow(scaled, SEMANTIC_SCORE_GAMMA))
+  if (positiveEntries.length === 0) return normalized
+
+  const min = Math.min(...positiveEntries.map(([, score]) => score))
+  const max = Math.max(...positiveEntries.map(([, score]) => score))
+
+  if (max <= 0) return normalized
+  if (max === min) {
+    for (const [id] of positiveEntries) {
+      normalized.set(id, 1)
+    }
+    return normalized
+  }
+
+  for (const [id, score] of positiveEntries) {
+    normalized.set(id, (score - min) / (max - min))
   }
 
   return normalized
+}
+
+function normalizeSemanticScores(matches: SemanticMatch[]): Map<string, number> {
+  const rawScores = new Map<string, number>()
+  for (const match of matches) {
+    rawScores.set(match.id, match.score)
+  }
+
+  return normalizeRelativeScores(rawScores)
+}
+
+function normalizeLexicalScores<T extends { id: string }>(
+  lexicalItems: T[],
+  lexicalRawScores?: Map<string, number>,
+): Map<string, number> {
+  if (lexicalRawScores && lexicalRawScores.size > 0) {
+    return normalizeRelativeScores(lexicalRawScores)
+  }
+
+  const normalized = new Map<string, number>()
+
+  lexicalItems.forEach((item, index) => {
+    normalized.set(item.id, lexicalRankScore(index, lexicalItems.length))
+  })
+
+  return normalized
+}
+
+interface MergeHybridRankingsOptions {
+  lexicalRawScores?: Map<string, number>
+  /** Override the lexical blend weight (0–1). Defaults to 0.6 (balanced). */
+  lexicalWeight?: number
+  /** Override the semantic blend weight (0–1). Defaults to 0.4 (balanced). */
+  semanticWeight?: number
+}
+
+/**
+ * Classify a raw query string into a lexical/semantic intent bucket so the
+ * fusion weights can be tuned per query type:
+ *
+ * - keyword  (0.85/0.15): hashtags, handles, npub lookups, quoted phrases, ≤2 tokens
+ * - balanced (0.60/0.40): 3–5 plain-text tokens
+ * - semantic (0.45/0.55): ≥6 plain-text tokens (natural-language sentences)
+ */
+export function classifyQueryIntent(rawQuery: string): QueryIntent {
+  const tokens = rawQuery.trim().split(/\s+/).filter(t => t && !/^[a-z][a-z0-9_-]*:/i.test(t))
+  if (tokens.length === 0) return 'balanced'
+  // Quoted phrase anywhere → user wants an exact match
+  if (tokens.some(t => t.startsWith('"'))) return 'keyword'
+  // All hashtag tokens
+  if (tokens.every(t => /^#\w+/.test(t))) return 'keyword'
+  // Single handle or Bech32 Nostr key/profile
+  const first = tokens[0] ?? ''
+  if (tokens.length === 1 && (/^@\w+/.test(first) || /^n(?:pub|profile)1[a-z0-9]{20,}/i.test(first))) return 'keyword'
+  // Short query — likely a name or keyword lookup
+  if (tokens.length <= 2) return 'keyword'
+  // Long natural-language sentence
+  if (tokens.length >= 6) return 'semantic'
+  return 'balanced'
+}
+
+/**
+ * Trim the tail of a semantic-match list where the score drops sharply.
+ * Detects the first relative gap ≥ AUTOCUT_MIN_RELATIVE_GAP and cuts there,
+ * preventing "technically similar but not useful" results from entering fusion.
+ */
+function autocutSemanticMatches(matches: SemanticMatch[]): SemanticMatch[] {
+  if (matches.length <= 2) return matches
+  const sorted = [...matches].sort((a, b) => b.score - a.score)
+  const maxScore = sorted[0]?.score ?? 0
+  if (maxScore <= 0) return sorted
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const gap = (sorted[i]?.score ?? 0) - (sorted[i + 1]?.score ?? 0)
+    if (gap / maxScore >= AUTOCUT_MIN_RELATIVE_GAP) return sorted.slice(0, i + 1)
+  }
+  return sorted
 }
 
 export function mergeHybridRankings<T extends { id: string } & Timestamped>(
@@ -131,12 +208,9 @@ export function mergeHybridRankings<T extends { id: string } & Timestamped>(
   semanticItems: T[],
   semanticMatches: SemanticMatch[],
   limit: number,
+  options: MergeHybridRankingsOptions = {},
 ): RankedHybridMatch<T>[] {
-  const lexicalScores = new Map<string, number>()
-  lexicalItems.forEach((item, index) => {
-    lexicalScores.set(item.id, lexicalRankScore(index, lexicalItems.length))
-  })
-
+  const lexicalScores = normalizeLexicalScores(lexicalItems, options.lexicalRawScores)
   const semanticScores = normalizeSemanticScores(semanticMatches)
   const itemsById = new Map<string, T>()
 
@@ -144,15 +218,14 @@ export function mergeHybridRankings<T extends { id: string } & Timestamped>(
     itemsById.set(item.id, item)
   }
 
+  const lexW = options.lexicalWeight  ?? INTENT_WEIGHTS.balanced.lexical
+  const semW = options.semanticWeight ?? INTENT_WEIGHTS.balanced.semantic
   const ranked: RankedHybridMatch<T>[] = []
 
   for (const [id, item] of itemsById) {
     const lexicalScore = lexicalScores.get(id) ?? 0
     const semanticScore = semanticScores.get(id) ?? 0
-    const hybridScore = (
-      lexicalScore * NORMALIZED_HYBRID_LEXICAL_WEIGHT
-      + semanticScore * NORMALIZED_HYBRID_SEMANTIC_WEIGHT
-    )
+    const hybridScore = lexicalScore * lexW + semanticScore * semW
 
     if (hybridScore <= 0) continue
     // Suppress semantic-only matches that aren't meaningfully similar to the query
@@ -223,11 +296,6 @@ function getSemanticQuery(query: string): string | null {
   return semanticQuery
 }
 
-function isNonActionableSemanticError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
-  return NON_ACTIONABLE_SEMANTIC_ERRORS.some(marker => message.includes(marker))
-}
-
 function shouldUseSemanticSearch(query: string): boolean {
   const semanticQuery = getSemanticQuery(query)
   return semanticQuery !== null && semanticQuery.length >= MIN_SEMANTIC_QUERY_CHARS
@@ -259,15 +327,22 @@ function profileToSemanticDocument(profile: Profile): SemanticDocument | null {
 
 export async function hybridSearchEvents(
   query: string,
-  opts: SearchEventsOptions & { signal?: AbortSignal; lexicalOnly?: boolean } = {},
+  opts: SearchEventsOptions & {
+    signal?: AbortSignal
+    lexicalOnly?: boolean
+    explain?: boolean
+    semanticQueryOverride?: string
+  } = {},
 ): Promise<HybridSearchResponse<NostrEvent>> {
-  const { signal, lexicalOnly, ...searchOptions } = opts
+  const { signal, lexicalOnly, explain, semanticQueryOverride, ...searchOptions } = opts
   const limit = Math.min(opts.limit ?? 50, 200)
   const lexicalLimit = Math.min(Math.max(limit * 2, limit), 240)
-  const lexicalItems = await searchEvents(query, {
+  const lexicalResults = await searchEventsWithScores(query, {
     ...searchOptions,
     limit: lexicalLimit,
   })
+  const lexicalItems = lexicalResults.map(result => result.item)
+  const lexicalRawScores = new Map(lexicalResults.map(result => [result.item.id, result.score]))
   throwIfAborted(signal)
 
   if (lexicalOnly || !shouldUseSemanticSearch(query)) {
@@ -278,19 +353,9 @@ export async function hybridSearchEvents(
     }
   }
 
-  // Router: classify query intent to skip semantic embedding for exact-match
-  // queries (hashtags, @mentions, pubkeys). Falls back to 'hybrid' on error.
-  const routerIntent = await classifySearchIntent(query)
-  if (routerIntent === 'lexical') {
-    return {
-      items: lexicalItems.slice(0, limit),
-      semanticUsed: false,
-      semanticError: null,
-    }
-  }
-
   const semanticQuery = getSemanticQuery(query)
-  if (!semanticQuery) {
+  const effectiveSemanticQuery = semanticQueryOverride?.trim() || semanticQuery
+  if (!effectiveSemanticQuery) {
     return {
       items: lexicalItems.slice(0, limit),
       semanticUsed: false,
@@ -322,19 +387,33 @@ export async function hybridSearchEvents(
       }
     }
 
-    const semanticMatches = await rankSemanticDocuments(
-      semanticQuery,
+    const rawMatches = await rankSemanticDocuments(
+      effectiveSemanticQuery,
       semanticDocuments,
       Math.max(limit * 3, 60),
       signal,
     )
     throwIfAborted(signal)
 
-    const ranked = mergeHybridRankings(lexicalItems, mergedCandidates, semanticMatches, limit)
+    const semanticMatches = autocutSemanticMatches(rawMatches)
+    const intent = classifyQueryIntent(query)
+    const ranked = mergeHybridRankings(
+      lexicalItems,
+      mergedCandidates,
+      semanticMatches,
+      limit,
+      { lexicalRawScores, ...INTENT_WEIGHTS[intent] },
+    )
     return {
       items: ranked.map(match => match.item),
       semanticUsed: true,
       semanticError: null,
+      ...(explain && {
+        explainScores: new Map(ranked.map(m => [
+          m.item.id,
+          { lexical: m.lexicalScore, semantic: m.semanticScore, hybrid: m.hybridScore },
+        ])),
+      }),
     }
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
@@ -344,9 +423,7 @@ export async function hybridSearchEvents(
     return {
       items: lexicalItems.slice(0, limit),
       semanticUsed: false,
-      semanticError: isNonActionableSemanticError(error)
-        ? null
-        : (error instanceof Error ? error.message : 'Semantic search unavailable'),
+      semanticError: error instanceof Error ? error.message : 'Semantic search unavailable',
     }
   }
 }
@@ -356,24 +433,16 @@ export async function hybridSearchProfiles(
   limit = 20,
   signal?: AbortSignal,
   lexicalOnly = false,
+  explain = false,
 ): Promise<HybridSearchResponse<Profile>> {
   const cappedLimit = Math.min(limit, 100)
   const lexicalLimit = Math.min(Math.max(cappedLimit * 2, cappedLimit), 120)
-  const lexicalItems = await searchProfiles(query, lexicalLimit)
+  const lexicalResults = await searchProfilesWithScores(query, lexicalLimit)
+  const lexicalItems = lexicalResults.map(result => result.item)
+  const lexicalRawScores = new Map(lexicalResults.map(result => [result.item.pubkey, result.score]))
   throwIfAborted(signal)
 
   if (lexicalOnly || !shouldUseSemanticSearch(query)) {
-    return {
-      items: lexicalItems.slice(0, cappedLimit),
-      semanticUsed: false,
-      semanticError: null,
-    }
-  }
-
-  // Router: classify query intent to skip semantic embedding for exact-match
-  // queries (hashtags, @mentions, pubkeys). Falls back to 'hybrid' on error.
-  const routerIntent = await classifySearchIntent(query)
-  if (routerIntent === 'lexical') {
     return {
       items: lexicalItems.slice(0, cappedLimit),
       semanticUsed: false,
@@ -411,27 +480,38 @@ export async function hybridSearchProfiles(
       }
     }
 
-    const semanticMatches = await rankSemanticDocuments(
+    const rawMatches = await rankSemanticDocuments(
       semanticQuery,
       semanticDocuments,
       Math.max(cappedLimit * 3, 40),
       signal,
     )
     throwIfAborted(signal)
+
+    const semanticMatches = autocutSemanticMatches(rawMatches)
+    const intent = classifyQueryIntent(query)
     const ranked = mergeHybridRankings(
       lexicalItems.map(profile => ({ ...profile, id: profile.pubkey })),
       semanticCandidateItems,
       semanticMatches,
       cappedLimit,
+      { lexicalRawScores, ...INTENT_WEIGHTS[intent] },
     )
 
     return {
-      items: ranked.map(match => {
-        const { id: _id, ...profile } = match.item
+      items: ranked.map(({ item }) => {
+        const profile = { ...item }
+        delete (profile as { id?: string }).id
         return profile
       }),
       semanticUsed: true,
       semanticError: null,
+      ...(explain && {
+        explainScores: new Map(ranked.map(m => [
+          m.item.id,
+          { lexical: m.lexicalScore, semantic: m.semanticScore, hybrid: m.hybridScore },
+        ])),
+      }),
     }
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
@@ -441,9 +521,7 @@ export async function hybridSearchProfiles(
     return {
       items: lexicalItems.slice(0, cappedLimit),
       semanticUsed: false,
-      semanticError: isNonActionableSemanticError(error)
-        ? null
-        : (error instanceof Error ? error.message : 'Semantic search unavailable'),
+      semanticError: error instanceof Error ? error.message : 'Semantic search unavailable',
     }
   }
 }

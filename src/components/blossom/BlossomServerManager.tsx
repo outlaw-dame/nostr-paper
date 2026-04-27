@@ -88,37 +88,48 @@ export function BlossomServerManager() {
       setServerStatuses((prev) => ({ ...prev, [url]: 'checking' }))
 
       const serverUrl = url.replace(/\/+$/, '')
-      const ndk = getNDK()
+      
+      let ndk: ReturnType<typeof getNDK> | null = null
+      try {
+        ndk = getNDK()
+      } catch {
+        // NDK might not be initialized, continue with unauthenticated requests
+      }
 
       // Try to create an auth token and make a test HEAD request
-      try {
-        const auth = await createNIP98Auth(ndk, {
-          url: `${serverUrl}/info`,
-          method: 'GET',
-        })
+      if (ndk) {
+        try {
+          const auth = await createNIP98Auth(ndk, {
+            url: `${serverUrl}/info`,
+            method: 'GET',
+          })
 
-        const response = await fetch(`${serverUrl}/info`, {
-          method: 'GET',
-          headers: {
-            Authorization: auth,
-          },
-        })
+          const response = await fetch(`${serverUrl}/info`, {
+            method: 'GET',
+            headers: {
+              Authorization: auth,
+            },
+          })
 
-        if (response.ok) {
-          setServerStatuses((prev) => ({ ...prev, [url]: 'ok' }))
-          return true
-        } else {
-          throw new Error(`HTTP ${response.status}`)
+          if (response.ok) {
+            setServerStatuses((prev) => ({ ...prev, [url]: 'ok' }))
+            return true
+          } else {
+            throw new Error(`HTTP ${response.status}`)
+          }
+        } catch (authErr) {
+          // If auth fails, try without auth as a fallback
+          console.debug('[BlossomServerManager] Auth failed, trying unauthenticated:', authErr)
         }
-      } catch (fetchErr) {
-        // If auth fails, try without auth as a fallback
-        const infoResponse = await fetch(`${serverUrl}/info`)
-        if (infoResponse.ok) {
-          setServerStatuses((prev) => ({ ...prev, [url]: 'ok' }))
-          return true
-        }
-        throw fetchErr
       }
+
+      // Try without authentication
+      const infoResponse = await fetch(`${serverUrl}/info`)
+      if (infoResponse.ok) {
+        setServerStatuses((prev) => ({ ...prev, [url]: 'ok' }))
+        return true
+      }
+      throw new Error(`Server replied with HTTP ${infoResponse.status}`)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Connection failed'
       setServerStatuses((prev) => ({ ...prev, [url]: 'error' }))

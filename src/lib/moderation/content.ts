@@ -1,5 +1,6 @@
 import { sanitizeText } from '@/lib/security/sanitize'
 import type { ModerationDocument, NostrEvent, Profile } from '@/types'
+import type { SyndicationEntry, SyndicationFeed } from '@/lib/syndication/types'
 
 const MAX_MODERATION_CHARS = 2_000
 const MODERATION_TAG_NAMES = new Set(['title', 'summary', 'subject', 'alt', 'name'])
@@ -84,4 +85,38 @@ export function buildProfileModerationDocument(profile: Profile): ModerationDocu
 
 export function getModerationDocumentCacheKey(document: ModerationDocument): string {
   return `${document.kind}:${document.id}:${document.updatedAt}:${hashModerationText(document.text)}`
+}
+
+export function buildSyndicationEntryModerationDocument(
+  entry: SyndicationEntry,
+  feedSourceUrl?: string,
+): ModerationDocument | null {
+  const parts: string[] = []
+  appendUniquePart(parts, entry.title)
+  appendUniquePart(parts, entry.summary)
+  appendUniquePart(parts, entry.contentText)
+  const text = normalizeModerationText(parts.join('\n\n'))
+  if (!text) return null
+
+  const idSuffix = hashModerationText(entry.id)
+  const id = `syn-entry:${feedSourceUrl ?? ''}:${idSuffix}`
+  const dateStr = entry.updatedAt ?? entry.publishedAt
+  const updatedAt = dateStr ? Math.floor(new Date(dateStr).getTime() / 1000) : 0
+
+  return { id, kind: 'syndication-entry', text, updatedAt }
+}
+
+export function buildSyndicationFeedModerationDocument(
+  feed: SyndicationFeed,
+): ModerationDocument | null {
+  const parts: string[] = []
+  appendUniquePart(parts, feed.title)
+  appendUniquePart(parts, feed.description)
+  const text = normalizeModerationText(parts.join('\n\n'))
+  if (!text) return null
+
+  const raw = feed.feedUrl ?? feed.sourceUrl ?? feed.homePageUrl ?? feed.title
+  const id = `syn-feed:${hashModerationText(raw)}`
+
+  return { id, kind: 'syndication-entry', text, updatedAt: 0 }
 }

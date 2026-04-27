@@ -7,6 +7,19 @@ export function normalizeTranslationSourceText(text: string): string {
   return sanitizeText(text).replace(/\r\n?/g, '\n').trim()
 }
 
+export function hasMeaningfulTranslationText(text: string): boolean {
+  const normalized = normalizeTranslationSourceText(text)
+  if (!normalized) return false
+
+  const words = normalized.match(/[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*/gu) ?? []
+  if (words.length === 0) return false
+
+  const letterCount = (normalized.match(/\p{L}/gu) ?? []).length
+  if (letterCount === 0) return false
+
+  return words.join('').length >= 2
+}
+
 function splitLongSegment(text: string, maxChars: number): string[] {
   const normalized = text.trim()
   if (!normalized) return []

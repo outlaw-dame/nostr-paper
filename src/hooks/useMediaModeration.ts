@@ -3,7 +3,16 @@ import { moderateMediaDocuments } from '@/lib/moderation/mediaClient'
 import { getMediaModerationDocumentCacheKey } from '@/lib/moderation/mediaContent'
 import type { MediaModerationDecision, MediaModerationDocument } from '@/types'
 
+const MEDIA_MODERATION_CACHE_MAX = 500
 const inMemoryMediaModerationCache = new Map<string, MediaModerationDecision>()
+
+function cacheSetMedia(key: string, value: MediaModerationDecision): void {
+  if (inMemoryMediaModerationCache.size >= MEDIA_MODERATION_CACHE_MAX) {
+    const firstKey = inMemoryMediaModerationCache.keys().next().value
+    if (firstKey !== undefined) inMemoryMediaModerationCache.delete(firstKey)
+  }
+  inMemoryMediaModerationCache.set(key, value)
+}
 
 interface UseMediaModerationDocumentsResult {
   decisions: Map<string, MediaModerationDecision>
@@ -94,7 +103,7 @@ export function useMediaModerationDocuments(
           if (!document) continue
 
           const cacheKey = getMediaModerationDocumentCacheKey(document)
-          inMemoryMediaModerationCache.set(cacheKey, decision)
+          cacheSetMedia(cacheKey, decision)
           merged.set(decision.id, decision)
         }
 

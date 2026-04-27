@@ -1,0 +1,52 @@
+{
+	"folders": [
+		{
+			"name": "nostr-paper",
+			"path": "."
+		}
+	],
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			"/^python3 -V && python3 -c \"import fastapi, uvicorn, pydantic, torch, transformers; print\\('deps-ok'\\)\"$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/Users/damonoutlaw/Downloads/nostr-paper/.venv/bin/python": true,
+			"set": true,
+			"uniq": true,
+			"/^python3 -c \"\nwith open\\('/Users/damonoutlaw/Downloads/nostr-paper/src/components/cards/HeroCard\\.tsx', 'r'\\) as f:\n    lines = f\\.readlines\\(\\)\n\n# Remove line 203 \\(0-indexed: 202\\) — stale outer motion\\.div\nprint\\('Line 202:', repr\\(lines\\[202\\]\\)\\)\nprint\\('Line 203:', repr\\(lines\\[203\\]\\)\\)\nprint\\('Line 223:', repr\\(lines\\[223\\]\\)\\)\n\"$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^python3 -c \"\nwith open\\('/Users/damonoutlaw/Downloads/nostr-paper/src/components/cards/HeroCard\\.tsx', 'r'\\) as f:\n    lines = f\\.readlines\\(\\)\n\n# Remove stale line 202 \\(0-indexed\\) and fix </div> at 223\ndel lines\\[202\\]  # removes stale outer <motion\\.div>\n\n# Now line 223 is at index 222 \\(shifted by 1\\)\nlines\\[222\\] = '          </motion\\.div>\\\\n'\n\nwith open\\('/Users/damonoutlaw/Downloads/nostr-paper/src/components/cards/HeroCard\\.tsx', 'w'\\) as f:\n    f\\.writelines\\(lines\\)\nprint\\('Done'\\)\n\"$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"npm run -s typecheck": true,
+			"npm run typecheck": true,
+			"npx tsc": true,
+			"git -C /Users/damonoutlaw/Downloads/nostr-paper": true,
+			"npm exec": true,
+			"./node_modules/.bin/vitest": true,
+			"./node_modules/.bin/tsc": true,
+			"npm run -s test": true,
+			"npm run -s type-check": true,
+			"npx vitest": true,
+			"git remote": true,
+			"git add": true,
+			"git commit": true,
+			"git push": true,
+			"lsof": true,
+			"npm install": true,
+			"npx eslint": true,
+			"/^node --input-type=module << 'EOF'\nfunction qualityScore\\(text\\) \\{\n  const compact = text\\.trim\\(\\)\n  if \\(!compact\\) return 0\n  const lengthScore = Math\\.min\\(1, compact\\.length / 220\\)\n  const sentenceCount = compact\\.split\\(/\\[\\.!\\?\\]\\+/\\)\\.map\\(c => c\\.trim\\(\\)\\)\\.filter\\(Boolean\\)\\.length\n  const sentenceScore = Math\\.min\\(1, sentenceCount / 2\\)\n  const words = compact\\.toLowerCase\\(\\)\\.split\\(/\\\\s\\+/\\)\\.filter\\(Boolean\\)\n  const unique = new Set\\(words\\)\n  const diversity = words\\.length === 0 \\? 0 : unique\\.size / words\\.length\n  const markdownPenalty = compact\\.includes\\('```'\\) \\? 0\\.2 : 0\n  const repetitionPenalty = diversity < 0\\.45 \\? 0\\.15 : 0\n  return Math\\.max\\(0, \\(lengthScore \\* 0\\.4\\) \\+ \\(sentenceScore \\* 0\\.35\\) \\+ \\(diversity \\* 0\\.25\\) - markdownPenalty - repetitionPenalty\\)\n\\}\n\nconst samples = \\{\n  'gemma_high_quality_composer': \\[\n    'Lead with your key point in one sentence, then add one concrete example from your draft to keep it credible\\.',\n    'Tighten the ending by replacing generic language with a specific takeaway readers can react to\\.',\n    'Keep hashtags to one relevant tag so the post reads focused rather than overloaded\\.',\n  \\]\\.join\\(' '\\),\n\n  'gemma_low_quality_repetitive': 'ok ok ok summary summary ok ok',\n\n  'gemma_recap_multi_signal': \\[\n    'This evening you had a strong engagement burst with reactions and reposts concentrated in two threads\\.',\n    'Mentions were lower volume but came from distinct accounts, suggesting broad but lighter discovery\\.',\n    'Prioritize replying to the highest-zap thread first to preserve momentum in the next hour\\.',\n  \\]\\.join\\(' '\\),\n\n  'gemma_mock_good_output': 'This is a complete and context-rich response\\. It includes clear reasoning and practical detail\\.',\n\n  'gemma_mock_low_quality': 'ok ok ok',\n\n  'gemini_mock_enhanced': 'Enhanced quality response from Gemini\\.',\n\n  'gemini_mock_direct_sanitized': 'Gemini answer',\n\n  'gemma_mock_sanitized': 'short answer',\n\\}\n\nfor \\(const \\[label, text\\] of Object\\.entries\\(samples\\)\\) \\{\n  const score = qualityScore\\(text\\)\n  const chars = text\\.length\n  const words = text\\.split\\(/\\\\s\\+/\\)\\.filter\\(Boolean\\)\n  const unique = new Set\\(words\\.map\\(w => w\\.toLowerCase\\(\\)\\)\\)\n  const diversity = unique\\.size / words\\.length\n  const threshold = score >= 0\\.52 \\? 'ABOVE threshold \\(no enhancement needed\\)' : 'BELOW threshold \\(Gemini enhancement triggered\\)'\n  console\\.log\\(label \\+ ':'\\)\n  console\\.log\\('  score:     ' \\+ score\\.toFixed\\(4\\)\\)\n  console\\.log\\('  chars:     ' \\+ chars\\)\n  console\\.log\\('  diversity: ' \\+ diversity\\.toFixed\\(3\\)\\)\n  console\\.log\\('  verdict:   ' \\+ threshold\\)\n  console\\.log\\(\\)\n\\}\nEOF\n$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^node --input-type=module << 'EOF'\nfunction qualityScore\\(text\\) \\{\n  const compact = text\\.trim\\(\\)\n  if \\(!compact\\) return 0\n  const lengthScore = Math\\.min\\(1, compact\\.length / 500\\)\n  const sentenceCount = compact\\.split\\(/\\[\\.!\\?\\]\\+/\\)\\.map\\(c => c\\.trim\\(\\)\\)\\.filter\\(Boolean\\)\\.length\n  const sentenceScore = Math\\.min\\(1, sentenceCount / 2\\)\n  const words = compact\\.toLowerCase\\(\\)\\.split\\(/\\\\s\\+/\\)\\.filter\\(Boolean\\)\n  const unique = new Set\\(words\\)\n  const diversity = words\\.length === 0 \\? 0 : unique\\.size / words\\.length\n  const markdownPenalty = compact\\.includes\\('```'\\) \\? 0\\.2 : 0\n  const repetitionPenalty = diversity < 0\\.45 \\? 0\\.15 : 0\n  return Math\\.max\\(0, \\(lengthScore \\* 0\\.4\\) \\+ \\(sentenceScore \\* 0\\.35\\) \\+ \\(diversity \\* 0\\.25\\) - markdownPenalty - repetitionPenalty\\)\n\\}\n\nconst samples = \\{\n  'gemma_high_quality_composer \\(288 chars, 3 sentences\\)':\n    'Lead with your key point in one sentence, then add one concrete example from your draft to keep it credible\\. Tighten the ending by replacing generic language with a specific takeaway readers can react to\\. Keep hashtags to one relevant tag so the post reads focused rather than overloaded\\.',\n  'gemma_recap_multi_signal \\(293 chars, 3 sentences\\)':\n    'This evening you had a strong engagement burst with reactions and reposts concentrated in two threads\\. Mentions were lower volume but came from distinct accounts, suggesting broad but lighter discovery\\. Prioritize replying to the highest-zap thread first to preserve momentum in the next hour\\.',\n  'gemma_good_mock \\(95 chars, 2 sentences\\)':\n    'This is a complete and context-rich response\\. It includes clear reasoning and practical detail\\.',\n  'gemma_low_quality_repetitive \\(30 chars\\)':\n    'ok ok ok summary summary ok ok',\n  'gemma_ideal_new_compose \\(500 chars, 3 sentences\\)':\n    'Your draft opens with a declarative statement which is strong, but the second sentence loses momentum by hedging \\\\u2014 remove the qualifier and state the benefit directly\\. The closing line feels generic; replace it with a concrete example that ties back to your opening claim so readers leave with something specific\\. One hashtag is appropriate here but your current suggestion is too broad \\\\u2014 pick the niche variant to reach a more engaged audience\\.',\n  'gemma_ideal_new_recap \\(450 chars, 3 sentences\\)':\n    'Reactions and reposts were your dominant signal today, concentrated across two threads posted in the early evening\\. Mentions came from 7 distinct accounts you have not interacted with recently, which suggests your content reached new discovery surfaces\\. Reply to the thread with the highest zap weight first \\\\u2014 that audience has already committed attention and is most likely to continue the conversation\\.',\n\\}\n\nfor \\(const \\[label, text\\] of Object\\.entries\\(samples\\)\\) \\{\n  const score = qualityScore\\(text\\)\n  const verdict = score >= 0\\.52 \\? 'PASS' : 'FAIL \\(triggers Gemini enhancement\\)'\n  console\\.log\\(label\\)\n  console\\.log\\('  score: ' \\+ score\\.toFixed\\(4\\) \\+ '  chars: ' \\+ text\\.length \\+ '  ' \\+ verdict\\)\n\\}\nEOF\n$/": {
+				"approve": true,
+				"matchCommandLine": true
+			}
+		}
+	}
+}

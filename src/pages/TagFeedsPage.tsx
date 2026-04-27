@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { tApp } from '@/lib/i18n/app'
 import { SearchBar } from '@/components/search/SearchBar'
 import { TwemojiText } from '@/components/ui/TwemojiText'
 import { useApp } from '@/contexts/app-context'
@@ -146,6 +147,16 @@ function FeedProfileItem({
   )
 }
 
+function getTopicChip(count: number): string {
+  if (count === 0) return tApp('tagFeedsNoTopicsLabel')
+  return `${count} ${count === 1 ? tApp('tagFeedsTopicSingular') : tApp('tagFeedsTopicPlural')}`
+}
+
+function getProfileChip(count: number): string {
+  if (count === 0) return tApp('tagFeedsNoProfilesLabel')
+  return `${count} ${count === 1 ? tApp('tagFeedsProfileSingular') : tApp('tagFeedsProfilePlural')}`
+}
+
 interface SavedTagFeedCardProps {
   feed: SavedTagFeed
   onOpen: () => void
@@ -155,7 +166,7 @@ interface SavedTagFeedCardProps {
 
 function SavedTagFeedCard({ feed, onOpen, onEdit, onDelete }: SavedTagFeedCardProps) {
   const details = describeTagTimeline(feed)
-  const summary = feed.description || details?.summary || 'Saved tag feed'
+  const summary = feed.description || details?.summary || tApp('tagFeedsSavedTagFeedFallback')
   const avatar = getSafeMediaPreview(feed.avatar)
   const banner = getSafeMediaPreview(feed.banner)
 
@@ -186,11 +197,11 @@ function SavedTagFeedCard({ feed, onOpen, onEdit, onDelete }: SavedTagFeedCardPr
 
           <div className="flex flex-wrap justify-end gap-2">
             <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
-              {feed.mode === 'all' ? 'All topics' : 'Any topic'}
+              {feed.mode === 'all' ? tApp('tagFeedsModeAll') : tApp('tagFeedsModeAny')}
             </span>
             {feed.profilePubkeys.length > 0 && (
               <span className="rounded-full bg-[rgb(var(--color-accent)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
-                {feed.profilePubkeys.length} profile{feed.profilePubkeys.length === 1 ? '' : 's'}
+                {getProfileChip(feed.profilePubkeys.length)}
               </span>
             )}
           </div>
@@ -230,21 +241,21 @@ function SavedTagFeedCard({ feed, onOpen, onEdit, onDelete }: SavedTagFeedCardPr
             onClick={onOpen}
             className="rounded-full bg-[rgb(var(--color-label))] px-3 py-2 text-[12px] font-medium text-[rgb(var(--color-bg))] transition-opacity active:opacity-80"
           >
-            Open Feed
+            {tApp('tagFeedsOpenFeed')}
           </button>
           <button
             type="button"
             onClick={onEdit}
             className="rounded-full border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg-secondary))] px-3 py-2 text-[12px] font-medium text-[rgb(var(--color-label))] transition-opacity active:opacity-80"
           >
-            Edit
+            {tApp('tagFeedsEdit')}
           </button>
           <button
             type="button"
             onClick={onDelete}
             className="rounded-full border border-[rgb(var(--color-system-red)/0.2)] bg-[rgb(var(--color-system-red)/0.08)] px-3 py-2 text-[12px] font-medium text-[rgb(var(--color-system-red))] transition-opacity active:opacity-80"
           >
-            Delete
+            {tApp('tagFeedsDelete')}
           </button>
         </div>
       </div>
@@ -297,13 +308,13 @@ export default function TagFeedsPage() {
     [previewSpec],
   )
   const previewTitle = useMemo(
-    () => sanitizeName(titleDraft) || previewDescription?.title || 'Feed name',
+    () => sanitizeName(titleDraft) || previewDescription?.title || tApp('tagFeedsFeedNameFallback'),
     [previewDescription?.title, titleDraft],
   )
   const previewSummary = useMemo(
     () => sanitizeAbout(descriptionDraft)
       || previewDescription?.summary
-      || 'Add a short description, a few topics, and a few people to make this feed feel curated.',
+      || tApp('tagFeedsPreviewSummaryHint'),
     [descriptionDraft, previewDescription?.summary],
   )
   const previewAvatar = useMemo(() => getSafeMediaPreview(avatarDraft), [avatarDraft])
@@ -354,11 +365,11 @@ export default function TagFeedsPage() {
     setProfileSearchResults([])
     setProfileSearchLoading(false)
     setFormError(null)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    window.scrollTo({ top: 0 })
   }
 
   function handleDelete(feed: SavedTagFeed): void {
-    if (!window.confirm(`Delete "${feed.title}"?`)) return
+    if (!window.confirm(tApp('tagFeedsDeleteConfirm', { title: feed.title }))) return
     deleteTagFeed(feed.id, scopeId)
 
     if (editingId === feed.id) {
@@ -380,17 +391,17 @@ export default function TagFeedsPage() {
 
     const includeTags = normalizeTagTimelineTags(includeDraft)
     if (includeTags.length === 0) {
-      setFormError('Add at least one topic keyword or hashtag.')
+      setFormError(tApp('tagFeedsErrorNoTopics'))
       return
     }
 
     if (avatarDraft.trim().length > 0 && !isSafeMediaURL(avatarDraft.trim())) {
-      setFormError('Avatar must be an HTTPS image URL.')
+      setFormError(tApp('tagFeedsErrorAvatarUrl'))
       return
     }
 
     if (bannerDraft.trim().length > 0 && !isSafeMediaURL(bannerDraft.trim())) {
-      setFormError('Banner must be an HTTPS image URL.')
+      setFormError(tApp('tagFeedsErrorBannerUrl'))
       return
     }
 
@@ -407,7 +418,7 @@ export default function TagFeedsPage() {
     }, scopeId)
 
     if (!saved) {
-      setFormError('Unable to save this tag feed. Check the topic terms and try again.')
+      setFormError(tApp('tagFeedsErrorSave'))
       return
     }
 
@@ -465,7 +476,7 @@ export default function TagFeedsPage() {
               flex items-center justify-center
               active:opacity-80
             "
-            aria-label="Go back"
+            aria-label={tApp('tagFeedsGoBack')}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
               <path
@@ -479,10 +490,10 @@ export default function TagFeedsPage() {
           </button>
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-tertiary))]">
-              Settings / Feed
+              {tApp('tagFeedsBreadcrumb')}
             </p>
             <h1 className="text-[20px] font-semibold text-[rgb(var(--color-label))]">
-              Tag Feeds
+              {tApp('tagFeedsTitle')}
             </h1>
           </div>
         </div>
@@ -490,10 +501,10 @@ export default function TagFeedsPage() {
 
       <div className="space-y-8 pb-10 pt-2">
         <section>
-          <h2 className="section-kicker px-1 mb-3">{editingId ? 'Edit feed' : 'Create feed'}</h2>
+          <h2 className="section-kicker px-1 mb-3">{editingId ? tApp('tagFeedsEditSection') : tApp('tagFeedsCreateSection')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated">
             <p className="text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
-              Build richer tag feeds with their own look, short description, and a few suggested profiles so each feed feels more like a curated collection than a plain hashtag filter.
+              {tApp('tagFeedsFormIntro')}
             </p>
 
             <form className="mt-4 space-y-6" onSubmit={handleSubmit}>
@@ -521,12 +532,12 @@ export default function TagFeedsPage() {
                       className="ring-4 ring-[rgb(var(--color-bg))]"
                     />
                     <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
-                      {editingId ? 'Editing' : 'New feed'}
+                      {editingId ? tApp('tagFeedsBadgeEditing') : tApp('tagFeedsBadgeNew')}
                     </span>
                   </div>
 
                   <div className="mt-3">
-                    <p className="section-kicker">Feed Preview</p>
+                    <p className="section-kicker">{tApp('tagFeedsPreviewSection')}</p>
                     <h3 className="mt-1 text-[24px] font-semibold leading-tight tracking-[-0.03em] text-[rgb(var(--color-label))]">
                       <TwemojiText text={previewTitle} />
                     </h3>
@@ -537,13 +548,13 @@ export default function TagFeedsPage() {
 
                   <div className="mt-4 flex flex-wrap gap-2">
                     <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label))]">
-                      {(previewSpec?.includeTags.length ?? 0) || 'No'} topic{(previewSpec?.includeTags.length ?? 0) === 1 ? '' : 's'}
+                      {getTopicChip(previewSpec?.includeTags.length ?? 0)}
                     </span>
                     <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label))]">
-                      {profilePubkeysDraft.length || 'No'} profile{profilePubkeysDraft.length === 1 ? '' : 's'}
+                      {getProfileChip(profilePubkeysDraft.length)}
                     </span>
                     <span className="rounded-full bg-[rgb(var(--color-accent)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label))]">
-                      {modeDraft === 'all' ? 'All topics' : 'Any topic'}
+                      {modeDraft === 'all' ? tApp('tagFeedsModeAll') : tApp('tagFeedsModeAny')}
                     </span>
                   </div>
 
@@ -572,15 +583,15 @@ export default function TagFeedsPage() {
 
               <section className="space-y-4">
                 <div>
-                  <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">Identity</p>
+                  <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">{tApp('tagFeedsIdentitySection')}</p>
                   <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
-                    Give the feed a recognizable look with a name, a short description, and optional media.
+                    {tApp('tagFeedsIdentityHint')}
                   </p>
                 </div>
 
                 <div>
                   <label className="mb-2 block text-[13px] font-medium text-[rgb(var(--color-label-secondary))]" htmlFor="tag-feed-title">
-                    Feed name
+                    {tApp('tagFeedsFeedNameLabel')}
                   </label>
                   <input
                     id="tag-feed-title"
@@ -590,14 +601,14 @@ export default function TagFeedsPage() {
                       setTitleDraft(event.target.value)
                       clearFormError()
                     }}
-                    placeholder="Apple insiders"
+                    placeholder={tApp('tagFeedsFeedNamePlaceholder')}
                     className="w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[15px] text-[rgb(var(--color-label))] placeholder:text-[rgb(var(--color-label-tertiary))] outline-none transition-colors focus:border-[rgb(var(--color-accent))]"
                   />
                 </div>
 
                 <div>
                   <label className="mb-2 block text-[13px] font-medium text-[rgb(var(--color-label-secondary))]" htmlFor="tag-feed-description">
-                    Description
+                    {tApp('tagFeedsDescriptionLabel')}
                   </label>
                   <textarea
                     id="tag-feed-description"
@@ -607,7 +618,7 @@ export default function TagFeedsPage() {
                       clearFormError()
                     }}
                     rows={3}
-                    placeholder="A feed for product launches, rumors, and the people talking about them."
+                    placeholder={tApp('tagFeedsDescriptionPlaceholder')}
                     className="w-full resize-y rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[15px] text-[rgb(var(--color-label))] placeholder:text-[rgb(var(--color-label-tertiary))] outline-none transition-colors focus:border-[rgb(var(--color-accent))]"
                   />
                 </div>
@@ -615,7 +626,7 @@ export default function TagFeedsPage() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
                     <label className="mb-2 block text-[13px] font-medium text-[rgb(var(--color-label-secondary))]" htmlFor="tag-feed-avatar">
-                      Avatar URL
+                      {tApp('tagFeedsAvatarUrlLabel')}
                     </label>
                     <input
                       id="tag-feed-avatar"
@@ -625,14 +636,14 @@ export default function TagFeedsPage() {
                         setAvatarDraft(event.target.value)
                         clearFormError()
                       }}
-                      placeholder="https://example.com/feed-avatar.jpg"
+                      placeholder={tApp('tagFeedsAvatarUrlPlaceholder')}
                       className="w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[15px] text-[rgb(var(--color-label))] placeholder:text-[rgb(var(--color-label-tertiary))] outline-none transition-colors focus:border-[rgb(var(--color-accent))]"
                     />
                   </div>
 
                   <div>
                     <label className="mb-2 block text-[13px] font-medium text-[rgb(var(--color-label-secondary))]" htmlFor="tag-feed-banner">
-                      Banner URL
+                      {tApp('tagFeedsBannerUrlLabel')}
                     </label>
                     <input
                       id="tag-feed-banner"
@@ -642,7 +653,7 @@ export default function TagFeedsPage() {
                         setBannerDraft(event.target.value)
                         clearFormError()
                       }}
-                      placeholder="https://example.com/feed-banner.jpg"
+                      placeholder={tApp('tagFeedsBannerUrlPlaceholder')}
                       className="w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[15px] text-[rgb(var(--color-label))] placeholder:text-[rgb(var(--color-label-tertiary))] outline-none transition-colors focus:border-[rgb(var(--color-accent))]"
                     />
                   </div>
@@ -651,15 +662,15 @@ export default function TagFeedsPage() {
 
               <section className="space-y-4">
                 <div>
-                  <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">Topics</p>
+                  <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">{tApp('tagFeedsTopicsSection')}</p>
                   <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
-                    Define the topic terms that shape the feed. We match exact hashtags, plain-text mentions, and semantic context around those terms.
+                    {tApp('tagFeedsTopicsHint')}
                   </p>
                 </div>
 
                 <div>
                   <label className="mb-2 block text-[13px] font-medium text-[rgb(var(--color-label-secondary))]" htmlFor="tag-feed-include">
-                    Add keywords or hashtags
+                    {tApp('tagFeedsIncludeLabel')}
                   </label>
                   <input
                     id="tag-feed-include"
@@ -669,14 +680,14 @@ export default function TagFeedsPage() {
                       setIncludeDraft(event.target.value)
                       clearFormError()
                     }}
-                    placeholder="apple, #iphone, macbook"
+                    placeholder={tApp('tagFeedsIncludePlaceholder')}
                     className="w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[15px] text-[rgb(var(--color-label))] placeholder:text-[rgb(var(--color-label-tertiary))] outline-none transition-colors focus:border-[rgb(var(--color-accent))]"
                   />
                 </div>
 
                 <div>
                   <label className="mb-2 block text-[13px] font-medium text-[rgb(var(--color-label-secondary))]" htmlFor="tag-feed-exclude">
-                    Exclude keywords or hashtags
+                    {tApp('tagFeedsExcludeLabel')}
                   </label>
                   <input
                     id="tag-feed-exclude"
@@ -686,14 +697,14 @@ export default function TagFeedsPage() {
                       setExcludeDraft(event.target.value)
                       clearFormError()
                     }}
-                    placeholder="giveaway, #spam"
+                    placeholder={tApp('tagFeedsExcludePlaceholder')}
                     className="w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[15px] text-[rgb(var(--color-label))] placeholder:text-[rgb(var(--color-label-tertiary))] outline-none transition-colors focus:border-[rgb(var(--color-accent))]"
                   />
                 </div>
 
                 <div>
                   <span className="mb-2 block text-[13px] font-medium text-[rgb(var(--color-label-secondary))]">
-                    Match logic
+                    {tApp('tagFeedsMatchLogicLabel')}
                   </span>
                   <div className="flex flex-wrap gap-2">
                     {(['any', 'all'] as const).map((mode) => {
@@ -718,7 +729,7 @@ export default function TagFeedsPage() {
                             ${disabled ? 'cursor-not-allowed opacity-60' : ''}
                           `}
                         >
-                          {mode === 'any' ? 'Any topic' : 'All topics'}
+                          {mode === 'any' ? tApp('tagFeedsModeAny') : tApp('tagFeedsModeAll')}
                         </button>
                       )
                     })}
@@ -728,7 +739,7 @@ export default function TagFeedsPage() {
                 {previewDescription && (
                   <div className="rounded-[16px] bg-[rgb(var(--color-bg-secondary))] p-3">
                     <p className="text-[13px] font-medium text-[rgb(var(--color-label))]">
-                      Feed logic
+                      {tApp('tagFeedsFeedLogic')}
                     </p>
                     <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
                       {previewDescription.summary}
@@ -740,9 +751,9 @@ export default function TagFeedsPage() {
               <section className="space-y-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">Profiles to suggest</p>
-                    <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
-                      Add a few accounts people should follow alongside this feed, similar to how Threads suggests profiles inside a custom feed.
+                  <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">{tApp('tagFeedsProfilesSuggestSection')}</p>
+                  <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
+                    {tApp('tagFeedsProfilesSuggestHint')}
                     </p>
                   </div>
                   <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
@@ -753,10 +764,10 @@ export default function TagFeedsPage() {
                 {profilePubkeysDraft.length === 0 ? (
                   <div className="rounded-[18px] border border-dashed border-[rgb(var(--color-fill)/0.16)] bg-[rgb(var(--color-bg))] px-4 py-5 text-center">
                     <p className="text-[14px] font-medium text-[rgb(var(--color-label))]">
-                      No profiles added yet
+                      {tApp('tagFeedsNoProfilesTitle')}
                     </p>
                     <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
-                      Search below or start from suggestions to give this feed a few people to follow.
+                      {tApp('tagFeedsNoProfilesHint')}
                     </p>
                   </div>
                 ) : (
@@ -765,7 +776,7 @@ export default function TagFeedsPage() {
                       <FeedProfileItem
                         key={`selected:${pubkey}`}
                         pubkey={pubkey}
-                        actionLabel="Remove"
+                        actionLabel={tApp('tagFeedsRemove')}
                         actionVariant="remove"
                         onAction={() => handleToggleProfile(pubkey)}
                       />
@@ -781,20 +792,20 @@ export default function TagFeedsPage() {
                       clearFormError()
                     }}
                     onClear={() => setProfileSearchQuery('')}
-                    placeholder="Search profiles to add"
+                    placeholder={tApp('tagFeedsSearchPlaceholder')}
                   />
                 </div>
 
                 <div>
                   <div className="mb-2 flex items-center justify-between gap-3">
                     <p className="text-[13px] font-medium text-[rgb(var(--color-label-secondary))]">
-                      {profileSearchQuery.trim().length > 0 ? 'Search results' : 'Suggested profiles'}
+                      {profileSearchQuery.trim().length > 0 ? tApp('tagFeedsSearchResultsLabel') : tApp('tagFeedsSuggestedProfilesLabel')}
                     </p>
                     <p className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
                       {profileSearchLoading
-                        ? 'Searching...'
-                        : profileSearchQuery.trim().length === 0 && popularProfilesLoading
-                          ? 'Loading suggestions...'
+                          ? tApp('tagFeedsSearching')
+                          : profileSearchQuery.trim().length === 0 && popularProfilesLoading
+                            ? tApp('tagFeedsLoadingSuggestions')
                           : ''}
                     </p>
                   </div>
@@ -806,7 +817,7 @@ export default function TagFeedsPage() {
                           key={`suggested:${profile.pubkey}`}
                           pubkey={profile.pubkey}
                           profile={profile}
-                          actionLabel="Add"
+                          actionLabel={tApp('tagFeedsAdd')}
                           onAction={() => handleToggleProfile(profile.pubkey)}
                         />
                       ))}
@@ -814,12 +825,12 @@ export default function TagFeedsPage() {
                   ) : (
                     <div className="rounded-[18px] border border-[rgb(var(--color-fill)/0.1)] bg-[rgb(var(--color-bg))] px-4 py-5 text-center">
                       <p className="text-[14px] font-medium text-[rgb(var(--color-label))]">
-                        {profileSearchQuery.trim().length > 0 ? 'No profiles found' : 'Suggestions will show up here'}
+                        {profileSearchQuery.trim().length > 0 ? tApp('tagFeedsNoResultsTitle') : tApp('tagFeedsSuggestionsTitle')}
                       </p>
                       <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
                         {profileSearchQuery.trim().length > 0
-                          ? 'Try another name, handle, or NIP-05 identifier.'
-                          : 'Once profile data is available locally, you can add people to this feed from here.'}
+                          ? tApp('tagFeedsNoResultsHint')
+                          : tApp('tagFeedsSuggestionsHint')}
                       </p>
                     </div>
                   )}
@@ -837,14 +848,14 @@ export default function TagFeedsPage() {
                   type="submit"
                   className="rounded-[14px] bg-[rgb(var(--color-label))] px-4 py-3 text-[15px] font-medium text-[rgb(var(--color-bg))] transition-opacity active:opacity-80"
                 >
-                  {editingId ? 'Save Feed' : 'Create Feed'}
+                  {editingId ? tApp('tagFeedsSubmitSave') : tApp('tagFeedsSubmitCreate')}
                 </button>
                 <button
                   type="button"
                   onClick={resetForm}
                   className="rounded-[14px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] px-4 py-3 text-[15px] font-medium text-[rgb(var(--color-label))] transition-opacity active:opacity-80"
                 >
-                  {editingId ? 'Cancel Editing' : 'Clear'}
+                  {editingId ? tApp('tagFeedsCancelEditing') : tApp('tagFeedsClear')}
                 </button>
               </div>
             </form>
@@ -853,7 +864,7 @@ export default function TagFeedsPage() {
 
         <section>
           <div className="mb-3 flex items-center justify-between gap-3 px-1">
-            <h2 className="section-kicker">Saved</h2>
+            <h2 className="section-kicker">{tApp('tagFeedsSavedSection')}</h2>
             <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
               {savedFeeds.length}
             </span>
@@ -862,7 +873,7 @@ export default function TagFeedsPage() {
           <div className="app-panel rounded-ios-xl p-4 card-elevated">
             {savedFeeds.length === 0 ? (
               <p className="text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
-                No saved tag feeds yet. Create one above and it will appear in the main Feed rail.
+                {tApp('tagFeedsNoSaved')}
               </p>
             ) : (
               <div className="space-y-4">

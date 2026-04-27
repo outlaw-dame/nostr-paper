@@ -23,10 +23,8 @@ import { RepostBody } from '@/components/nostr/RepostBody'
 import { ThreadBody } from '@/components/nostr/ThreadBody'
 import { UnknownKindBody } from '@/components/nostr/UnknownKindBody'
 import { UserStatusBody } from '@/components/nostr/UserStatusBody'
+import { useEventCombinedModeration } from '@/hooks/useEventCombinedModeration'
 import { useFilterOverride } from '@/hooks/useFilterOverride'
-import { mergeResults, useEventFilterCheck, useSemanticFiltering } from '@/hooks/useKeywordFilters'
-import { useEventModeration } from '@/hooks/useModeration'
-import { useMuteList } from '@/hooks/useMuteList'
 import { usePageHead } from '@/hooks/usePageHead'
 import { useProfile } from '@/hooks/useProfile'
 import { getEvent } from '@/lib/db/nostr'
@@ -53,47 +51,44 @@ import { parseNip51ListEvent } from '@/lib/nostr/lists'
 import { parseLongFormEvent } from '@/lib/nostr/longForm'
 import { buildNoteMetaTags, buildNoteTitle } from '@/lib/nostr/meta'
 import { decodeEventReference } from '@/lib/nostr/nip21'
-import { getNDK } from '@/lib/nostr/ndk'
+import { getNDK, waitForCachedEvents } from '@/lib/nostr/ndk'
 import { parsePollEvent, parsePollVoteEvent } from '@/lib/nostr/polls'
 import { parseReactionEvent } from '@/lib/nostr/reaction'
 import { parseReportEvent } from '@/lib/nostr/report'
 import { getQuotePostBody, parseRepostEvent } from '@/lib/nostr/repost'
+import { HighlightBody } from '@/components/nostr/HighlightBody'
+import { parseHighlightEvent } from '@/lib/nostr/highlight'
 import { parseUserStatusEvent } from '@/lib/nostr/status'
-import { parseCommentEvent, parseThreadEvent } from '@/lib/nostr/thread'
+import { parseCommentEvent, parseNumberedThreadMarker, parseTextNoteReply, parseThreadEvent } from '@/lib/nostr/thread'
 import { parseVideoEvent } from '@/lib/nostr/video'
+import { isThreadInspectorEnabled } from '@/lib/runtime/debugSettings'
 import { withRetry } from '@/lib/retry'
 import { Kind, type NostrEvent } from '@/types'
 
 export default function NotePage() {
   const navigate = useNavigate()
   const { id } = useParams<{ id: string }>()
+  const handleBack = () => {
+    // navigate(-1) is a no-op when the user landed directly on this URL.
+    // Fall back to home so the back button always works.
+    if (window.history.state?.idx > 0) navigate(-1)
+    else navigate('/')
+  }
   const [event, setEvent] = useState<NostrEvent | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [override, setOverride] = useState(false)
   const { profile } = useProfile(event?.pubkey)
-  const checkEvent = useEventFilterCheck()
-  const semanticFilterResults = useSemanticFiltering(event ? [event] : [])
   const { overridden: filterOverride, setOverridden: setFilterOverride } = useFilterOverride(event?.id)
   const {
-    blocked: eventBlocked,
-    loading: moderationLoading,
-    decision: moderationDecision,
-  } = useEventModeration(event)
-  const { isMuted, loading: muteListLoading } = useMuteList()
-  const isMutedAuthor = event ? isMuted(event.pubkey) : false
-  const keywordFilterResult = useMemo(
-    () => event
-      ? mergeResults(
-          checkEvent(event, profile ?? undefined),
-          semanticFilterResults.get(event.id) ?? { action: null, matches: [] },
-        )
-      : { action: null, matches: [] },
-    [checkEvent, event, profile, semanticFilterResults],
-  )
-  const isBlocked = eventBlocked || isMutedAuthor
-  const keywordGated = keywordFilterResult.action !== null && !filterOverride
-  const keywordHidden = keywordFilterResult.action === 'hide'
+    blocked:      isBlocked,
+    loading:      moderationLoading,
+    mlBlocked:    eventBlocked,
+    mlDecision:   moderationDecision,
+    keywordResult: keywordFilterResult,
+  } = useEventCombinedModeration(event, profile)
+  const keywordHidden = keywordFilterResult.action === 'hide' || keywordFilterResult.action === 'block'
+  const keywordGated = keywordFilterResult.action === 'warn' && !filterOverride
   const blockedByTagr = eventBlocked && (moderationDecision?.reason?.startsWith('tagr:') ?? false)
 
   // First image attachment URL — used as og:image
@@ -108,7 +103,7 @@ export default function NotePage() {
   }, [event])
 
   usePageHead(
-    event && !moderationLoading && (!isBlocked || override) && !keywordGated
+    event && !moderationLoading && (!isBlocked || override) && !keywordGated && !keywordHidden
       ? {
           title: buildNoteTitle(event, profile),
           tags: buildNoteMetaTags({ event, profile, imageUrl: ogImageUrl }),
@@ -181,6 +176,9 @@ export default function NotePage() {
         await fetchFromRelays()
         if (signal.aborted) return
 
+        await waitForCachedEvents([noteId])
+        if (signal.aborted) return
+
         const fetched = await loadLocal()
         if (signal.aborted) return
 
@@ -210,13 +208,13 @@ export default function NotePage() {
     return () => controller.abort()
   }, [id, navigate])
 
-  if (loading || (event !== null && moderationLoading) || muteListLoading) {
+  if (loading || (event !== null && moderationLoading)) {
     return (
       <div className="min-h-dvh bg-[rgb(var(--color-bg))] px-4 pt-safe pb-safe">
         <div className="sticky top-0 z-10 bg-[rgb(var(--color-bg)/0.88)] py-4 backdrop-blur-xl">
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            onClick={handleBack}
             className="rounded-full bg-[rgb(var(--color-fill)/0.09)] px-4 py-2 text-[15px] text-[rgb(var(--color-label))]"
           >
             Back
@@ -229,13 +227,13 @@ export default function NotePage() {
     )
   }
 
-  if (!event || ((isBlocked && !override) || keywordGated)) {
+  if (!event || ((isBlocked && !override) || keywordHidden || keywordGated)) {
     return (
       <div className="min-h-dvh bg-[rgb(var(--color-bg))] px-4 pt-safe pb-safe">
         <div className="sticky top-0 z-10 bg-[rgb(var(--color-bg)/0.88)] py-4 backdrop-blur-xl">
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            onClick={handleBack}
             className="rounded-full bg-[rgb(var(--color-fill)/0.09)] px-4 py-2 text-[15px] text-[rgb(var(--color-label))]"
           >
             Back
@@ -245,11 +243,13 @@ export default function NotePage() {
           <h1 className="text-[28px] font-semibold tracking-[-0.03em] text-[rgb(var(--color-label))]">
             {isBlocked || keywordHidden ? 'Content hidden' : keywordGated ? 'Content warning' : 'Note unavailable'}
           </h1>
-          {isBlocked || keywordGated ? (
+          {isBlocked || keywordHidden || keywordGated ? (
             <>
               <p className="mt-3 text-[16px] leading-7 text-[rgb(var(--color-label-secondary))]">
                 {isBlocked
                   ? 'This note was hidden by your content filters or mute list.'
+                  : keywordHidden
+                    ? 'This note was blocked by your system keyword filters.'
                   : 'This note matched your keyword filters.'}
               </p>
               {!isBlocked && keywordFilterResult.matches[0]?.term ? (
@@ -262,21 +262,34 @@ export default function NotePage() {
                   Blocked by Tagr.
                 </p>
               ) : null}
-              <button
-                type="button"
-                onClick={() => {
-                  if (isBlocked) setOverride(true)
-                  if (keywordGated) setFilterOverride(true)
-                }}
-                className="mt-4 rounded-full bg-[rgb(var(--color-fill)/0.12)] px-4 py-2 text-[15px] font-medium text-[rgb(var(--color-label))]"
-              >
-                Show Anyway
-              </button>
+              {(isBlocked || keywordGated) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isBlocked) setOverride(true)
+                    if (keywordGated) setFilterOverride(true)
+                  }}
+                  className="mt-4 rounded-full bg-[rgb(var(--color-fill)/0.12)] px-4 py-2 text-[15px] font-medium text-[rgb(var(--color-label))]"
+                >
+                  Show Anyway
+                </button>
+              )}
             </>
           ) : error ? (
-            <p className="mt-3 text-[16px] leading-7 text-[rgb(var(--color-label-secondary))]">
-              {error}
-            </p>
+            <>
+              <p className="mt-3 text-[16px] leading-7 text-[rgb(var(--color-label-secondary))]">
+                {error === 'Note not found.'
+                  ? 'This note could not be found on connected relays. It may have been deleted or the relay may be unavailable.'
+                  : error}
+              </p>
+              <button
+                type="button"
+                onClick={() => { window.location.reload() }}
+                className="mt-4 rounded-full bg-[rgb(var(--color-fill)/0.12)] px-4 py-2 text-[15px] font-medium text-[rgb(var(--color-label))]"
+              >
+                Try Again
+              </button>
+            </>
           ) : null}
         </div>
       </div>
@@ -300,6 +313,10 @@ export default function NotePage() {
   const thread = parseThreadEvent(event)
   const comment = parseCommentEvent(event)
   const userStatus = parseUserStatusEvent(event)
+  const highlight = parseHighlightEvent(event)
+  const numberedMarker = parseNumberedThreadMarker(event.content)
+  const parsedReply = parseTextNoteReply(event)
+  const threadInspectorEnabled = isThreadInspectorEnabled()
   const unsupportedKind = !isNostrPaperSupportedKind(event.kind)
     || (event.kind === Kind.Poll && !poll)
     || (event.kind === Kind.PollVote && !pollVote)
@@ -312,7 +329,7 @@ export default function NotePage() {
       <div className="sticky top-0 z-10 bg-[rgb(var(--color-bg)/0.88)] py-4 pt-safe backdrop-blur-xl">
         <button
           type="button"
-          onClick={() => navigate(-1)}
+          onClick={handleBack}
           className="rounded-full bg-[rgb(var(--color-fill)/0.09)] px-4 py-2 text-[15px] text-[rgb(var(--color-label))]"
         >
           Back
@@ -324,10 +341,13 @@ export default function NotePage() {
           <>
             <FileMetadataView event={event} metadata={fileMetadata} profile={profile} />
             <EventActionBar event={event} className="mt-5" />
-            <ConversationSection event={event} className="mt-6" />
+            <ConversationSection event={event} section="replies" className="mt-6" />
           </>
         ) : (
           <>
+            {/* Parent context — shows above the post if this is a reply */}
+            <ConversationSection event={event} section="root" className="mb-4" />
+
             <AuthorRow
               pubkey={event.pubkey}
               profile={profile}
@@ -335,6 +355,20 @@ export default function NotePage() {
               large
               actions
             />
+
+            {threadInspectorEnabled && (
+              <div className="mt-3 rounded-[12px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg-secondary))] px-3 py-2 font-mono text-[11px] leading-5 text-[rgb(var(--color-label-secondary))]">
+                <p>kind={event.kind}</p>
+                <p>id={event.id}</p>
+                <p>sig={event.sig}</p>
+                {numberedMarker && (
+                  <p>marker={numberedMarker.index}/{numberedMarker.total}</p>
+                )}
+                {parsedReply?.rootEventId && (
+                  <p>root={parsedReply.rootEventId} parent={parsedReply.parentEventId}</p>
+                )}
+              </div>
+            )}
 
             {repost ? (
               <RepostBody event={event} className="mt-4" />
@@ -367,10 +401,12 @@ export default function NotePage() {
                 {comment.content.trim().length > 0 && (
                   <NoteContent content={comment.content} className="mt-4" allowTranslation enableMarkdown />
                 )}
-                <QuotePreviewList event={event} className="mt-5" />
+                <QuotePreviewList event={event} showHeader={false} className="mt-5" compact />
               </>
             ) : userStatus ? (
               <UserStatusBody event={event} className="mt-4" />
+            ) : highlight ? (
+              <HighlightBody event={event} className="mt-4" />
             ) : nip51List ? (
               <ListBody event={event} className="mt-4" />
             ) : unsupportedKind ? (
@@ -383,12 +419,12 @@ export default function NotePage() {
                 {attachments.length > 0 && (
                   <NoteMediaAttachments attachments={attachments} className="mt-5" />
                 )}
-                <QuotePreviewList event={event} className="mt-5" />
+                <QuotePreviewList event={event} showHeader={false} className="mt-5" compact />
               </>
             )}
 
             <EventActionBar event={event} className="mt-5" />
-            <ConversationSection event={event} className="mt-6" />
+            <ConversationSection event={event} section="replies" className="mt-6" />
           </>
         )}
       </article>

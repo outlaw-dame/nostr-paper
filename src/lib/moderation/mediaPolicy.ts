@@ -2,18 +2,7 @@ import type { MediaModerationDecision, MediaModerationScores } from '@/types'
 
 export const DEFAULT_MEDIA_NSFW_MODEL_ID = 'onnx-community/nsfw_image_detection-ONNX'
 export const DEFAULT_MEDIA_VIOLENCE_MODEL_ID = 'onnx-community/vit-base-violence-detection-ONNX'
-export const MEDIA_MODERATION_POLICY_VERSION = 'extreme-media-harm-v1'
-
-function readThreshold(value: unknown, fallback: number): number {
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed)) return fallback
-  if (parsed <= 0) return 0
-  if (parsed >= 1) return 1
-  return parsed
-}
-
-const NSFW_BLOCK_THRESHOLD = readThreshold(import.meta.env.VITE_MEDIA_MODERATION_NSFW_BLOCK_THRESHOLD, 0.96)
-const VIOLENCE_BLOCK_THRESHOLD = readThreshold(import.meta.env.VITE_MEDIA_MODERATION_VIOLENCE_BLOCK_THRESHOLD, 0.97)
+export const MEDIA_MODERATION_POLICY_VERSION = 'media-harm-v2'
 
 export function emptyMediaModerationScores(): MediaModerationScores {
   return {
@@ -86,8 +75,8 @@ export function evaluateMediaModerationScores(
   scores: MediaModerationScores,
   models: { nsfwModel: string | null; violenceModel: string | null },
 ): MediaModerationDecision {
-  const isExplicitAdultContent = scores.nsfw >= NSFW_BLOCK_THRESHOLD
-  const isGraphicViolence = scores.violence >= VIOLENCE_BLOCK_THRESHOLD
+  const isExplicitAdultContent = scores.nsfw >= 0.70
+  const isGraphicViolence = scores.violence >= 0.75
 
   let reason: MediaModerationDecision['reason'] = null
   if (isExplicitAdultContent) {

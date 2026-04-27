@@ -82,8 +82,7 @@ describe('buildFileMetadataTags', () => {
       ['m', 'image/jpeg'],
       ['x', 'c'.repeat(64)],
     ])
-    expect(tags).toContainEqual(['thumb', 'https://cdn.example.com/thumb.jpg'])
-    expect(tags).not.toContainEqual(['thumb', 'https://cdn.example.com/thumb.jpg', 'e'.repeat(64)])
+    expect(tags).toContainEqual(['thumb', 'https://cdn.example.com/thumb.jpg', 'e'.repeat(64)])
     expect(tags).toContainEqual(['fallback', 'https://fallback-1.example.com/blob.jpg'])
     expect(tags).toContainEqual(['fallback', 'https://fallback-2.example.com/blob.jpg'])
   })

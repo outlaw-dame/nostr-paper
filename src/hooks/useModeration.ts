@@ -4,11 +4,27 @@ import { resolveTagrModerationDecisions } from '@/lib/moderation/tagr'
 import {
   buildEventModerationDocument,
   buildProfileModerationDocument,
+  buildSyndicationEntryModerationDocument,
+  buildSyndicationFeedModerationDocument,
   getModerationDocumentCacheKey,
 } from '@/lib/moderation/content'
+import { useMuteList } from '@/hooks/useMuteList'
 import type { ModerationDecision, ModerationDocument, NostrEvent, Profile } from '@/types'
+import type { SyndicationEntry, SyndicationFeed } from '@/lib/syndication/types'
 
+// Bounded in-memory LRU cache — evict oldest when over the limit so the
+// cache doesn't grow unbounded across a long session with thousands of events.
+const MODERATION_CACHE_MAX = 1_000
 const inMemoryModerationCache = new Map<string, ModerationDecision>()
+
+function cacheSetModeration(key: string, value: ModerationDecision): void {
+  if (inMemoryModerationCache.size >= MODERATION_CACHE_MAX) {
+    // Map preserves insertion order; the first key is the oldest.
+    const firstKey = inMemoryModerationCache.keys().next().value
+    if (firstKey !== undefined) inMemoryModerationCache.delete(firstKey)
+  }
+  inMemoryModerationCache.set(key, value)
+}
 
 interface UseModerationDocumentsResult {
   decisions: Map<string, ModerationDecision>
@@ -46,7 +62,9 @@ export function useModerationDocuments(
   const enabled = options.enabled ?? true
   const failClosed = options.failClosed ?? false
   const [decisions, setDecisions] = useState<Map<string, ModerationDecision>>(new Map())
-  const [loading, setLoading] = useState(false)
+  // Start loading:true so consumers don't render undecided events before
+  // the first decision batch arrives (prevents feed flicker).
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const signature = useMemo(
@@ -78,27 +96,50 @@ export function useModerationDocuments(
       }
     }
 
+    // Synchronously apply all cache hits so consumers see decisions immediately
+    // without a loading flash.
     setDecisions(nextDecisions)
     setError(null)
+
+    if (missing.length === 0) {
+      setLoading(false)
+      // Run Tagr in the background to pick up any relay-sourced blocks without
+      // gating the feed on the result (avoids loading oscillation for cached batches).
+      resolveTagrModerationDecisions(documents, controller.signal)
+        .then((tagrDecisions) => {
+          if (controller.signal.aborted || tagrDecisions.size === 0) return
+          setDecisions((previous) => {
+            const merged = new Map(previous)
+            for (const [id, tagrDecision] of tagrDecisions) {
+              const existing = merged.get(id)
+              if (!existing || existing.action !== 'block') {
+                merged.set(id, tagrDecision)
+              }
+            }
+            return merged
+          })
+        })
+        .catch(() => { /* non-blocking — ignore Tagr errors when all docs are cached */ })
+      return () => controller.abort()
+    }
 
     setLoading(true)
 
     Promise.all([
-      missing.length > 0
-        ? moderateContentDocuments(missing, controller.signal)
-        : Promise.resolve([]),
+      moderateContentDocuments(missing, controller.signal),
       resolveTagrModerationDecisions(documents, controller.signal).catch(() => new Map<string, ModerationDecision>()),
     ])
       .then(([results, tagrDecisions]) => {
         if (controller.signal.aborted) return
 
         const merged = new Map(nextDecisions)
+
         for (const decision of results) {
           const document = missing.find((entry) => entry.id === decision.id)
           if (!document) continue
 
           const cacheKey = getModerationDocumentCacheKey(document)
-          inMemoryModerationCache.set(cacheKey, decision)
+          cacheSetModeration(cacheKey, decision)
           merged.set(decision.id, decision)
         }
 
@@ -119,16 +160,21 @@ export function useModerationDocuments(
       })
 
     return () => controller.abort()
-  }, [enabled, documents, signature])
+    // `documents` is intentionally excluded: `signature` encodes all document
+    // content, so reference-only changes (same array content, new object) do not
+    // re-trigger a relay fetch. Including `documents` caused a Tagr relay query
+    // on every parent re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, signature])
 
   const allowedIds = useMemo(
-    () => getAllowedIds(documents, decisions, !failClosed && error !== null),
-    [documents, decisions, error, failClosed],
+    () => getAllowedIds(documents, decisions, !failClosed && (loading || error !== null)),
+    [documents, decisions, loading, error, failClosed],
   )
 
   const blockedIds = useMemo(() => {
     const blocked = new Set<string>()
-    const failOpen = !failClosed && error !== null
+    const failOpen = !failClosed && (loading || error !== null)
 
     for (const document of documents) {
       const decision = decisions.get(document.id)
@@ -141,7 +187,7 @@ export function useModerationDocuments(
     }
 
     return blocked
-  }, [documents, decisions, error, failClosed])
+  }, [documents, decisions, loading, error, failClosed])
 
   return {
     decisions,
@@ -198,4 +244,61 @@ export function useProfileModeration(
     decision,
     error: moderation.error,
   }
+}
+
+export function useSyndicationFeedModeration(feed: SyndicationFeed | null): {
+  feedBlocked: boolean
+  filteredItems: SyndicationEntry[]
+  loading: boolean
+} {
+  const feedSourceUrl = feed?.feedUrl ?? feed?.sourceUrl
+
+  const feedDoc = useMemo(
+    () => (feed ? buildSyndicationFeedModerationDocument(feed) : null),
+    [feed],
+  )
+
+  const itemDocs = useMemo(
+    () => feed
+      ? feed.items
+          .map((item) => buildSyndicationEntryModerationDocument(item, feedSourceUrl))
+          .filter((doc): doc is ModerationDocument => doc !== null)
+      : [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [feed, feedSourceUrl],
+  )
+
+  const allDocs = useMemo(
+    () => [...(feedDoc ? [feedDoc] : []), ...itemDocs],
+    [feedDoc, itemDocs],
+  )
+
+  const { blockedIds, loading } = useModerationDocuments(allDocs)
+  const { mutedWords, mutedHashtags } = useMuteList()
+
+  const feedBlocked = feedDoc !== null && blockedIds.has(feedDoc.id)
+
+  const filteredItems = useMemo(() => {
+    if (!feed) return []
+    return feed.items.filter((item, index) => {
+      const doc = itemDocs[index]
+      if (doc && blockedIds.has(doc.id)) return false
+
+      if (mutedWords.size > 0) {
+        const text = [item.title, item.summary, item.contentText]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+        for (const word of mutedWords) {
+          if (text.includes(word)) return false
+        }
+      }
+
+      if (mutedHashtags.size > 0 && item.tags.some((t) => mutedHashtags.has(t))) return false
+
+      return true
+    })
+  }, [feed, itemDocs, blockedIds, mutedWords, mutedHashtags])
+
+  return { feedBlocked, filteredItems, loading }
 }

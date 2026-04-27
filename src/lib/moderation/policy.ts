@@ -1,7 +1,7 @@
 import type { ModerationDecision, ModerationLabel, ModerationScores } from '@/types'
 
 export const DEFAULT_MODERATION_MODEL_ID = 'minuva/MiniLMv2-toxic-jigsaw-onnx'
-export const MODERATION_POLICY_VERSION = 'extreme-harm-v1'
+export const MODERATION_POLICY_VERSION = 'content-harm-v2'
 
 const KNOWN_LABELS: readonly ModerationLabel[] = [
   'toxic',
@@ -83,11 +83,15 @@ export function evaluateModerationScores(
   scores: ModerationScores,
   model: string,
 ): ModerationDecision {
-  const isCredibleThreat = scores.threat >= 0.70
-  const isIdentityAttack = scores.identity_hate >= 0.72 && scores.toxic >= 0.60
-  const isSevereAbuse = scores.severe_toxic >= 0.80
-  const isExtremeObsceneAbuse = scores.obscene >= 0.98 && scores.toxic >= 0.95 && scores.insult >= 0.90
-  const isExtremeHarassment = scores.toxic >= 0.97 && scores.insult >= 0.95
+  // Ordered from highest-confidence signals to lower — first match wins.
+  const isCredibleThreat    = scores.threat >= 0.60
+  const isIdentityAttack    = scores.identity_hate >= 0.60 && scores.toxic >= 0.45
+  const isSevereAbuse       = scores.severe_toxic >= 0.62
+  // Strong standalone obscenity signal (explicit sexual content in text)
+  const isHighObscene       = scores.obscene >= 0.88
+  // Moderate obscenity combined with toxicity or insult
+  const isObsceneAbuse      = scores.obscene >= 0.78 && (scores.toxic >= 0.60 || scores.insult >= 0.60)
+  const isHeavyHarassment   = scores.toxic >= 0.85 && scores.insult >= 0.75
 
   let reason: string | null = null
   if (isCredibleThreat) {
@@ -96,9 +100,11 @@ export function evaluateModerationScores(
     reason = 'identity_hate'
   } else if (isSevereAbuse) {
     reason = 'severe_toxic'
-  } else if (isExtremeObsceneAbuse) {
+  } else if (isHighObscene) {
+    reason = 'obscene'
+  } else if (isObsceneAbuse) {
     reason = 'obscene_abuse'
-  } else if (isExtremeHarassment) {
+  } else if (isHeavyHarassment) {
     reason = 'extreme_harassment'
   }
 

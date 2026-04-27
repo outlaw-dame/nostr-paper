@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AppearanceSettingsCard } from '@/components/cards/AppearanceSettingsCard'
 import { useApp } from '@/contexts/app-context'
+import { tApp } from '@/lib/i18n/app'
 import {
   getRepostCarouselVisible,
   getMetricsVisible,
@@ -36,7 +37,7 @@ export default function AppearancePage() {
               flex items-center justify-center
               active:opacity-80
             "
-            aria-label="Go back"
+            aria-label={tApp('appearanceGoBack')}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
               <path
@@ -49,27 +50,27 @@ export default function AppearancePage() {
             </svg>
           </button>
           <h1 className="text-[20px] font-semibold text-[rgb(var(--color-label))]">
-            Appearance
+            {tApp('appearanceTitle')}
           </h1>
         </div>
       </div>
 
       <div className="space-y-8 pb-10 pt-2">
         <section>
-          <h2 className="section-kicker px-1 mb-3">Theme</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('appearanceTheme')}</h2>
           <AppearanceSettingsCard />
         </section>
 
         <section>
-          <h2 className="section-kicker px-1 mb-3">Zen</h2>
+          <h2 className="section-kicker px-1 mb-3">{tApp('appearanceZen')}</h2>
           <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-5">
             <label className="flex items-start gap-3">
               <div className="mt-0.5 flex-1">
                 <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
-                  Show post metrics
+                  {tApp('appearanceShowMetrics')}
                 </p>
                 <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
-                  Turn off reply, repost, like, and bookmark metrics to keep Feed and Explore visually quiet.
+                  {tApp('appearanceShowMetricsHint')}
                 </p>
               </div>
               <button
@@ -101,10 +102,10 @@ export default function AppearancePage() {
             <label className="flex items-start gap-3">
               <div className="mt-0.5 flex-1">
                 <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
-                  Show repost highlights
+                  {tApp('appearanceShowReposts')}
                 </p>
                 <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
-                  Hide the repost highlights rail for a simpler, minimal feed layout.
+                  {tApp('appearanceShowRepostsHint')}
                 </p>
               </div>
               <button

@@ -16,7 +16,18 @@
       "Bash(npx vitest:*)",
       "WebFetch(domain:rknight.me)",
       "WebFetch(domain:github.com)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(grep -r SharedArrayBuffer /Users/damonoutlaw/Downloads/nostr-paper/src --include=*.ts --include=*.tsx --include=*.js)",
+      "Bash(grep -E \"\\\\.tsx?$\")",
+      "Bash(ls /Users/damonoutlaw/Downloads/nostr-paper/*.ts /Users/damonoutlaw/Downloads/nostr-paper/*.js /Users/damonoutlaw/Downloads/nostr-paper/*.mjs)",
+      "Bash(grep -E \"\\([0-9]{5,}|_000\\)\")",
+      "Bash(grep -rn \"virtualiz\\\\|VirtualList\\\\|useVirtual\\\\|virtual.*scroll\\\\|@tanstack/virtual\" /Users/damonoutlaw/Downloads/nostr-paper/src --include=*.tsx --include=*.ts -l)",
+      "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")",
+      "Bash(awk '/useEffect\\\\\\(/{p=1} p{print NR\": \"$0} /^\\\\s*}\\\\s*,\\\\s*\\\\[/{if\\(p\\){p=0}}' /Users/damonoutlaw/Downloads/nostr-paper/src/pages/FeedPage.tsx)",
+      "Bash(git stash *)",
+      "Bash(grep -E \"\\\\.ts\\(x\\)?$\")",
+      "Bash(git fetch *)",
+      "Bash(git checkout *)"
     ]
   }
 }

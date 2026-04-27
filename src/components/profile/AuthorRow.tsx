@@ -10,7 +10,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '@/contexts/app-context'
 import { useMuteList } from '@/hooks/useMuteList'
 import { useUserStatus } from '@/hooks/useUserStatus'
-import { getUserStatusLabel } from '@/lib/nostr/status'
 import { TwemojiText } from '@/components/ui/TwemojiText'
 import { formatNip05Identifier } from '@/lib/nostr/nip05'
 import { sanitizeName } from '@/lib/security/sanitize'
@@ -49,7 +48,7 @@ export function AuthorRow({
 }: AuthorRowProps) {
   const { currentUser } = useApp()
   const { isMuted, mute, unmute } = useMuteList()
-  const { status } = useUserStatus(pubkey, { background: false })
+  const { status } = useUserStatus(pubkey, { background: true })
   const displayName = useMemo(() => {
     if (profile?.display_name) return sanitizeName(profile.display_name)
     if (profile?.name)         return sanitizeName(profile.name)
@@ -57,7 +56,9 @@ export function AuthorRow({
   }, [profile, pubkey])
   const musicStatusLabel = useMemo(() => {
     if (!status || status.identifier !== 'music') return null
-    return getUserStatusLabel(status)
+    const songSnippet = status.content.trim()
+    if (!songSnippet) return '♪ Listening now'
+    return `♪ ${songSnippet.slice(0, 72)}${songSnippet.length > 72 ? '…' : ''}`
   }, [status])
 
   const relativeTime = useMemo(() => {
@@ -66,11 +67,11 @@ export function AuthorRow({
   }, [timestamp])
 
   const labelColor = light
-    ? 'text-white'
+    ? 'text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.55)]'
     : 'text-[rgb(var(--color-label))]'
 
   const secondaryColor = light
-    ? 'text-white/60'
+    ? 'text-white/80 [text-shadow:0_1px_3px_rgba(0,0,0,0.55)]'
     : 'text-[rgb(var(--color-label-secondary))]'
 
   const isSelf = currentUser?.pubkey === pubkey

@@ -15,9 +15,10 @@
 import type { DBWorkerRequest, DBWorkerResponse } from '@/types'
 import { withRetry } from '@/lib/retry'
 
-const QUERY_TIMEOUT_MS = 5_000    // 5s base query timeout (was 20s — too lenient)
-const INIT_TIMEOUT_MS  = 15_000   // 15s for WASM init (was 30s)
-const MAX_QUEUE_TIMEOUT_SLOP_MS = 3_000  // 3ms per pending query (was 10s slop)
+const QUERY_TIMEOUT_MS = 8_000    // 8s base timeout for read queries (FTS/local filters)
+const WRITE_TIMEOUT_MS = 20_000   // writes can queue behind reads during relay bursts
+const INIT_TIMEOUT_MS  = 25_000   // 25s for WASM init (iOS WASM load + migrations can be slow)
+const MAX_QUEUE_TIMEOUT_SLOP_MS = 12_000 // add bounded slop for queued requests under pressure
 
 // ── Worker Singleton ─────────────────────────────────────────
 
@@ -88,6 +89,23 @@ export class DBError extends Error {
 // Distributive omit preserves the discriminated union structure
 type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never
 
+function normalizeSqlHead(sql: string): string {
+  return sql
+    .replace(/^\s*\/\*[\s\S]*?\*\//, '')
+    .replace(/^\s*--.*$/gm, '')
+    .trimStart()
+    .toUpperCase()
+}
+
+function isReadOnlySql(sql: string): boolean {
+  const normalized = normalizeSqlHead(sql)
+  return (
+    normalized.startsWith('SELECT')
+    || normalized.startsWith('PRAGMA')
+    || normalized.startsWith('EXPLAIN')
+  )
+}
+
 function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return promise
   if (signal.aborted) {
@@ -122,7 +140,7 @@ function send<T>(
   return new Promise((resolve, reject) => {
     const id = seq++
     const w = getWorker()
-    const effectiveTimeoutMs = timeoutMs + Math.min(pending.size * 100, MAX_QUEUE_TIMEOUT_SLOP_MS)
+    const effectiveTimeoutMs = timeoutMs + Math.min(pending.size * 200, MAX_QUEUE_TIMEOUT_SLOP_MS)
 
     const timer = setTimeout(() => {
       pending.delete(id)
@@ -180,6 +198,9 @@ export async function dbQuery<T = Record<string, unknown>>(
   sql: string,
   bind?: unknown[],
 ): Promise<T[]> {
+  if (!isReadOnlySql(sql)) {
+    throw new DBError('dbQuery only accepts read-only SQL statements')
+  }
   return send<T[]>({ type: 'exec', payload: bind !== undefined ? { sql, bind } : { sql } })
 }
 
@@ -194,7 +215,7 @@ export async function dbRun(
   const result = await send<{ changes: number }>({
     type: 'run',
     payload: bind !== undefined ? { sql, bind } : { sql },
-  })
+  }, WRITE_TIMEOUT_MS)
   return result.changes
 }
 
@@ -206,7 +227,7 @@ export async function dbTransaction(
   operations: Array<{ sql: string; bind?: unknown[] }>
 ): Promise<void> {
   if (operations.length === 0) return
-  await send({ type: 'transaction', payload: operations })
+  await send({ type: 'transaction', payload: operations }, WRITE_TIMEOUT_MS)
 }
 
 /** Close the worker and database cleanly */

@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import type { ReactNode } from 'react'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -27,6 +29,13 @@ vi.mock('@/hooks/useLinkPreview', () => ({
 
     return { data: null, loading: false }
   },
+}))
+
+vi.mock('@/hooks/useSyndicationPreview', () => ({
+  useSyndicationPreview: () => ({
+    feed: null,
+    loading: false,
+  }),
 }))
 
 vi.mock('@/hooks/useProfile', () => ({
@@ -67,6 +76,13 @@ vi.mock('@/hooks/useAddressableEvent', () => ({
     event: null,
     loading: false,
     error: null,
+  }),
+}))
+
+vi.mock('@/hooks/useModeration', () => ({
+  useModerationDocuments: (documents: Array<{ id: string }>) => ({
+    allowedIds: new Set(documents.map((document) => document.id)),
+    loading: false,
   }),
 }))
 

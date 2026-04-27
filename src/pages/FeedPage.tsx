@@ -10,15 +10,18 @@
  * All data is sourced from SQLite via useNostrFeed (local-first).
  */
 
-import { useState, useCallback, useMemo, useEffect, useRef, type ReactNode } from 'react'
+import { useState, useCallback, useMemo, useEffect, useRef, memo, type ReactNode } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'motion/react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useApp } from '@/contexts/app-context'
 import { useNostrFeed } from '@/hooks/useNostrFeed'
 import { HeroCard } from '@/components/cards/HeroCard'
+import { NostrCreatorAttribution } from '@/components/links/NostrCreatorAttribution'
 import { RepostCarousel } from '@/components/feed/RepostCarousel'
 import { StoryRail } from '@/components/feed/StoryRail'
 import { SectionRail } from '@/components/feed/SectionRail'
+import { TopicFilterRail } from '@/components/feed/TopicFilterRail'
 import { FeedSkeleton } from '@/components/feed/FeedSkeleton'
 import { NoteContent } from '@/components/cards/NoteContent'
 import { SensitiveImage } from '@/components/media/SensitiveImage'
@@ -45,7 +48,10 @@ import { useActivityUnread } from '@/hooks/useActivityUnread'
 import { useSelfThreadIndex } from '@/hooks/useSelfThreadIndex'
 import { useVisibilityOnce } from '@/hooks/useVisibilityOnce'
 import { useEventFilterCheck, useSemanticFiltering, mergeResults } from '@/hooks/useKeywordFilters'
+import { useTopicClusters } from '@/hooks/useTopicClusters'
 import { recordMediaUrlFailure, recordMediaUrlSuccess, shouldAttemptMediaUrl } from '@/lib/media/failureBackoff'
+import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
+import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import { buildComposeSearch } from '@/lib/compose'
 import { type ArticleFeedSection } from '@/lib/feed/articleFeeds'
 import { collectRepostCarouselItems } from '@/lib/feed/reposts'
@@ -55,6 +61,7 @@ import { type SavedTagFeed } from '@/lib/feed/tagFeeds'
 import {
   buildTagTimelineHref,
   describeTagTimeline,
+  extractEventHashtags,
   getTagTimelineKey,
   matchesTagTimeline,
   parseTagTimeline,
@@ -68,6 +75,7 @@ import { parseRepostEvent } from '@/lib/nostr/repost'
 import { warmSelfThreadIndexCache } from '@/lib/nostr/threadIndex'
 import { parseCommentEvent } from '@/lib/nostr/thread'
 import { getPeerTubeEmbedUrl, getVimeoVideoId, getYouTubeVideoId } from '@/lib/nostr/imeta'
+import { tApp } from '@/lib/i18n/app'
 import type { ParsedVideoEvent } from '@/lib/nostr/video'
 import type { FilterCheckResult } from '@/lib/filters/types'
 import type { FeedSection, NostrEvent, Profile } from '@/types'
@@ -81,6 +89,11 @@ type FeedRailSection = FeedSection & {
   href?: string
   summary: string
   tagTimeline?: TagTimelineSpec | null
+}
+
+const EMPTY_FILTER_RESULT: FilterCheckResult = {
+  action: null,
+  matches: [],
 }
 
 const TAG_FEED_KINDS = [
@@ -141,6 +154,15 @@ const DEFAULT_SECTIONS: FeedRailSection[] = [
     },
   },
   {
+    id:     'highlights',
+    label:  'Highlights',
+    summary: 'Passages your network found worth preserving.',
+    filter: {
+      kinds: [Kind.Highlight],
+      limit: 30,
+    },
+  },
+  {
     id:     'bitcoin',
     label:  'Bitcoin',
     summary: 'Bitcoin discussion and market signal.',
@@ -174,6 +196,24 @@ const DEFAULT_SECTIONS: FeedRailSection[] = [
       ],
       '#t': ['nostr'],
       limit: 30,
+    },
+  },
+  {
+    id:     'reads',
+    label:  'Reads',
+    summary: 'Long-form articles from your network.',
+    filter: {
+      kinds: [Kind.LongFormContent],
+      limit: 24,
+    },
+  },
+  {
+    id:     'curations',
+    label:  'Curations',
+    summary: 'Handpicked reading lists and topic sets.',
+    filter: {
+      kinds: [Kind.ArticleCurationSet, Kind.VideoCurationSet, Kind.BookmarkSet],
+      limit: 24,
     },
   },
 ]
@@ -550,7 +590,7 @@ export default function FeedPage() {
   const [resumeFeedPosition, setResumeFeedPosition] = useState(true)
 
   const { profile: currentUserProfile } = useProfile(currentUser?.pubkey)
-  const { isMuted, loading: muteListLoading } = useMuteList()
+  const { isMuted, mutedWords, mutedHashtags, loading: muteListLoading } = useMuteList()
   const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
   const { unreadCount: activityUnreadCount, hasUnread: hasUnreadActivity } = useActivityUnread({ enabled: Boolean(currentUser) })
   const activityUnreadBadgeText = activityUnreadCount > 99 ? '99+' : String(activityUnreadCount)
@@ -583,8 +623,14 @@ export default function FeedPage() {
   }, [activeArticleFeed, activeSection])
   const activeTagTimeline = effectiveFeedSection.tagTimeline ?? null
   const activeSavedTagFeed = useMemo(
-    () => (isSavedTagFeedTimeline(activeSection.tagTimeline) ? activeSection.tagTimeline : null),
-    [activeSection.tagTimeline],
+    () => {
+      // Only show saved feed header for saved/tag feed sections, not for primary sections
+      const isSavedOrTagFeedSection = activeSection.id.startsWith('tag-feed:') || activeSection.id.startsWith('tag-route:')
+      return isSavedOrTagFeedSection && isSavedTagFeedTimeline(activeSection.tagTimeline)
+        ? activeSection.tagTimeline
+        : null
+    },
+    [activeSection.id, activeSection.tagTimeline],
   )
   const activeTagTimelineDetails = useMemo(
     () => describeTagTimeline(activeTagTimeline),
@@ -663,19 +709,37 @@ export default function FeedPage() {
 
   const visibleEvents = useMemo(
     () => filterNsfwTaggedEvents(
-      tagMatchedEvents.filter((event) => (
-        !isMuted(event.pubkey) &&
-        (!moderationDocumentIds.has(event.id) || allowedModerationIds.has(event.id))
-      )),
+      tagMatchedEvents.filter((event) => {
+        if (isMuted(event.pubkey)) return false
+        if (moderationDocumentIds.has(event.id) && !allowedModerationIds.has(event.id) && !moderationLoading) return false
+
+        // Word mutes: hide events whose content contains a muted keyword.
+        if (mutedWords.size > 0) {
+          const lower = event.content.toLowerCase()
+          for (const word of mutedWords) {
+            if (lower.includes(word)) return false
+          }
+        }
+
+        // Hashtag mutes: hide events that carry a muted #tag.
+        if (mutedHashtags.size > 0) {
+          const tags = extractEventHashtags(event)
+          if (tags.some((tag) => mutedHashtags.has(tag))) return false
+        }
+
+        return true
+      }),
       hideNsfwTaggedPosts,
     ),
-    [allowedModerationIds, hideNsfwTaggedPosts, isMuted, moderationDocumentIds, tagMatchedEvents],
-  )
-  const repostCarouselItems = useMemo(
-    () => collectRepostCarouselItems(visibleEvents, { minReposts: 3, maxItems: 12 }),
-    [visibleEvents],
+    [allowedModerationIds, hideNsfwTaggedPosts, isMuted, moderationDocumentIds, moderationLoading, mutedHashtags, mutedWords, tagMatchedEvents],
   )
   const repostFeatureEnabled = !activeTagTimeline && activeSection.id === 'feed' && repostCarouselVisible
+  const repostCarouselItems = useMemo(
+    () => (repostFeatureEnabled
+      ? collectRepostCarouselItems(visibleEvents, { minReposts: 3, maxItems: 12 })
+      : []),
+    [repostFeatureEnabled, visibleEvents],
+  )
   const featuredRepostTargetIds = useMemo(
     () => (repostFeatureEnabled
       ? new Set(repostCarouselItems.map((item) => item.targetEventId))
@@ -693,8 +757,30 @@ export default function FeedPage() {
 
     return reducedEvents.length >= MIN_PRIMARY_FEED_ITEMS ? reducedEvents : visibleEvents
   }, [featuredRepostTargetIds, repostFeatureEnabled, visibleEvents])
-  const heroEvent = curatedFeedEvents[0] ?? null
-  const secondaryEvents = curatedFeedEvents.slice(1)
+  // ── Topic clustering ────────────────────────────────────────────────────
+  // Only run on text-heavy sections where topic grouping is meaningful.
+  const topicClustersEnabled = (
+    activeSection.id === 'feed' ||
+    activeSection.id === 'notes'
+  )
+  const {
+    topics,
+    topicFilter,
+    setTopicFilter,
+    eventPassesFilter,
+    clustering,
+  } = useTopicClusters(visibleEvents, topicClustersEnabled)
+
+  const topicFilteredEvents = useMemo(
+    () => topicFilter === null
+      ? curatedFeedEvents
+      : curatedFeedEvents.filter(e => eventPassesFilter(e.id)),
+    [topicFilter, curatedFeedEvents, eventPassesFilter],
+  )
+
+  const heroEvent = topicFilteredEvents[0] ?? null
+  const secondaryEvents = topicFilteredEvents.slice(1)
+  const feedSurfaceLoading = loading || moderationLoading
   const feedLoading = loading || semanticTimelineLoading || moderationLoading || muteListLoading
 
   useEffect(() => {
@@ -742,14 +828,12 @@ export default function FeedPage() {
   useEffect(() => {
     if (!resumeFeedPosition) {
       clearFeedViewSnapshot(feedScopeKey)
+      const container = scrollContainerRef.current
+      if (container) {
+        container.scrollTop = 0
+      }
       restoreCompletedRef.current = true
     } else {
-      restoreCompletedRef.current = false
-    }
-  }, [feedScopeKey, resumeFeedPosition])
-
-  useEffect(() => {
-    if (resumeFeedPosition) {
       restoreCompletedRef.current = false
     }
   }, [feedScopeKey, resumeFeedPosition])
@@ -805,17 +889,29 @@ export default function FeedPage() {
   useEffect(() => {
     if (!resumeFeedPosition) return
     if (restoreCompletedRef.current) return
-    if (feedLoading) return
+    if (feedSurfaceLoading) return
     if (visibleEvents.length === 0 && !eose) return
 
     const container = scrollContainerRef.current
     const snapshot = getFeedViewSnapshot(feedScopeKey)
-    if (!container || !snapshot) {
+    if (!container) {
       restoreCompletedRef.current = true
       return
     }
 
+    if (!snapshot) {
+      container.scrollTop = 0
+      restoreCompletedRef.current = true
+      return
+    }
+
+    let firstFrame: number | null = null
+    let secondFrame: number | null = null
+    let cancelled = false
+
     const restore = () => {
+      if (cancelled) return true
+
       let restored = false
 
       if (snapshot.anchorEventId) {
@@ -843,19 +939,43 @@ export default function FeedPage() {
     }
 
     // Let layout settle before applying the anchor offset.
-    requestAnimationFrame(() => {
+    firstFrame = requestAnimationFrame(() => {
+      if (cancelled) return
       const firstPassDone = restore()
-      requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        if (cancelled) return
         const secondPassDone = restore()
         if (firstPassDone || secondPassDone) {
           restoreCompletedRef.current = true
         }
       })
     })
-  }, [eose, feedLoading, feedScopeKey, resumeFeedPosition, visibleEvents])
+
+    return () => {
+      cancelled = true
+      if (firstFrame !== null) {
+        cancelAnimationFrame(firstFrame)
+      }
+      if (secondFrame !== null) {
+        cancelAnimationFrame(secondFrame)
+      }
+    }
+  }, [eose, feedScopeKey, feedSurfaceLoading, resumeFeedPosition, visibleEvents])
 
   const checkEvent      = useEventFilterCheck()
   const semanticResults = useSemanticFiltering(visibleEvents)
+
+  const virtualizer = useVirtualizer({
+    count: secondaryEvents.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => 280,
+    overscan: 5,
+  })
+  const virtualItems = virtualizer.getVirtualItems()
+  const virtualPaddingTop = virtualItems.length > 0 ? virtualItems[0]!.start : 0
+  const virtualPaddingBottom = virtualItems.length > 0
+    ? virtualizer.getTotalSize() - virtualItems[virtualItems.length - 1]!.end
+    : 0
 
   const handleCompose = useCallback(() => {
     navigate({
@@ -895,10 +1015,11 @@ export default function FeedPage() {
     }
 
     setActiveSectionId(id)
+    setTopicFilter(null)
     if (routeSection) {
       navigate('/', { replace: true })
     }
-  }, [location.pathname, location.search, navigate, railSections, routeSection])
+  }, [location.pathname, location.search, navigate, railSections, routeSection, setTopicFilter])
 
   useEffect(() => {
     const scopeId = currentUser?.pubkey ?? 'anon'
@@ -945,7 +1066,7 @@ export default function FeedPage() {
           overflow-hidden text-[rgb(var(--color-label-secondary))]
           transition-opacity active:opacity-70
         "
-        aria-label={currentUser ? 'My Profile' : 'Sign In'}
+        aria-label={currentUser ? tApp('navMyProfile') : tApp('navSignIn')}
       >
         {currentUserProfile?.picture ? (
           <img
@@ -971,12 +1092,12 @@ export default function FeedPage() {
           text-[rgb(var(--color-label-secondary))]
           transition-opacity active:opacity-70
         "
-        aria-label="Activity"
+        aria-label={tApp('navActivity')}
       >
         {currentUser && hasUnreadActivity && (
           <span
             className="absolute -right-0.5 -top-0.5 min-w-[16px] rounded-full bg-[rgb(var(--color-system-red))] px-1 py-[1px] text-center text-[10px] font-semibold leading-[1.2] text-white"
-            aria-label={`${activityUnreadCount} unread notifications`}
+            aria-label={tApp('navUnreadNotifications', { count: activityUnreadCount })}
           >
             {activityUnreadBadgeText}
           </span>
@@ -996,7 +1117,7 @@ export default function FeedPage() {
           text-[rgb(var(--color-label-secondary))]
           transition-opacity active:opacity-70
         "
-        aria-label="Settings"
+        aria-label={tApp('navSettings')}
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <circle cx="12" cy="12" r="3" />
@@ -1013,7 +1134,7 @@ export default function FeedPage() {
           text-[rgb(var(--color-label))]
           transition-opacity active:opacity-70
         "
-        aria-label="Compose a note"
+        aria-label={tApp('navComposeNote')}
       >
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
           <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
@@ -1038,7 +1159,7 @@ export default function FeedPage() {
         <div className="glass rounded-full px-4 py-1.5 flex items-center gap-2">
           <span className="h-2 w-2 rounded-full bg-[rgb(var(--color-accent))]" />
           <span className="text-[rgb(var(--color-label))] text-[14px] font-medium">
-            Pull to compose
+            {tApp('feedPullToCompose')}
           </span>
         </div>
       </motion.div>
@@ -1065,85 +1186,9 @@ export default function FeedPage() {
           <div className="pb-6 pt-safe">
             <section className="px-1 pt-2">
               {activeSavedTagFeed ? (
-                <div className="space-y-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0 flex-1">
-                      <p className="section-kicker">Saved Feed</p>
-                      <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
-                        Exact hashtags, plain-text mentions, and semantic context around your selected topics.
-                      </p>
-                    </div>
-
-                    {headerActions}
-                  </div>
-
-                  <div className="overflow-hidden rounded-[28px] border border-[rgb(var(--color-fill)/0.1)] bg-[rgb(var(--color-bg-secondary))]">
-                    <div className="relative h-40 overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(var(--color-accent),0.2),_transparent_55%),linear-gradient(180deg,_rgba(var(--color-fill),0.14),_rgba(var(--color-fill),0.05))]">
-                      <FeedHeaderImage
-                        src={activeSavedTagFeed.banner || null}
-                        className="h-full w-full object-cover"
-                      />
-                      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,0.22))]" />
-                    </div>
-
-                    <div className="relative px-4 pb-4">
-                      <div className="-mt-10 flex items-end justify-between gap-3">
-                        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full ring-4 ring-[rgb(var(--color-bg))]">
-                          <FeedHeaderImage
-                            src={activeSavedTagFeed.avatar || null}
-                            alt={`${headerSection.label} avatar`}
-                            className="h-full w-full object-cover"
-                            fallback={(
-                              <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(145deg,rgba(var(--color-accent),0.18),rgba(var(--color-fill),0.12))] text-[rgb(var(--color-label))]">
-                                <span className="text-[28px] font-semibold">
-                                  {(headerSection.label.trim().replace(/^#/, '')[0] ?? 'F').toUpperCase()}
-                                </span>
-                              </div>
-                            )}
-                          />
-                        </div>
-
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
-                            {activeSavedTagFeed.includeTags.length} topic{activeSavedTagFeed.includeTags.length === 1 ? '' : 's'}
-                          </span>
-                          <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
-                            {activeSavedTagFeed.mode === 'all' ? 'All topics' : 'Any topic'}
-                          </span>
-                          {activeSavedTagFeed.profilePubkeys.length > 0 && (
-                            <span className="rounded-full bg-[rgb(var(--color-accent)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
-                              {activeSavedTagFeed.profilePubkeys.length} profile{activeSavedTagFeed.profilePubkeys.length === 1 ? '' : 's'}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="mt-3">
-                        <h1 className="text-[30px] font-semibold leading-[1.02] tracking-[-0.04em] text-[rgb(var(--color-label))]">
-                          <TwemojiText text={headerSection.label} />
-                        </h1>
-                        <p className="mt-2 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
-                          {sectionSummary}
-                        </p>
-                      </div>
-
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        {activeSavedTagFeed.includeTags.slice(0, 4).map((tag) => (
-                          <span
-                            key={`saved-header:${activeSavedTagFeed.id}:${tag}`}
-                            className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label))]"
-                          >
-                            #{tag}
-                          </span>
-                        ))}
-                        {savedFeedTopicOverflow > 0 && (
-                          <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
-                            +{savedFeedTopicOverflow}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1" />
+                  {headerActions}
                 </div>
               ) : (
                 <div className="flex items-start justify-between gap-4">
@@ -1170,7 +1215,7 @@ export default function FeedPage() {
                   text-left text-[15px] text-[rgb(var(--color-label-tertiary))]
                   transition-opacity active:opacity-80
                 "
-                aria-label="Open search"
+                aria-label={tApp('feedOpenSearch')}
               >
                 <svg
                   width="16" height="16" viewBox="0 0 16 16" fill="none"
@@ -1180,7 +1225,7 @@ export default function FeedPage() {
                   <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.5" />
                   <path d="M10 10l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                 </svg>
-                <span className="truncate">Search notes, articles, videos, and people</span>
+                <span className="truncate">{tApp('feedSearchPrompt')}</span>
               </button>
             </section>
 
@@ -1190,7 +1235,85 @@ export default function FeedPage() {
                 activeId={activeSection.id}
                 onSelect={handleSectionChange}
               />
+              <TopicFilterRail
+                topics={topics}
+                activeTopicId={topicFilter}
+                onSelect={setTopicFilter}
+                clustering={clustering}
+              />
             </div>
+
+            {activeSavedTagFeed && (
+              <div className="mt-4 px-1">
+                <div className="overflow-hidden rounded-[28px] border border-[rgb(var(--color-fill)/0.1)] bg-[rgb(var(--color-bg-secondary))]">
+                  <div className="relative h-40 overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(var(--color-accent),0.2),_transparent_55%),linear-gradient(180deg,_rgba(var(--color-fill),0.14),_rgba(var(--color-fill),0.05))]">
+                    <FeedHeaderImage
+                      src={activeSavedTagFeed.banner || null}
+                      className="h-full w-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,0.22))]" />
+                  </div>
+
+                  <div className="relative px-4 pb-4">
+                    <div className="-mt-10 flex items-end justify-between gap-3">
+                      <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full ring-4 ring-[rgb(var(--color-bg))]">
+                        <FeedHeaderImage
+                          src={activeSavedTagFeed.avatar || null}
+                          alt={`${headerSection.label} avatar`}
+                          className="h-full w-full object-cover"
+                          fallback={(
+                            <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(145deg,rgba(var(--color-accent),0.18),rgba(var(--color-fill),0.12))] text-[rgb(var(--color-label))]">
+                              <span className="text-[28px] font-semibold">
+                                {(headerSection.label.trim().replace(/^#/, '')[0] ?? 'F').toUpperCase()}
+                              </span>
+                            </div>
+                          )}
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
+                          {activeSavedTagFeed.includeTags.length} topic{activeSavedTagFeed.includeTags.length === 1 ? '' : 's'}
+                        </span>
+                        <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
+                          {activeSavedTagFeed.mode === 'all' ? 'All topics' : 'Any topic'}
+                        </span>
+                        {activeSavedTagFeed.profilePubkeys.length > 0 && (
+                          <span className="rounded-full bg-[rgb(var(--color-accent)/0.08)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]">
+                            {activeSavedTagFeed.profilePubkeys.length} profile{activeSavedTagFeed.profilePubkeys.length === 1 ? '' : 's'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-3">
+                      <h1 className="text-[30px] font-semibold leading-[1.02] tracking-[-0.04em] text-[rgb(var(--color-label))]">
+                        <TwemojiText text={headerSection.label} />
+                      </h1>
+                      <p className="mt-2 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
+                        {sectionSummary}
+                      </p>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {activeSavedTagFeed.includeTags.slice(0, 4).map((tag) => (
+                        <span
+                          key={`saved-header:${activeSavedTagFeed.id}:${tag}`}
+                          className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label))]"
+                        >
+                          #{tag}
+                        </span>
+                      ))}
+                      {savedFeedTopicOverflow > 0 && (
+                        <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1.5 text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
+                          +{savedFeedTopicOverflow}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {showArticleFeeds && activeArticleFeed && (
               <div className="mt-4 space-y-3">
@@ -1230,7 +1353,7 @@ export default function FeedPage() {
             )}
 
             <div className="mt-3">
-              {feedLoading && !heroEvent ? (
+              {feedSurfaceLoading && !heroEvent ? (
                 <FeedSkeleton type="hero" />
               ) : heroEvent ? (
                 <div data-feed-event-id={heroEvent.id}>
@@ -1253,24 +1376,35 @@ export default function FeedPage() {
               ) : null}
             </div>
 
-            <div className="mt-4 space-y-3">
-              {feedLoading && secondaryEvents.length === 0 ? (
-                Array.from({ length: 3 }, (_, i) => (
-                  <FeedSkeleton key={i} type="card" />
-                ))
-              ) : (
-                <AnimatePresence initial={false}>
-                  {secondaryEvents.map((event, i) => (
-                    <SecondaryCard
-                      key={event.id}
-                      event={event}
-                      index={i}
-                      checkEvent={checkEvent}
-                      semanticResult={semanticResults.get(event.id) ?? { action: null, matches: [] }}
-                      feedInlineAutoplayEnabled={feedInlineAutoplayEnabled}
-                    />
+            <div className="mt-4">
+              {feedSurfaceLoading && secondaryEvents.length === 0 ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 3 }, (_, i) => (
+                    <FeedSkeleton key={i} type="card" />
                   ))}
-                </AnimatePresence>
+                </div>
+              ) : (
+                  <div style={{ paddingTop: `${virtualPaddingTop}px`, paddingBottom: `${virtualPaddingBottom}px` }}>
+                    {virtualItems.map((virtualRow) => {
+                      const event = secondaryEvents[virtualRow.index]!
+                      return (
+                        <div
+                          key={event.id}
+                          ref={virtualizer.measureElement}
+                          data-index={virtualRow.index}
+                          className="pb-3"
+                        >
+                          <MemoSecondaryCard
+                            event={event}
+                            index={virtualRow.index}
+                            checkEvent={checkEvent}
+                            semanticResult={semanticResults.get(event.id) ?? EMPTY_FILTER_RESULT}
+                            feedInlineAutoplayEnabled={feedInlineAutoplayEnabled}
+                          />
+                        </div>
+                      )
+                    })}
+                  </div>
               )}
             </div>
           </div>
@@ -1297,6 +1431,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
   const followStatus = useFollowStatus(event.pubkey)
   const { ref: visibilityRef, visible: storyPreviewVisible } = useVisibilityOnce<HTMLDivElement>()
   const filterResult = mergeResults(checkEvent(event, profile ?? undefined), semanticResult)
+  const entryDelay = Math.min(index, 5) * 0.04
   const comment = parseCommentEvent(event)
   const {
     article,
@@ -1315,6 +1450,9 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
     videoPoster,
     videoPlaybackPlan,
     storyAuthor,
+    storyNostrCreator,
+    storyNostrNip05,
+    storyHostname,
     storySiteName,
     storySummary,
     storyTitle,
@@ -1332,7 +1470,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
           type:    'spring',
           stiffness: 280,
           damping:   28,
-          delay:   index * 0.04,
+          delay:   entryDelay,
         }}
         className="
           app-panel
@@ -1355,6 +1493,8 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
       >
         {isStoryCard && (
           <RichStoryMedia
+            eventId={event.id}
+            eventCreatedAt={event.created_at}
             isArticle={isArticleStory}
             articleImage={articlePreview}
             video={video}
@@ -1367,15 +1507,26 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
           />
         )}
 
+        {repost && (
+          <div className="flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M17 1l4 4-4 4" />
+              <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+              <path d="M7 23l-4-4 4-4" />
+              <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+            </svg>
+            <span>Repost</span>
+          </div>
+        )}
         <AuthorRow
           pubkey={event.pubkey}
           profile={profile}
           timestamp={event.created_at}
           actions
         />
-        {(repost || thread || comment) && (
+        {(thread || comment) && (
           <p className="mt-3 text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-            {thread ? 'Thread' : comment ? 'Comment' : 'Repost'}
+            {thread ? 'Thread' : 'Comment'}
           </p>
         )}
         <ThreadIndexBadge threadIndex={threadIndex} className="mt-3" />
@@ -1395,6 +1546,14 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
                 : storySiteName}
           </p>
         )}
+        {!poll && isStoryCard && storyNostrCreator && (
+          <NostrCreatorAttribution
+            nostrCreator={storyNostrCreator}
+            {...(storyNostrNip05 !== undefined ? { nostrNip05: storyNostrNip05 } : {})}
+            pageHostname={storyHostname ?? null}
+            className="mt-2 rounded-[14px] bg-[rgb(var(--color-fill)/0.03)]"
+          />
+        )}
         {!poll && storySummary ? (
           <>
             <p className="mt-2 text-[15px] leading-6 text-[rgb(var(--color-label-secondary))] line-clamp-3">
@@ -1405,7 +1564,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
             )}
           </>
         ) : !poll && repost ? (
-          <RepostBody event={event} className="mt-3" compact linked={false} />
+          <RepostBody event={event} className="mt-3" compact linked={false} showLabel={false} />
         ) : !poll ? (
           <>
             {quoteBody.trim().length > 0 && (
@@ -1423,9 +1582,11 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
                 className="mt-3"
                 compact
                 interactive
+                isSensitive={contentWarning !== null}
+                sensitiveReason={contentWarning?.reason ?? null}
               />
             )}
-            <QuotePreviewList event={event} className="mt-3" compact linked={false} maxItems={1} />
+            <QuotePreviewList event={event} className="mt-3" compact linked={false} maxItems={1} showHeader={false} />
           </>
         ) : null}
         <EventMetricsRow event={event} interactive />
@@ -1434,7 +1595,11 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
   )
 }
 
+const MemoSecondaryCard = memo(SecondaryCard)
+
 interface RichStoryMediaProps {
+  eventId: string
+  eventCreatedAt: number
   isArticle: boolean
   articleImage: string | undefined
   video: ParsedVideoEvent | null
@@ -1448,16 +1613,31 @@ interface RichStoryMediaProps {
 
 const FEED_INLINE_MEDIA_CIRCUIT_OPEN_EVENT = 'paper:feed-inline-media-circuit-open'
 const FEED_INLINE_MEDIA_FAILURE_THRESHOLD = 3
+const FEED_INLINE_MEDIA_CIRCUIT_COOLDOWN_MS = 5 * 60 * 1000
 let feedInlineMediaAutoplayFailures = 0
 let feedInlineMediaAutoplayCircuitOpen = false
+let feedInlineMediaAutoplayCircuitOpenedAt = 0
+
+function isFeedInlineMediaAutoplayCircuitOpen(): boolean {
+  if (!feedInlineMediaAutoplayCircuitOpen) return false
+  if (Date.now() - feedInlineMediaAutoplayCircuitOpenedAt < FEED_INLINE_MEDIA_CIRCUIT_COOLDOWN_MS) {
+    return true
+  }
+
+  feedInlineMediaAutoplayCircuitOpen = false
+  feedInlineMediaAutoplayFailures = 0
+  feedInlineMediaAutoplayCircuitOpenedAt = 0
+  return false
+}
 
 function recordFeedInlineMediaAutoplayFailure(): void {
-  if (feedInlineMediaAutoplayCircuitOpen) return
+  if (isFeedInlineMediaAutoplayCircuitOpen()) return
 
   feedInlineMediaAutoplayFailures += 1
   if (feedInlineMediaAutoplayFailures < FEED_INLINE_MEDIA_FAILURE_THRESHOLD) return
 
   feedInlineMediaAutoplayCircuitOpen = true
+  feedInlineMediaAutoplayCircuitOpenedAt = Date.now()
   window.dispatchEvent(new Event(FEED_INLINE_MEDIA_CIRCUIT_OPEN_EVENT))
 }
 
@@ -1477,6 +1657,8 @@ function markInlineAutoplaySourcesFailed(
 }
 
 function RichStoryMedia({
+  eventId,
+  eventCreatedAt,
   isArticle,
   articleImage,
   video,
@@ -1489,6 +1671,23 @@ function RichStoryMedia({
 }: RichStoryMediaProps) {
   const enableFeedInlineMedia = import.meta.env.VITE_ENABLE_FEED_INLINE_MEDIA === 'true' && feedInlineAutoplayEnabled
   const [autoplayFailed, setAutoplayFailed] = useState(false)
+
+  // ── Rich-story media moderation ──────────────────────────────
+  // Classify the card image/poster before rendering. failClosed keeps the
+  // placeholder visible during classification instead of flashing content.
+  const richMediaModerationDocument = useMemo(
+    () => buildMediaModerationDocument({
+      id: `${eventId}:rich-story`,
+      kind: isArticle ? 'image' : 'video_preview',
+      url: (articleImage ?? videoPoster) ?? null,
+      updatedAt: eventCreatedAt,
+    }),
+    [eventId, eventCreatedAt, articleImage, videoPoster, isArticle],
+  )
+  const { blocked: richMediaBlocked, loading: richModerationLoading } = useMediaModerationDocument(
+    richMediaModerationDocument,
+    { failClosed: true },
+  )
   const filteredPlaybackSources = useMemo(
     () => (playbackSources ?? []).filter((source) => shouldAttemptMediaUrl(source.url)),
     [playbackSources],
@@ -1499,7 +1698,7 @@ function RichStoryMedia({
   }, [video?.id])
 
   useEffect(() => {
-    if (feedInlineMediaAutoplayCircuitOpen) {
+    if (isFeedInlineMediaAutoplayCircuitOpen()) {
       setAutoplayFailed(true)
       return undefined
     }
@@ -1553,8 +1752,10 @@ function RichStoryMedia({
     !youTubeId &&
     !vimeoId &&
     !peertubeEmbed &&
-    !feedInlineMediaAutoplayCircuitOpen &&
-    !autoplayFailed,
+    !isFeedInlineMediaAutoplayCircuitOpen() &&
+    !autoplayFailed &&
+    !richMediaBlocked &&
+    !richModerationLoading,
   )
   const { ref: mediaRef, visible: mediaVisible } = useVisibilityOnce<HTMLDivElement>({
     rootMargin: '320px 0px',
@@ -1565,7 +1766,14 @@ function RichStoryMedia({
 
   return (
     <div ref={mediaRef} className={`relative mb-4 overflow-hidden rounded-[18px] bg-[rgb(var(--color-surface-secondary))] ${aspectClassName}`}>
-      {enableFeedInlineMedia && mediaVisible && youTubeId ? (
+      {richMediaBlocked || richModerationLoading ? (
+        <div
+          className="h-full w-full"
+          style={{
+            background: 'linear-gradient(135deg, rgba(42, 54, 72, 0.18), rgba(42, 54, 72, 0.04))',
+          }}
+        />
+      ) : enableFeedInlineMedia && mediaVisible && youTubeId ? (
         <iframe
           src={`https://www.youtube-nocookie.com/embed/${youTubeId}?modestbranding=1&playsinline=1&rel=0`}
           className="h-full w-full"
@@ -1623,7 +1831,7 @@ function RichStoryMedia({
             />
           ))}
         </video>
-      ) : imageSrc ? (
+      ) : imageSrc && !richMediaBlocked && !richModerationLoading ? (
         <SensitiveImage
           src={imageSrc}
           className="h-full w-full"

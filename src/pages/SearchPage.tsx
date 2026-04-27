@@ -11,14 +11,13 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'motion/react'
 import { FilteredGate } from '@/components/filters/FilteredGate'
 import { SearchBar } from '@/components/search/SearchBar'
-import { SearchAiAnswer } from '@/components/search/SearchAiAnswer'
 import { FeedSkeleton } from '@/components/feed/FeedSkeleton'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { NoteContent } from '@/components/cards/NoteContent'
 import { NoteMediaAttachments } from '@/components/nostr/NoteMediaAttachments'
 import { PollPreview } from '@/components/nostr/PollPreview'
 import { ThreadIndexBadge } from '@/components/nostr/ThreadIndexBadge'
-import { mergeResults, useEventFilterCheck, useSemanticFiltering } from '@/hooks/useKeywordFilters'
+import { mergeResults, useEventFilterCheck, useProfileFilterCheck, useSemanticFiltering } from '@/hooks/useKeywordFilters'
 import { useModerationDocuments } from '@/hooks/useModeration'
 import { useSearch } from '@/hooks/useSearch'
 import { useProfile } from '@/hooks/useProfile'
@@ -35,10 +34,12 @@ import { filterNsfwTaggedEvents } from '@/lib/moderation/nsfwTags'
 import { formatNip05Identifier } from '@/lib/nostr/nip05'
 import { parsePollEvent } from '@/lib/nostr/polls'
 import { parseSearchQuery, warmSearchRelays } from '@/lib/nostr/search'
+import { extractEventHashtags } from '@/lib/feed/tagTimeline'
 import { initSemanticSearch } from '@/lib/semantic/client'
 import { parseCommentEvent, parseThreadEvent } from '@/lib/nostr/thread'
 import { sanitizeText } from '@/lib/security/sanitize'
 import { parseVideoEvent } from '@/lib/nostr/video'
+import { tApp } from '@/lib/i18n/app'
 import type { FilterCheckResult } from '@/lib/filters/types'
 import type { NostrEvent, Profile } from '@/types'
 import { Kind } from '@/types'
@@ -81,15 +82,26 @@ export default function SearchPage() {
     relayLoading,
     relayError,
     semanticError,
+    rewrittenQuery,
+    synthesis,
+    synthesisLoading,
   } = useSearch({
     kinds: SEARCHABLE_KINDS,
     localLimit: 40,
     relayLimit: 40,
+    enableQueryRewrite: true,
+    enableSynthesis: true,
   })
 
-  const { isMuted, loading: muteListLoading } = useMuteList()
+  const {
+    isMuted,
+    mutedWords,
+    mutedHashtags,
+    loading: muteListLoading,
+  } = useMuteList()
   const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
   const checkEvent = useEventFilterCheck()
+  const checkProfile = useProfileFilterCheck()
 
   const parsedQuery = useMemo(() => parseSearchQuery(query), [query])
   const unsupportedKeys = useMemo(
@@ -124,21 +136,44 @@ export default function SearchPage() {
     allowedIds: allowedProfileIds,
     loading: profileModerationLoading,
   } = useModerationDocuments(profileModerationDocuments)
-  const visibleEvents = useMemo(() => {
-    const filtered = filterNsfwTaggedEvents(
-      events.filter((event) => !isMuted(event.pubkey) && (!eventModerationIds.has(event.id) || allowedEventIds.has(event.id))),
-      hideNsfwTaggedPosts,
-    )
+  const visibleEvents = useMemo(
+    () => filterNsfwTaggedEvents(
+      events.filter((event) => {
+        if (isMuted(event.pubkey)) return false
+        if (eventModerationIds.has(event.id) && !allowedEventIds.has(event.id)) return false
 
-    return [...filtered].sort((left, right) => {
-      if (right.created_at !== left.created_at) return right.created_at - left.created_at
-      return right.id.localeCompare(left.id)
-    })
-  }, [allowedEventIds, eventModerationIds, events, hideNsfwTaggedPosts, isMuted])
+        if (mutedWords.size > 0) {
+          const lower = event.content.toLowerCase()
+          for (const word of mutedWords) {
+            if (lower.includes(word)) return false
+          }
+        }
+
+        if (mutedHashtags.size > 0) {
+          const tags = extractEventHashtags(event)
+          if (tags.some((tag) => mutedHashtags.has(tag))) return false
+        }
+
+        return true
+      }),
+      hideNsfwTaggedPosts,
+    ),
+    [allowedEventIds, eventModerationIds, events, hideNsfwTaggedPosts, isMuted, mutedWords, mutedHashtags],
+  )
   const semanticFilterResults = useSemanticFiltering(visibleEvents)
   const visibleProfiles = useMemo(
     () => profiles.filter((profile) => !isMuted(profile.pubkey) && (!profileModerationIds.has(profile.pubkey) || allowedProfileIds.has(profile.pubkey))),
     [allowedProfileIds, profileModerationIds, profiles, isMuted],
+  )
+  const profileFilterResults = useMemo(
+    () => {
+      const next = new Map<string, FilterCheckResult>()
+      for (const profile of visibleProfiles) {
+        next.set(profile.pubkey, checkProfile(profile))
+      }
+      return next
+    },
+    [checkProfile, visibleProfiles],
   )
 
   useEffect(() => {
@@ -164,6 +199,9 @@ export default function SearchPage() {
   const hasResults = visibleEvents.length > 0 || visibleProfiles.length > 0
   const showSkeleton = fetchLoading && !hasResults && !idle
   const empty = !fetchLoading && query.length > 0 && !hasResults
+  const localResultText = hasResults
+    ? tApp('searchStatusLocalResultsCount', { count: visibleProfiles.length })
+    : tApp('searchStatusNoLocalResults')
 
   return (
     <div className="min-h-dvh bg-[rgb(var(--color-bg))]">
@@ -179,7 +217,7 @@ export default function SearchPage() {
               flex items-center justify-center
               active:opacity-80
             "
-            aria-label="Go back"
+            aria-label={tApp('searchGoBack')}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
               <path
@@ -193,9 +231,9 @@ export default function SearchPage() {
           </button>
 
           <div className="min-w-0 flex-1">
-            <p className="section-kicker">Search</p>
+            <p className="section-kicker">{tApp('searchKicker')}</p>
             <h1 className="mt-1 text-[28px] font-semibold leading-[1.02] tracking-[-0.035em] text-[rgb(var(--color-label))]">
-              Discover
+              {tApp('searchTitle')}
             </h1>
           </div>
         </div>
@@ -212,28 +250,39 @@ export default function SearchPage() {
         {query.length > 0 && (
           <p className="mt-2 text-[13px] text-[rgb(var(--color-label-secondary))]">
             {localLoading
-              ? 'Searching local cache…'
+              ? tApp('searchStatusSearchingLocal')
               : relayLoading
-                ? `${hasResults ? `${visibleProfiles.length} local results` : 'No local results'} — fetching from relays…`
-                : `Showing ${visibleProfiles.length} people and ${visibleEvents.length} posts.`}
+                ? tApp('searchStatusLocalResultsFetchingRelays', {
+                  resultsText: localResultText,
+                })
+                : tApp('searchStatusShowingResults', {
+                  people: visibleProfiles.length,
+                  posts: visibleEvents.length,
+                })}
           </p>
         )}
 
         {unsupportedKeys.length > 0 && (
           <p className="mt-2 text-[13px] text-[rgb(var(--color-label-secondary))]">
-            Relay-only filters in use: {unsupportedKeys.join(', ')}.
+            {tApp('searchUnsupportedFilters', { filters: unsupportedKeys.join(', ') })}
           </p>
         )}
 
         {relayError && (
           <p className="mt-2 text-[13px] text-[#C65D2E]">
-            Relay search degraded: {relayError}
+            {tApp('searchRelayDegraded', { error: relayError })}
           </p>
         )}
 
         {semanticError && (
           <p className="mt-2 text-[13px] text-[#C65D2E]">
-            Semantic reranking degraded: {semanticError}
+            {tApp('searchSemanticDegraded', { error: semanticError })}
+          </p>
+        )}
+
+        {rewrittenQuery && !localLoading && (
+          <p className="mt-2 text-[12px] text-[rgb(var(--color-label-tertiary))]">
+            Refined: <span className="italic">{rewrittenQuery}</span>
           </p>
         )}
       </div>
@@ -251,20 +300,28 @@ export default function SearchPage() {
           <SearchEmpty />
         ) : (
           <div className="space-y-5">
-            <SearchAiAnswer
-              query={query}
-              events={visibleEvents}
-              profiles={visibleProfiles}
-            />
+                        {(synthesis || synthesisLoading) && (
+                          <SearchSynthesisCard
+                            text={synthesis?.text ?? null}
+                            source={synthesis?.source ?? null}
+                            loading={synthesisLoading}
+                          />
+                        )}
 
             {visibleProfiles.length > 0 && (
               <section>
                 <h2 className="section-kicker px-1 mb-3">
-                  People
+                  {tApp('searchPeopleSection')}
                 </h2>
                 <div className="space-y-3">
                   {visibleProfiles.map(profile => (
-                    <ProfileResult key={profile.pubkey} profile={profile} />
+                    <FilteredGate
+                      key={profile.pubkey}
+                      result={profileFilterResults.get(profile.pubkey) ?? { action: null, matches: [] }}
+                      eventId={`profile:${profile.pubkey}`}
+                    >
+                      <ProfileResult profile={profile} />
+                    </FilteredGate>
                   ))}
                 </div>
               </section>
@@ -273,7 +330,7 @@ export default function SearchPage() {
             {visibleEvents.length > 0 && (
               <section>
                 <h2 className="section-kicker px-1 mb-3">
-                  Posts
+                  {tApp('searchPostsSection')}
                 </h2>
                 <div className="space-y-3">
                   {visibleEvents.map(event => (
@@ -351,16 +408,16 @@ function EventResult({
   const attachments = getEventMediaAttachments(event)
   const hiddenUrls = getImetaHiddenUrls(event)
   const kindLabel = poll
-    ? 'Poll'
+    ? tApp('searchKindPoll')
     : article
-    ? 'Article'
+    ? tApp('searchKindArticle')
     : thread
-      ? 'Thread'
+      ? tApp('searchKindThread')
       : comment
-        ? 'Comment'
+        ? tApp('searchKindComment')
     : video
-      ? (video.isShort ? 'Short video' : 'Video')
-      : 'Note'
+      ? (video.isShort ? tApp('searchKindShortVideo') : tApp('searchKindVideo'))
+      : tApp('searchKindNote')
   const href = article?.route ?? video?.route ?? `/note/${event.id}`
 
   return (
@@ -432,6 +489,46 @@ function EventResult({
   )
 }
 
+function SearchSynthesisCard({
+  text,
+  source,
+  loading,
+}: {
+  text: string | null
+  source: "gemma" | "gemini" | null
+  loading: boolean
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className="rounded-ios-xl p-4 app-panel card-elevated"
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <span className="section-kicker">AI Summary</span>
+        {source && (
+          <span className="text-[11px] text-[rgb(var(--color-label-tertiary))]">
+            via {source}
+          </span>
+        )}
+      </div>
+      {loading && !text ? (
+        <div className="flex items-center gap-2">
+          <span className="block h-2 w-2 rounded-full bg-[rgb(var(--color-accent))] animate-pulse" />
+          <span className="text-[14px] text-[rgb(var(--color-label-secondary))]">
+            Summarizing results…
+          </span>
+        </div>
+      ) : (
+        <p className="text-[14px] leading-relaxed text-[rgb(var(--color-label))]">
+          {text}
+        </p>
+      )}
+    </motion.div>
+  )
+}
+
 function SearchHint() {
   return (
     <motion.div
@@ -443,11 +540,9 @@ function SearchHint() {
         text-[rgb(var(--color-label))]
       "
     >
-      <p className="text-headline mb-2">Search the people and stories already close at hand</p>
+      <p className="text-headline mb-2">{tApp('searchHintTitle')}</p>
       <p className="text-body text-[rgb(var(--color-label-secondary))]">
-        Use phrases in quotes for exact matches. Local ranking is blended with
-        on-device semantic results when available, and standardized
-        `domain:example.com` filters continue to pass through to relays.
+        {tApp('searchHintBody')}
       </p>
     </motion.div>
   )
@@ -464,10 +559,10 @@ function SearchEmpty() {
       "
     >
       <p className="text-headline text-[rgb(var(--color-label))] mb-2">
-        No search results
+        {tApp('searchEmptyTitle')}
       </p>
       <p className="text-body text-[rgb(var(--color-label-secondary))]">
-        Try a broader query or remove any relay-only filters.
+        {tApp('searchEmptyBody')}
       </p>
     </motion.div>
   )

@@ -94,6 +94,7 @@ export const NOSTR_PAPER_SUPPORTED_KINDS = [
   Kind.MediaStarterPack,
   Kind.AddressableVideo,
   Kind.AddressableShortVideo,
+  Kind.Highlight,
 ] as const
 
 export type Nip89EntityType = typeof NIP89_BECH32_TYPES[number]

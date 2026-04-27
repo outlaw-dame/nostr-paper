@@ -12,12 +12,18 @@ import React, {
   type ReactNode,
 } from 'react'
 import { bootstrap } from '@/lib/bootstrap'
+import { runMaintenance } from '@/lib/db/nostr'
 import { AppContext, type AppAction, type AppState } from '@/contexts/app-context'
 import { syncCurrentUserContactList } from '@/lib/nostr/contacts'
 import { refreshNip05Verifications } from '@/lib/nostr/nip05'
+import { publishCurrentUserRelayList, syncCurrentUserRelayList } from '@/lib/nostr/relayList'
 import { getCurrentUser, performLogout, STORAGE_KEY_PUBKEY } from '@/lib/nostr/ndk'
+import { RELAY_SETTINGS_UPDATED_EVENT } from '@/lib/relay/relaySettings'
+import { markBootStage, recordBootFailure, recordBootSuccess } from '@/lib/runtime/startupDiagnostics'
 
 const shouldRunDevNip05Sweep = import.meta.env.VITE_ENABLE_DEV_NIP05_SWEEP === 'true'
+const DB_MAINTENANCE_INTERVAL_MS = 6 * 60 * 60 * 1000
+const DB_MAINTENANCE_INITIAL_DELAY_MS = 90 * 1000
 
 const initialState: AppState = {
   status:      'idle',
@@ -92,12 +98,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     abortRef.current = new AbortController()
     const { signal } = abortRef.current
 
+    markBootStage('bootstrap:start')
     dispatch({ type: 'BOOT_START' })
 
     bootstrap(signal).then(async (result) => {
       if (signal.aborted) return
 
       if (!result.ok) {
+        recordBootFailure('bootstrap:error', result.error.message)
         dispatch({ type: 'BOOT_ERROR', payload: result.error })
         return
       }
@@ -105,8 +113,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const bootResult = result.value
 
       if (bootResult.ndkReady) {
+        recordBootSuccess('bootstrap:ready')
         dispatch({ type: 'BOOT_SUCCESS', payload: bootResult })
       } else {
+        recordBootSuccess('bootstrap:offline')
         dispatch({ type: 'BOOT_PARTIAL', payload: bootResult })
       }
 
@@ -131,6 +141,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
               if (signal.aborted) return
               console.warn('[App] Kind-3 contact list sync degraded:', error)
             })
+
+            void syncCurrentUserRelayList(signal).catch((error: unknown) => {
+              if (signal.aborted) return
+              console.warn('[App] Kind-10002 relay list sync degraded:', error)
+            })
           } else if (!signal.aborted) {
             // No signer — check for read-only pubkey saved from OnboardPage
             const savedPubkey = localStorage.getItem(STORAGE_KEY_PUBKEY)
@@ -149,6 +164,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }).catch((error: unknown) => {
       if (signal.aborted) return
       if (error instanceof DOMException && error.name === 'AbortError') return
+      recordBootFailure(
+        'bootstrap:error',
+        error instanceof Error ? error.message : 'Boot failed',
+      )
       dispatch({
         type:    'BOOT_ERROR',
         payload: {
@@ -162,6 +181,56 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     return () => abortRef.current?.abort()
   }, [])
+
+  useEffect(() => {
+    if (!state.bootstrap?.dbReady) return
+
+    let cancelled = false
+
+    const run = async () => {
+      if (cancelled) return
+      try {
+        await runMaintenance()
+      } catch (error) {
+        if (cancelled) return
+        console.warn('[App] DB maintenance degraded:', error)
+      }
+    }
+
+    const initialTimer = window.setTimeout(() => {
+      void run()
+    }, DB_MAINTENANCE_INITIAL_DELAY_MS)
+
+    const intervalTimer = window.setInterval(() => {
+      void run()
+    }, DB_MAINTENANCE_INTERVAL_MS)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(initialTimer)
+      window.clearInterval(intervalTimer)
+    }
+  }, [state.bootstrap?.dbReady])
+
+  useEffect(() => {
+    if (!state.currentUser?.pubkey) return
+
+    const controller = new AbortController()
+
+    const publishRelayList = () => {
+      void publishCurrentUserRelayList({ signal: controller.signal }).catch((error: unknown) => {
+        if (controller.signal.aborted) return
+        console.warn('[App] Kind-10002 relay list publish degraded:', error)
+      })
+    }
+
+    window.addEventListener(RELAY_SETTINGS_UPDATED_EVENT, publishRelayList)
+
+    return () => {
+      controller.abort()
+      window.removeEventListener(RELAY_SETTINGS_UPDATED_EVENT, publishRelayList)
+    }
+  }, [state.currentUser?.pubkey])
 
   return (
     <AppContext.Provider value={{ ...state, dispatch, logout }}>

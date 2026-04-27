@@ -7,16 +7,19 @@ import type { FilterAction, FilterScope } from '@/lib/filters/types'
 export const ACTION_ICONS: Record<FilterAction, string> = {
   hide: '🚫',
   warn: '⚠️',
+  block: '🚫',
 }
 
 export const ACTION_LABELS: Record<FilterAction, string> = {
   hide: 'Hide',
   warn: 'Warn',
+  block: 'Block',
 }
 
 export const ACTION_DESCRIPTIONS: Record<FilterAction, string> = {
   hide: 'Completely removes matching content from view',
   warn: 'Shows a warning pill; tap to reveal content',
+  block: 'Completely removes matching content from view',
 }
 
 export const SCOPE_ICONS: Record<FilterScope, string> = {

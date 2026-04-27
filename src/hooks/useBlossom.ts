@@ -16,6 +16,7 @@ import { useState, useCallback } from 'react'
 import { sha256File }          from '@/lib/blossom/hash'
 import { createNIP98Auth }     from '@/lib/blossom/auth'
 import { blossomBlobUrl, blossomUpload, BlossomError } from '@/lib/blossom/client'
+import { discoverNip96Server, nip96Upload } from '@/lib/blossom/nip96'
 import { getBlossomServers, cacheBlob } from '@/lib/db/blossom'
 import {
   deriveMediaDimensions,
@@ -25,7 +26,7 @@ import {
 } from '@/lib/nostr/fileMetadata'
 import { getNDK }              from '@/lib/nostr/ndk'
 import { withRetry } from '@/lib/retry'
-import type { BlossomBlob, BlossomUploadState } from '@/types'
+import type { BlossomBlob, BlossomUploadDiagnostic, BlossomUploadState } from '@/types'
 
 export function useBlossomUpload() {
   const [state, setState] = useState<BlossomUploadState>({ status: 'idle' })
@@ -51,6 +52,7 @@ export function useBlossomUpload() {
       let firstBlob: BlossomBlob | null = null
       const successfulServers: string[] = []
       const uploadErrors: string[]      = []
+      const diagnostics: BlossomUploadDiagnostic[] = []
       let ndk: ReturnType<typeof getNDK>
       try { ndk = getNDK() } catch (_err) {
         setState({ status: 'error', error: 'NDK not initialised — cannot sign auth tokens.' })
@@ -64,6 +66,7 @@ export function useBlossomUpload() {
           server:      server.url,
           serverIndex: i + 1,
           serverCount: servers.length,
+          diagnostics,
         })
 
         try {
@@ -73,7 +76,31 @@ export function useBlossomUpload() {
             method:  'PUT',
             payload: sha256,
           })
-          const blob = await blossomUpload(server.url, file, sha256, auth)
+          let blob: BlossomBlob | null = null
+          let transport: BlossomUploadDiagnostic['transport'] = 'blossom'
+
+          try {
+            blob = await blossomUpload(server.url, file, sha256, auth)
+          } catch (blossomErr) {
+            const nip96 = await discoverNip96Server(server.url)
+            if (!nip96) throw blossomErr
+            transport = 'nip96'
+
+            const nip96Auth = await createNIP98Auth(ndk, {
+              url: nip96.apiUrl,
+              method: 'POST',
+              payload: sha256,
+            })
+
+            blob = await nip96Upload(nip96, file, nip96Auth, sha256)
+          }
+
+          if (!blob) throw new Error('Media upload failed unexpectedly.')
+          diagnostics.push({
+            server: server.url,
+            transport,
+            success: true,
+          })
 
           if (!firstBlob) firstBlob = blob
           successfulServers.push(server.url)
@@ -82,6 +109,12 @@ export function useBlossomUpload() {
             ? `${err.httpStatus}: ${err.message}`
             : String(err)
           uploadErrors.push(`${server.url} — ${msg}`)
+          diagnostics.push({
+            server: server.url,
+            transport: 'blossom',
+            success: false,
+            message: msg,
+          })
           console.warn('[useBlossom] Upload failed:', server.url, err)
         }
       }
@@ -91,6 +124,7 @@ export function useBlossomUpload() {
         setState({
           status: 'error',
           error:  `Upload failed on all servers:\n${uploadErrors.join('\n')}`,
+          diagnostics,
         })
         return null
       }
@@ -176,6 +210,7 @@ export function useBlossomUpload() {
         status: 'done',
         blob: publishedBlob,
         successfulServers,
+        diagnostics,
         ...(publishWarning ? { warning: publishWarning } : {}),
       })
       return publishedBlob

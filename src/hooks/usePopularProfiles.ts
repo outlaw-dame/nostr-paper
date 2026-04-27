@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { listSemanticProfileCandidates } from '@/lib/db/nostr'
+import { listProfilesByFollowerCount } from '@/lib/db/nostr'
 import type { Profile } from '@/types'
 
 export function usePopularProfiles(limit = 10): {
@@ -11,7 +11,7 @@ export function usePopularProfiles(limit = 10): {
 
   useEffect(() => {
     setLoading(true)
-    listSemanticProfileCandidates('', limit)
+    listProfilesByFollowerCount(limit)
       .then((ps) => {
         setProfiles(ps)
         setLoading(false)

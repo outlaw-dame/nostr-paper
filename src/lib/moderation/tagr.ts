@@ -7,7 +7,7 @@ import type { ModerationDecision, ModerationDocument, NostrEvent, NostrFilter } 
 import { Kind } from '@/types'
 
 const TAGR_BOT_PUBKEY_HEX = '56d4b3d6310fadb7294b7f041aab469c5ffc8991b1b1b331981b96a246f6ae65'
-const TAGR_RELAY_URL = 'wss://relay.nos.social'
+const TAGR_RELAY_URL = import.meta.env.VITE_TAGR_RELAY_URL ?? 'wss://relay.nos.social'
 
 const KNOWN_MODERATION_NAMESPACES = new Set([
   'social.nos.ontology',
@@ -15,6 +15,30 @@ const KNOWN_MODERATION_NAMESPACES = new Set([
 ])
 
 const KNOWN_ONTOLOGY_CODE_RE = /^(?:NS|PN|IL|VI|SP|NW|IM|IH|CL|HC|NA)(?:-[a-z]{3})?$/
+
+// Per-document-ID sync TTL cache.  Key = sorted comma-joined IDs, value = timestamp.
+// Prevents hammering the Tagr relay when the same event is viewed repeatedly
+// (e.g. a viral note appearing in multiple feeds, or the same page re-rendering).
+const TAGR_SYNC_TTL_MS = 60_000 // 1 minute
+const tagrSyncCache = new Map<string, number>()
+
+function tagrSyncCacheKey(eventIds: string[], profilePubkeys: string[]): string {
+  return [...eventIds, ...profilePubkeys].sort().join(',')
+}
+
+function isTagrSyncFresh(key: string): boolean {
+  const ts = tagrSyncCache.get(key)
+  return ts !== undefined && Date.now() - ts < TAGR_SYNC_TTL_MS
+}
+
+function markTagrSynced(key: string): void {
+  tagrSyncCache.set(key, Date.now())
+  // Evict entries older than 5× TTL to bound memory use.
+  const cutoff = Date.now() - TAGR_SYNC_TTL_MS * 5
+  for (const [k, ts] of tagrSyncCache) {
+    if (ts < cutoff) tagrSyncCache.delete(k)
+  }
+}
 
 interface TagrReason {
   reason: string
@@ -262,7 +286,11 @@ export async function resolveTagrModerationDecisions(
   const eventIdList = [...eventIds]
   const profilePubkeyList = [...profilePubkeys]
 
-  await syncTagrEvents(eventIdList, profilePubkeyList, signal)
+  const syncKey = tagrSyncCacheKey(eventIdList, profilePubkeyList)
+  if (!isTagrSyncFresh(syncKey)) {
+    await syncTagrEvents(eventIdList, profilePubkeyList, signal)
+    markTagrSynced(syncKey)
+  }
   const localEvents = await loadLocalTagrEvents(eventIdList, profilePubkeyList)
 
   return buildTagrDecisionMap(localEvents, eventIds, profilePubkeys)

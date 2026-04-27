@@ -6,6 +6,7 @@ import {
 } from '@/lib/translation/storage'
 import {
   batchTranslationSegments,
+  hasMeaningfulTranslationText,
   joinTranslatedSegments,
   normalizeTranslationSourceText,
   splitTextForTranslation,
@@ -18,8 +19,12 @@ import {
   detectLikelyLanguage,
   detectScriptLanguage,
   languagesProbablyMatch,
+  looksLikeShortAsciiSnippet,
+  normalizeLanguageCode,
 } from '@/lib/translation/detect'
 import { listLingvaLanguages, translateWithLingva } from '@/lib/translation/engines/lingva'
+import { getGemmaTransportSummary, listGemmaLanguages, translateWithGemma } from '@/lib/translation/engines/gemma'
+import { getGeminiTransportSummary, listGeminiLanguages, translateWithGemini } from '@/lib/translation/engines/gemini'
 import { isRecord } from '@/lib/translation/utils'
 
 export interface TranslationLanguage {
@@ -108,6 +113,11 @@ function buildCacheKey(
     small100SourceLanguage: configuration.small100SourceLanguage,
     opusMtTargetLanguage: configuration.opusMtTargetLanguage,
     opusMtSourceLanguage: configuration.opusMtSourceLanguage,
+    gemmaTargetLanguage: configuration.gemmaTargetLanguage,
+    gemmaSourceLanguage: configuration.gemmaSourceLanguage,
+    geminiModel: configuration.geminiModel,
+    geminiTargetLanguage: configuration.geminiTargetLanguage,
+    geminiSourceLanguage: configuration.geminiSourceLanguage,
     text,
   })
 }
@@ -120,6 +130,8 @@ function getConfiguredTargetLanguage(configuration: TranslationConfiguration): s
     case 'lingva': return configuration.lingvaTargetLanguage
     case 'small100': return configuration.small100TargetLanguage
     case 'opusmt': return configuration.opusMtTargetLanguage
+    case 'gemma': return configuration.gemmaTargetLanguage
+    case 'gemini': return configuration.geminiTargetLanguage
   }
 }
 
@@ -131,7 +143,42 @@ function getConfiguredSourceLanguage(configuration: TranslationConfiguration): s
     case 'lingva': return configuration.lingvaSourceLanguage
     case 'small100': return configuration.small100SourceLanguage
     case 'opusmt': return configuration.opusMtSourceLanguage
+    case 'gemma': return configuration.gemmaSourceLanguage
+    case 'gemini': return configuration.geminiSourceLanguage
   }
+}
+
+function normalizeLanguageForOpusMt(code: string, fallback: string): string {
+  const normalized = code.trim().toLowerCase()
+  if (!normalized) return fallback
+  const [primary] = normalized.split('-')
+  return primary || fallback
+}
+
+function buildOpusMtFallbackConfiguration(
+  configuration: TranslationConfiguration,
+): TranslationConfiguration {
+  const targetFromProvider = getConfiguredTargetLanguage(configuration)
+  const fallbackTarget = normalizeLanguageForOpusMt(
+    configuration.opusMtTargetLanguage,
+    'en',
+  )
+
+  return {
+    ...configuration,
+    provider: 'opusmt',
+    opusMtTargetLanguage: normalizeLanguageForOpusMt(targetFromProvider, fallbackTarget),
+    opusMtSourceLanguage: configuration.opusMtSourceLanguage || 'auto',
+  }
+}
+
+function shouldFallbackToOpusMt(
+  configuration: TranslationConfiguration,
+  error: unknown,
+): error is TranslationServiceError {
+  if (configuration.provider === 'opusmt') return false
+  if (!(error instanceof TranslationServiceError)) return false
+  return error.code === 'config' || error.code === 'unavailable'
 }
 
 export function inspectTranslationWithConfiguration(
@@ -140,12 +187,19 @@ export function inspectTranslationWithConfiguration(
 ): TranslationPreflight {
   const normalizedText = normalizeTranslationSourceText(text)
   const targetLanguage = getConfiguredTargetLanguage(configuration)
+  const meaningfulText = hasMeaningfulTranslationText(normalizedText)
   const configuredSourceLanguage = getConfiguredSourceLanguage(configuration)
   const likelySourceLanguage = configuredSourceLanguage === 'auto'
     ? detectLikelyLanguage(normalizedText)
     : configuredSourceLanguage
-  const sameLanguage = languagesProbablyMatch(likelySourceLanguage, targetLanguage)
-  const canAutoTranslate = !sameLanguage && !(
+  const sameLanguage = !meaningfulText ||
+    languagesProbablyMatch(likelySourceLanguage, targetLanguage) ||
+    (
+      likelySourceLanguage === null &&
+      normalizeLanguageCode(targetLanguage) === 'en' &&
+      looksLikeShortAsciiSnippet(normalizedText)
+    )
+  const canAutoTranslate = meaningfulText && !sameLanguage && !(
     configuration.provider === 'opusmt' &&
     configuredSourceLanguage === 'auto' &&
     likelySourceLanguage === null
@@ -669,6 +723,9 @@ export function getOpusMtTransportSummary(): string {
   return 'Runs entirely in your browser via WebAssembly. Models (~50–300 MB each) download once from HuggingFace and are cached locally. Auto-detects many non-Latin scripts, but language-pair coverage is limited. For broader Asian-language support, use TransLang or SMaLL-100.'
 }
 
+export { getGemmaTransportSummary }
+export { getGeminiTransportSummary }
+
 export function getTranslangTransportSummary(baseUrl: string): string {
   if (!baseUrl) {
     return 'Configure a TransLang instance URL in Settings.'
@@ -692,6 +749,8 @@ export function getProviderDisplayName(provider: TranslationProvider): string {
     case 'lingva': return 'Lingva'
     case 'small100': return 'SMaLL-100 (local)'
     case 'opusmt': return 'Opus-MT (in-browser)'
+    case 'gemma': return 'Gemma 4 (on-device)'
+    case 'gemini': return 'Gemini API (cloud)'
   }
 }
 
@@ -715,6 +774,10 @@ export async function listProviderLanguages(
       const { listOpusMtLanguages } = await loadOpusMtModule()
       return listOpusMtLanguages()
     }
+    case 'gemma':
+      return listGemmaLanguages()
+    case 'gemini':
+      return listGeminiLanguages()
   }
 }
 
@@ -842,7 +905,7 @@ async function callOpusMt(
   // to the engine, so we can surface the detected language in the result.
   let resolvedSource = configuration.opusMtSourceLanguage
   if (resolvedSource === 'auto') {
-    const detected = detectScriptLanguage(text)
+    const detected = detectLikelyLanguage(text) ?? detectScriptLanguage(text)
     if (!detected) {
       throw new TranslationServiceError(
         'Opus-MT could not determine the source language from the text script. Set a source language in Settings or switch to SMaLL-100.',
@@ -876,6 +939,50 @@ async function callOpusMt(
     ...(configuration.opusMtSourceLanguage === 'auto'
       ? { detectedSourceLanguage: resolvedSource }
       : {}),
+  }
+}
+
+async function callGemma(
+  configuration: TranslationConfiguration,
+  text: string,
+  signal?: AbortSignal,
+): Promise<TranslationResult> {
+  const result = await translateWithGemma(
+    text,
+    configuration.gemmaSourceLanguage,
+    configuration.gemmaTargetLanguage,
+    signal,
+  )
+
+  return {
+    provider: 'gemma',
+    translatedText: result.translation,
+    targetLanguage: configuration.gemmaTargetLanguage,
+    sourceLanguage: configuration.gemmaSourceLanguage,
+    ...(result.detectedSourceLang ? { detectedSourceLanguage: result.detectedSourceLang } : {}),
+  }
+}
+
+async function callGemini(
+  configuration: TranslationConfiguration,
+  text: string,
+  signal?: AbortSignal,
+): Promise<TranslationResult> {
+  const result = await translateWithGemini(
+    text,
+    configuration.geminiSourceLanguage,
+    configuration.geminiTargetLanguage,
+    configuration.geminiApiKey,
+    configuration.geminiModel,
+    signal,
+  )
+
+  return {
+    provider: 'gemini',
+    translatedText: result.translation,
+    targetLanguage: configuration.geminiTargetLanguage,
+    sourceLanguage: configuration.geminiSourceLanguage,
+    ...(result.detectedSourceLang ? { detectedSourceLanguage: result.detectedSourceLang } : {}),
   }
 }
 
@@ -928,6 +1035,12 @@ export async function translateTextWithConfiguration(
       case 'opusmt':
         result = await callOpusMt(configuration, normalizedText, signal)
         break
+      case 'gemma':
+        result = await callGemma(configuration, normalizedText, signal)
+        break
+      case 'gemini':
+        result = await callGemini(configuration, normalizedText, signal)
+        break
     }
 
     evictTranslationCacheIfNeeded()
@@ -946,5 +1059,18 @@ export async function translateConfiguredText(
   signal?: AbortSignal,
 ): Promise<TranslationResult> {
   const configuration = await loadTranslationConfiguration()
-  return translateTextWithConfiguration(configuration, text, signal)
+  try {
+    return await translateTextWithConfiguration(configuration, text, signal)
+  } catch (error) {
+    if (!shouldFallbackToOpusMt(configuration, error)) {
+      throw error
+    }
+
+    const fallbackConfiguration = buildOpusMtFallbackConfiguration(configuration)
+    try {
+      return await translateTextWithConfiguration(fallbackConfiguration, text, signal)
+    } catch {
+      throw error
+    }
+  }
 }

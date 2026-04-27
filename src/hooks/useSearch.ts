@@ -28,7 +28,10 @@ import {
 import { parseNip05Identifier, resolveNip05Profile } from '@/lib/nostr/nip05'
 import { parseSearchQuery, searchRelays } from '@/lib/nostr/search'
 import { hybridSearchEvents, hybridSearchProfiles } from '@/lib/search/hybrid'
-import type { NostrEvent, Profile }     from '@/types'
+import { rewriteSearchQuery } from '@/lib/search/queryRewrite'
+import { synthesizeSearchAnswer, type SearchSynthesisResult } from '@/lib/search/searchSynthesis'
+import { classifyQueryIntent } from '@/lib/search/hybrid'
+import type { NostrEvent, Profile } from '@/types'
 
 // ── Public Interface ──────────────────────────────────────────
 
@@ -49,6 +52,12 @@ export interface SearchState {
   relayError:     string | null
   /** Non-fatal error from the semantic reranker */
   semanticError:  string | null
+  /** LLM-rewritten query used for semantic scoring (null if not rewritten) */
+  rewrittenQuery: string | null
+  /** LLM-synthesized answer across top results for semantic queries */
+  synthesis:      SearchSynthesisResult | null
+  /** True while synthesis is being generated */
+  synthesisLoading: boolean
 }
 
 export interface SearchOptions {
@@ -62,6 +71,10 @@ export interface SearchOptions {
   relayLimit?:  number
   /** Disable relay forwarding (local-only mode) */
   localOnly?:   boolean
+  /** Enable LLM query rewriting for semantic queries (default: false) */
+  enableQueryRewrite?: boolean
+  /** Enable LLM answer synthesis across top results for semantic queries (default: false) */
+  enableSynthesis?: boolean
 }
 
 // ── Hook ─────────────────────────────────────────────────────
@@ -77,6 +90,8 @@ export function useSearch(opts: SearchOptions = {}): SearchState & {
     localLimit  = 50,
     relayLimit  = 50,
     localOnly   = false,
+    enableQueryRewrite = false,
+    enableSynthesis    = false,
   } = opts
 
   const [input,        setInput]        = useState('')
@@ -88,6 +103,9 @@ export function useSearch(opts: SearchOptions = {}): SearchState & {
   const [relayLoading, setRelayLoading] = useState(false)
   const [relayError,   setRelayError]   = useState<string | null>(null)
   const [semanticError, setSemanticError] = useState<string | null>(null)
+  const [rewrittenQuery,    setRewrittenQuery]    = useState<string | null>(null)
+  const [synthesis,         setSynthesis]         = useState<SearchSynthesisResult | null>(null)
+  const [synthesisLoading,  setSynthesisLoading]  = useState(false)
 
   // AbortController ref — cancelled when query changes or component unmounts
   const abortRef = useRef<AbortController | null>(null)
@@ -108,6 +126,9 @@ export function useSearch(opts: SearchOptions = {}): SearchState & {
     setRelayEvents([])
     setRelayError(null)
     setSemanticError(null)
+    setRewrittenQuery(null)
+    setSynthesis(null)
+    setSynthesisLoading(false)
 
     if (!query) {
       setLocalEvents([])
@@ -115,6 +136,9 @@ export function useSearch(opts: SearchOptions = {}): SearchState & {
       setProfiles([])
       setLocalLoading(false)
       setRelayLoading(false)
+      setRewrittenQuery(null)
+      setSynthesis(null)
+      setSynthesisLoading(false)
       setRelayError(null)
       setSemanticError(null)
       return
@@ -127,9 +151,23 @@ export function useSearch(opts: SearchOptions = {}): SearchState & {
     let nip05ProfilePromise: Promise<Profile | null> | null = null
 
     const runHybridRerank = async (relaySnapshot: NostrEvent[] = []) => {
+      // ── Query rewriting (pre-retrieval) ───────────────────────────
+      let semanticQueryOverride: string | undefined
+      if (enableQueryRewrite && classifyQueryIntent(query) === 'semantic') {
+        const rewrite = await rewriteSearchQuery(query, ctrl.signal).catch(() => null)
+        if (!ctrl.signal.aborted && rewrite) {
+          semanticQueryOverride = rewrite
+          setRewrittenQuery(rewrite)
+        }
+      }
+
       try {
+        const eventSearchOptions = {
+          ...localSearchOptions,
+          ...(semanticQueryOverride ? { semanticQueryOverride } : {}),
+        }
         const [rerankedEventResult, rerankedProfileResult] = await Promise.all([
-          hybridSearchEvents(query, localSearchOptions),
+          hybridSearchEvents(query, eventSearchOptions),
           hybridSearchProfiles(query, profileLimit, ctrl.signal),
         ])
         if (ctrl.signal.aborted) return
@@ -146,6 +184,20 @@ export function useSearch(opts: SearchOptions = {}): SearchState & {
         setLocalEvents(rerankedEventResult.items)
         setProfiles(nextProfiles)
         setSemanticError(rerankedEventResult.semanticError ?? rerankedProfileResult.semanticError)
+
+        // ── Answer synthesis (post-retrieval) ─────────────────────────
+        if (enableSynthesis && rerankedEventResult.items.length >= 3 && classifyQueryIntent(query) === 'semantic') {
+          setSynthesisLoading(true)
+          synthesizeSearchAnswer(query, rerankedEventResult.items, ctrl.signal)
+            .then((result) => {
+              if (ctrl.signal.aborted) return
+              setSynthesis(result)
+            })
+            .catch(() => { /* silent */ })
+            .finally(() => {
+              if (!ctrl.signal.aborted) setSynthesisLoading(false)
+            })
+        }
 
         // Remove anything now covered by local reranked results.
         const seen = new Set(rerankedEventResult.items.map(event => event.id))
@@ -232,7 +284,7 @@ export function useSearch(opts: SearchOptions = {}): SearchState & {
     }
 
     return () => ctrl.abort()
-  }, [query, kinds, localLimit, relayLimit, localOnly])
+  }, [query, kinds, localLimit, relayLimit, localOnly, enableQueryRewrite, enableSynthesis])
 
   // Abort on unmount
   useEffect(() => () => { abortRef.current?.abort() }, [])
@@ -273,5 +325,8 @@ export function useSearch(opts: SearchOptions = {}): SearchState & {
     semanticError,
     commitNow,
     clear,
+    rewrittenQuery,
+    synthesis,
+    synthesisLoading,
   }
 }

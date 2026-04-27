@@ -24,12 +24,11 @@
  *   e.g. page is techcrunch.com, nip05 is sara@techcrunch.com → verified.
  */
 
-import React from 'react'
-import { Link } from 'react-router-dom'
-import { decode } from 'nostr-tools/nip19'
+import React, { useMemo } from 'react'
 import { useLinkPreview } from '@/hooks/useLinkPreview'
-import { useProfile } from '@/hooks/useProfile'
-import { getNip21Route } from '@/lib/nostr/nip21'
+import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
+import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
+import { NostrCreatorAttribution } from '@/components/links/NostrCreatorAttribution'
 import type { OGData } from '@/lib/og/types'
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -38,127 +37,9 @@ function stopPropagation(e: React.MouseEvent) {
   e.stopPropagation()
 }
 
-function npubToPubkey(npub: string): string | null {
-  try {
-    const { type, data } = decode(npub)
-    return type === 'npub' ? (data as string) : null
-  } catch {
-    return null
-  }
-}
-
 function hostname(url: string): string | null {
   try { return new URL(url).hostname.replace(/^www\./, '') }
   catch { return null }
-}
-
-// ── Nostr Author Row ─────────────────────────────────────────
-
-interface NostrAuthorRowProps {
-  nostrCreator: string
-  nostrNip05:   string | undefined
-  pageHostname: string | null
-}
-
-function NostrAuthorRow({ nostrCreator, nostrNip05, pageHostname }: NostrAuthorRowProps) {
-  const pubkey  = React.useMemo(() => npubToPubkey(nostrCreator), [nostrCreator])
-  const { profile } = useProfile(pubkey)
-  const route   = getNip21Route(`nostr:${nostrCreator}`)
-  const [imageFailed, setImageFailed] = React.useState(false)
-
-  React.useEffect(() => {
-    setImageFailed(false)
-  }, [profile?.picture])
-
-  // Verified when the NIP-05 identifier's domain matches the page's domain —
-  // the Nostr equivalent of Mastodon requiring the creator to add the domain.
-  const isVerified = Boolean(
-    nostrNip05 &&
-    pageHostname &&
-    nostrNip05.toLowerCase().endsWith(`@${pageHostname.toLowerCase()}`)
-  )
-
-  const displayName = profile?.display_name ?? profile?.name
-  const identifier  = nostrNip05 ?? (nostrCreator.slice(0, 16) + '…')
-
-  const inner = (
-    <div className="
-      flex items-center gap-2.5
-      px-3 py-2.5
-      border-t border-[rgb(var(--color-fill)/0.08)]
-    ">
-      {/* Avatar */}
-      <div className="w-8 h-8 shrink-0 rounded-full overflow-hidden bg-[rgb(var(--color-fill)/0.08)]">
-        {profile?.picture && !imageFailed ? (
-          <img
-            src={profile.picture}
-            alt=""
-            width={32}
-            height={32}
-            referrerPolicy="no-referrer"
-            className="w-full h-full object-cover"
-            onError={() => setImageFailed(true)}
-          />
-        ) : (
-          /* Placeholder — purple Nostr dot */
-          <div className="w-full h-full flex items-center justify-center bg-[#7B5EA7]/20">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="#7B5EA7" aria-hidden="true">
-              <circle cx="12" cy="12" r="10" />
-            </svg>
-          </div>
-        )}
-      </div>
-
-      {/* Name + identifier */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className="
-            text-[13px] font-semibold leading-tight
-            text-[rgb(var(--color-label))]
-            truncate
-          ">
-            {displayName ?? identifier}
-          </span>
-          {isVerified && (
-            <svg
-              width="13" height="13" viewBox="0 0 24 24"
-              fill="none" stroke="#7B5EA7" strokeWidth="2.5"
-              strokeLinecap="round" strokeLinejoin="round"
-              className="shrink-0"
-              aria-label="Verified — NIP-05 domain matches"
-            >
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-              <polyline points="22 4 12 14.01 9 11.01" />
-            </svg>
-          )}
-        </div>
-        {displayName && (
-          <p className="text-[11px] text-[rgb(var(--color-label-tertiary))] truncate leading-tight">
-            {identifier}
-          </p>
-        )}
-      </div>
-
-      {/* "On Nostr" label */}
-      <span className="
-        shrink-0 text-[11px] font-medium
-        text-[#7B5EA7]
-        bg-[#7B5EA7]/10
-        px-2 py-0.5 rounded-full
-      ">
-        on Nostr
-      </span>
-    </div>
-  )
-
-  if (route) {
-    return (
-      <Link to={route} onClick={stopPropagation}>
-        {inner}
-      </Link>
-    )
-  }
-  return inner
 }
 
 // ── Main Card ─────────────────────────────────────────────────
@@ -183,6 +64,19 @@ export function LinkPreviewCard({
   const loading = previewLoading === undefined ? previewState.loading : previewLoading
   const [imageFailed, setImageFailed] = React.useState(false)
   const [faviconFailed, setFaviconFailed] = React.useState(false)
+
+  // Moderate the OG image before rendering — fail closed so explicit images
+  // from shared links never flash through unreviewed.
+  const ogImageModerationDoc = useMemo(
+    () => data?.image
+      ? buildMediaModerationDocument({ id: `og:${data.image}`, kind: 'image', url: data.image, updatedAt: 0 })
+      : null,
+    [data?.image],
+  )
+  const { blocked: ogImageBlocked, loading: ogImageModerationLoading } = useMediaModerationDocument(
+    ogImageModerationDoc,
+    { failClosed: true },
+  )
 
   // Skeleton while fetching
   if (loading) {
@@ -220,8 +114,8 @@ export function LinkPreviewCard({
         ${className}
       `}
     >
-      {/* OG Image */}
-      {data.image && !imageFailed && (
+      {/* OG Image — only shown once classified as safe */}
+      {data.image && !imageFailed && !ogImageBlocked && !ogImageModerationLoading && (
         <div className="aspect-[1.91/1] w-full overflow-hidden bg-[rgb(var(--color-fill)/0.06)]">
           <img
             src={data.image}
@@ -279,10 +173,11 @@ export function LinkPreviewCard({
       {/* Nostr author attribution — shown when nostr:creator is present.
           This is the "More from X" equivalent from the Mastodon fediverse:creator spec. */}
       {data.nostrCreator && (
-        <NostrAuthorRow
+        <NostrCreatorAttribution
           nostrCreator={data.nostrCreator}
-          nostrNip05={data.nostrNip05}
+          {...(data.nostrNip05 !== undefined ? { nostrNip05: data.nostrNip05 } : {})}
           pageHostname={host}
+          showTopBorder
         />
       )}
     </a>

@@ -192,7 +192,8 @@ function activeFilters(filters: KeywordFilter[]): KeywordFilter[] {
 
 function aggregate(matches: FilterMatch[]): FilterCheckResult {
   if (!matches.length) return { action: null, matches: [] }
-  // A single 'hide' match escalates the whole result to 'hide'
+  // Severity order: block > hide > warn
+  if (matches.some(m => m.action === 'block')) return { action: 'block', matches }
   const action: FilterCheckResult['action'] =
     matches.some(m => m.action === 'hide') ? 'hide' : 'warn'
   return { action, matches }
@@ -247,7 +248,7 @@ export function checkProfileText(
 
 /**
  * Merge a text-match result with an async semantic result.
- * If either says 'hide', the merged action is 'hide'.
+ * Severity order: block > hide > warn.
  */
 export function mergeResults(
   text:     FilterCheckResult,

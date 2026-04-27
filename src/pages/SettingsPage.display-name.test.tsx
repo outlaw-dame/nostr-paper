@@ -139,7 +139,7 @@ describe('SettingsPage display name publishing', () => {
 
     const saveButton = Array
       .from(container.querySelectorAll('button'))
-      .find((button) => button.textContent?.includes('Save Display Name'))
+      .find((button) => button.textContent?.includes('Save Profile'))
 
     expect(saveButton).toBeTruthy()
     await click(saveButton!)

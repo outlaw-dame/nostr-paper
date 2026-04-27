@@ -3,11 +3,21 @@ import { Sheet } from 'konsta/react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { BlossomUpload } from '@/components/blossom/BlossomUpload'
 import { GifPicker } from '@/components/compose/GifPicker'
+import { NoteContent } from '@/components/cards/NoteContent'
+import { LinkPreviewCard } from '@/components/links/LinkPreviewCard'
 import { useApp } from '@/contexts/app-context'
 import { EventPreviewCard } from '@/components/nostr/EventPreviewCard'
 import { useAddressableEvent } from '@/hooks/useAddressableEvent'
+import { useConversationThread } from '@/hooks/useConversationThread'
 import { useEvent } from '@/hooks/useEvent'
+import { useHideNsfwTaggedPosts } from '@/hooks/useHideNsfwTaggedPosts'
 import { useHashtagSuggestions } from '@/hooks/useHashtagSuggestions'
+import { useKeywordFilters } from '@/hooks/useKeywordFilters'
+import { useMuteList } from '@/hooks/useMuteList'
+import { useTrendingTopics } from '@/hooks/useTrendingTopics'
+import { buildComposeFallbackSuggestion } from '@/lib/ai/insights'
+import { generateAssistText, type AiAssistProvider, type AiAssistSource } from '@/lib/ai/gemmaAssist'
+import { AI_ASSIST_PROVIDER_UPDATED_EVENT, getAiAssistProvider, setAiAssistProvider } from '@/lib/ai/provider'
 import { applyHashtagSuggestion } from '@/lib/compose/hashtags'
 import {
   clearComposeSearch,
@@ -19,6 +29,7 @@ import {
 import { normalizeNip94Tags } from '@/lib/nostr/fileMetadata'
 import { decodeAddressReference, decodeEventReference } from '@/lib/nostr/nip21'
 import { publishNote } from '@/lib/nostr/note'
+import { URL_PATTERN } from '@/lib/text/entities'
 import { STORY_EXPIRATION_SECONDS } from '@/lib/nostr/stories'
 import {
   parseCommentEvent,
@@ -26,9 +37,194 @@ import {
   publishTextReply,
   publishThread,
 } from '@/lib/nostr/thread'
+import { normalizeHashtag, stripUrlTrailingPunct, isSafeURL } from '@/lib/security/sanitize'
 import { isTenorConfigured, type TenorGif } from '@/lib/tenor/client'
 import type { BlossomBlob } from '@/types'
 import { Kind } from '@/types'
+
+type ToneTemperature = 'caution' | 'supportive' | 'neutral'
+
+interface ToneInsight {
+  temperature: ToneTemperature
+  summary: string
+  details: string
+}
+
+interface ContextHashtagSuggestion {
+  tag: string
+  reason: 'relevant' | 'trending' | 'thread'
+  usageCount?: number
+  latestCreatedAt?: number
+}
+
+interface ContextKeywordSuggestion {
+  keyword: string
+  reason: 'trending' | 'semantic-filter' | 'thread'
+}
+
+type ComposeAdviceSource = AiAssistSource | 'fallback'
+
+const SUPPORTIVE_TERMS = [
+  'thanks', 'thank you', 'appreciate', 'respect', 'great point', 'well said', 'helpful', 'support',
+  'constructive', 'glad', 'happy', 'encourage', 'empathy', 'care',
+]
+
+const CAUTION_TERMS = [
+  'idiot', 'stupid', 'shut up', 'hate you', 'trash', 'worthless', 'pathetic', 'loser', 'disgusting',
+  'attack', 'destroy', 'humiliate', 'rage', 'furious', 'violent',
+]
+
+const HIGH_RISK_HARM_TERMS = [
+  'kill', 'lynch', 'eradicate', 'wipe out', 'exterminate', 'subhuman', 'vermin',
+]
+
+const PROTECTED_GROUP_TERMS = [
+  'lgbtq', 'trans', 'gay', 'lesbian', 'bisexual', 'queer', 'black', 'jewish', 'muslim', 'immigrant',
+]
+
+const NSFW_TERMS = [
+  'nsfw', 'porn', 'gore', 'explicit', 'sexual',
+]
+
+function tokenizeWords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s#]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+}
+
+function hasTokenMatch(value: string, tokens: Set<string>): boolean {
+  if (!value) return false
+  const normalized = value.toLowerCase().trim()
+  if (!normalized) return false
+
+  if (normalized.includes(' ')) {
+    return [...tokens].join(' ').includes(normalized)
+  }
+
+  return tokens.has(normalized)
+}
+
+function getTermTokens(value: string): string[] {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s_-]/g, ' ')
+    .split(/[\s_-]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3)
+}
+
+function includesMutedWord(text: string, mutedWords: Set<string>): boolean {
+  if (mutedWords.size === 0) return false
+  const textTokens = new Set(tokenizeWords(text))
+  for (const mutedWord of mutedWords) {
+    const normalized = mutedWord.toLowerCase().trim()
+    if (!normalized) continue
+    if (normalized.includes(' ')) {
+      if (text.toLowerCase().includes(normalized)) return true
+      continue
+    }
+    if (textTokens.has(normalized)) return true
+  }
+  return false
+}
+
+function extractUrlCandidates(text: string): string[] {
+  const matches = text.match(URL_PATTERN) ?? []
+  const deduped: string[] = []
+  const seen = new Set<string>()
+
+  for (const raw of matches) {
+    const normalized = stripUrlTrailingPunct(raw)
+    if (!isSafeURL(normalized) || seen.has(normalized)) continue
+    deduped.push(normalized)
+    seen.add(normalized)
+  }
+
+  return deduped
+}
+
+function extractHashtags(text: string): string[] {
+  const matcher = /#([a-zA-Z][a-zA-Z0-9_]{0,100})/g
+  const tags = new Set<string>()
+  let hit = matcher.exec(text)
+
+  while (hit) {
+    const normalized = normalizeHashtag(hit[1] ?? '')
+    if (normalized) tags.add(normalized)
+    hit = matcher.exec(text)
+  }
+
+  return [...tags]
+}
+
+function lexicalSimilarity(a: string, b: string): number {
+  const setA = new Set(tokenizeWords(a))
+  const setB = new Set(tokenizeWords(b))
+  if (setA.size === 0 || setB.size === 0) return 0
+
+  let overlap = 0
+  for (const token of setA) {
+    if (setB.has(token)) overlap += 1
+  }
+
+  const union = setA.size + setB.size - overlap
+  return union > 0 ? overlap / union : 0
+}
+
+function toSnippet(text: string, max = 140): string {
+  const compact = text.trim().replace(/\s+/g, ' ')
+  if (compact.length <= max) return compact
+  return `${compact.slice(0, max - 1)}…`
+}
+
+function shortPubkey(pubkey: string): string {
+  if (pubkey.length < 16) return pubkey
+  return `${pubkey.slice(0, 8)}…${pubkey.slice(-6)}`
+}
+
+function applyKeywordSuggestion(draft: string, keyword: string): string {
+  const normalized = keyword.trim().toLowerCase()
+  if (!normalized) return draft
+
+  const bodyTokens = new Set(tokenizeWords(draft))
+  if (bodyTokens.has(normalized)) return draft
+
+  const trimmed = draft.trimEnd()
+  if (trimmed.length === 0) return `${normalized} `
+  const separator = /[\n\s]$/.test(draft) ? '' : ' '
+  return `${draft}${separator}${normalized} `
+}
+
+function analyzeTone(body: string): ToneInsight {
+  const lower = body.toLowerCase()
+  const supportiveCount = SUPPORTIVE_TERMS.filter((term) => lower.includes(term)).length
+  const cautionCount = CAUTION_TERMS.filter((term) => lower.includes(term)).length
+  const highRisk = HIGH_RISK_HARM_TERMS.some((term) => lower.includes(term))
+
+  if (highRisk || cautionCount >= 2) {
+    return {
+      temperature: 'caution',
+      summary: 'Orange caution',
+      details: 'This draft may read as inflammatory. Consider tightening claims and avoiding hostile phrasing.',
+    }
+  }
+
+  if (supportiveCount >= 2 && cautionCount === 0) {
+    return {
+      temperature: 'supportive',
+      summary: 'Green supportive',
+      details: 'Supportive language detected. The message reads constructive and community-safe.',
+    }
+  }
+
+  return {
+    temperature: 'neutral',
+    summary: 'Neutral',
+    details: 'Tone is mixed/neutral. Add context if you want the intent to feel clearer.',
+  }
+}
 
 function inferBlobPreviewKind(blob: BlossomBlob): 'image' | 'video' | 'audio' | 'file' {
   const mimeType = blob.nip94?.mimeType ?? blob.type
@@ -115,7 +311,26 @@ export function ComposeSheet() {
   const [error,         setError]         = useState<string | null>(null)
   const [altTexts,      setAltTexts]      = useState<Record<string, string>>({})
   const [editingAltFor, setEditingAltFor] = useState<string | null>(null)
+  const [composeAdvice, setComposeAdvice] = useState('')
+  const [composeAdviceSource, setComposeAdviceSource] = useState<ComposeAdviceSource>('fallback')
+  const [composeAdviceLoading, setComposeAdviceLoading] = useState(false)
+  const [composeAdviceError, setComposeAdviceError] = useState<string | null>(null)
+  const [aiAssistProvider, setAiAssistProviderState] = useState<AiAssistProvider>(() => getAiAssistProvider())
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    const onProviderUpdated = () => {
+      setAiAssistProviderState(getAiAssistProvider())
+    }
+
+    window.addEventListener(AI_ASSIST_PROVIDER_UPDATED_EVENT, onProviderUpdated)
+    window.addEventListener('storage', onProviderUpdated)
+
+    return () => {
+      window.removeEventListener(AI_ASSIST_PROVIDER_UPDATED_EVENT, onProviderUpdated)
+      window.removeEventListener('storage', onProviderUpdated)
+    }
+  }, [])
   const tenorEnabled = isTenorConfigured()
   const replyingToKind1 = replyTarget?.kind === Kind.ShortNote
   const replyingToThread = replyTarget?.kind === Kind.Thread || (
@@ -137,6 +352,306 @@ export function ComposeSheet() {
     enabled: open && !publishing,
     limit: 6,
   })
+  const { topics: trendingTopics, loading: trendingTopicsLoading } = useTrendingTopics(10, 'today')
+  const { filters, loading: keywordFiltersLoading } = useKeywordFilters()
+  const {
+    mutedPubkeys,
+    mutedWords,
+    mutedHashtags,
+    loading: muteListLoading,
+  } = useMuteList()
+  const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
+  const {
+    rootEvent: threadRootEvent,
+    replies: threadReplies,
+    loading: threadRepliesLoading,
+  } = useConversationThread(replyTarget)
+
+  const draftTone = useMemo(() => analyzeTone(suggestionContext), [suggestionContext])
+  const draftTokens = useMemo(() => new Set(tokenizeWords(suggestionContext)), [suggestionContext])
+
+  const activeKeywordFilters = useMemo(() => {
+    const now = Date.now()
+    return filters.filter((filter) => filter.enabled && (filter.expiresAt === null || filter.expiresAt > now))
+  }, [filters])
+
+  const activeSemanticFilterTerms = useMemo(
+    () => activeKeywordFilters
+      .filter((filter) => filter.semantic)
+      .map((filter) => filter.term.toLowerCase().trim())
+      .filter(Boolean),
+    [activeKeywordFilters],
+  )
+
+  const matchedDraftFilters = useMemo(() => {
+    const lower = suggestionContext.toLowerCase()
+    return activeKeywordFilters.filter((filter) => {
+      const term = filter.term.toLowerCase().trim()
+      if (!term) return false
+      if (term.includes(' ')) return lower.includes(term)
+
+      const termTokens = getTermTokens(term)
+      if (termTokens.length === 0) return false
+      return termTokens.some((token) => hasTokenMatch(token, draftTokens))
+    })
+  }, [activeKeywordFilters, draftTokens, suggestionContext])
+
+  const previewLinks = useMemo(
+    () => extractUrlCandidates(suggestionContext).slice(0, 2),
+    [suggestionContext],
+  )
+
+  const replyDuplicateCandidates = useMemo(() => {
+    const draft = body.trim()
+    if (!replyReference || draft.length < 12) return []
+
+    return threadReplies
+      .filter((reply) => !mutedPubkeys.has(reply.pubkey))
+      .filter((reply) => !includesMutedWord(reply.content, mutedWords))
+      .filter((reply) => reply.id !== replyTarget?.id)
+      .map((reply) => ({
+        reply,
+        similarity: lexicalSimilarity(draft, reply.content),
+      }))
+      .filter((entry) => entry.similarity >= 0.42)
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, 3)
+  }, [body, mutedPubkeys, mutedWords, replyReference, replyTarget?.id, threadReplies])
+
+  const topThreadHighlights = useMemo(
+    () => threadReplies
+      .filter((reply) => !mutedPubkeys.has(reply.pubkey))
+      .filter((reply) => !includesMutedWord(reply.content, mutedWords))
+      .filter((reply) => reply.content.trim().length > 0)
+      .slice(0, 3),
+    [mutedPubkeys, mutedWords, threadReplies],
+  )
+
+  const contextualHashtagSuggestions = useMemo(() => {
+    const existingInBody = new Set(extractHashtags(suggestionContext))
+    const draftTokens = new Set(tokenizeWords(suggestionContext).filter((token) => token.length >= 3))
+    const merged = new Map<string, ContextHashtagSuggestion>()
+
+    for (const suggestion of hashtagSuggestions) {
+      const normalized = normalizeHashtag(suggestion.tag)
+      if (!normalized || existingInBody.has(normalized) || mutedHashtags.has(normalized)) continue
+      merged.set(normalized, {
+        tag: normalized,
+        reason: 'relevant',
+        usageCount: suggestion.usageCount,
+        latestCreatedAt: suggestion.latestCreatedAt,
+      })
+    }
+
+    for (const topic of trendingTopics) {
+      const normalized = normalizeHashtag(topic.tag)
+      if (!normalized || existingInBody.has(normalized) || merged.has(normalized) || mutedHashtags.has(normalized)) continue
+
+      const matchToken = draftTokens.has(normalized)
+        || [...draftTokens].some((token) => token.includes(normalized) || normalized.includes(token))
+      if (!matchToken && suggestionContext.trim().length > 0) continue
+
+      merged.set(normalized, {
+        tag: normalized,
+        reason: 'trending',
+        usageCount: topic.usageCount,
+        latestCreatedAt: topic.latestCreatedAt,
+      })
+    }
+
+    if (replyReference && threadRootEvent) {
+      const threadTags = [
+        ...extractHashtags(threadRootEvent.content),
+        ...topThreadHighlights.flatMap((reply) => extractHashtags(reply.content)),
+      ]
+
+      for (const tag of threadTags) {
+        const normalized = normalizeHashtag(tag)
+        if (!normalized || existingInBody.has(normalized) || merged.has(normalized) || mutedHashtags.has(normalized)) continue
+        merged.set(normalized, { tag: normalized, reason: 'thread' })
+      }
+    }
+
+    return [...merged.values()].slice(0, 8)
+  }, [
+    hashtagSuggestions,
+    trendingTopics,
+    suggestionContext,
+    replyReference,
+    threadRootEvent,
+    topThreadHighlights,
+    mutedHashtags,
+  ])
+
+  const keywordSuggestions = useMemo(() => {
+    const existing = new Set(tokenizeWords(suggestionContext))
+    const merged = new Map<string, ContextKeywordSuggestion>()
+
+    for (const topic of trendingTopics) {
+      const parts = getTermTokens(topic.tag)
+      for (const part of parts) {
+        if (existing.has(part) || mutedWords.has(part) || merged.has(part)) continue
+        merged.set(part, { keyword: part, reason: 'trending' })
+      }
+    }
+
+    for (const term of activeSemanticFilterTerms) {
+      const parts = getTermTokens(term)
+      for (const part of parts) {
+        if (existing.has(part) || mutedWords.has(part) || merged.has(part)) continue
+        merged.set(part, { keyword: part, reason: 'semantic-filter' })
+      }
+    }
+
+    for (const reply of topThreadHighlights) {
+      const parts = getTermTokens(reply.content)
+      for (const part of parts.slice(0, 3)) {
+        if (existing.has(part) || mutedWords.has(part) || merged.has(part)) continue
+        merged.set(part, { keyword: part, reason: 'thread' })
+      }
+    }
+
+    return [...merged.values()].slice(0, 8)
+  }, [activeSemanticFilterTerms, mutedWords, suggestionContext, topThreadHighlights, trendingTopics])
+
+  const moderationGuidance = useMemo(() => {
+    const lower = suggestionContext.toLowerCase()
+    const notices: string[] = []
+    const hasProtectedGroupContext = PROTECTED_GROUP_TERMS.some((term) => lower.includes(term))
+    const hasHostileFraming = CAUTION_TERMS.some((term) => lower.includes(term))
+      || HIGH_RISK_HARM_TERMS.some((term) => lower.includes(term))
+    const matchedBlockFilters = matchedDraftFilters.filter((filter) => filter.action === 'block')
+    const matchedWarnFilters = matchedDraftFilters.filter((filter) => filter.action !== 'block')
+
+    if (replyDuplicateCandidates.length > 0) {
+      notices.push('Similar points already appear in this thread. Consider adding a fresh angle instead of repeating replies.')
+    }
+
+    if (matchedBlockFilters.length > 0) {
+      notices.push(`${matchedBlockFilters.length} active block filter(s) match this draft. Consider rewording before publish.`)
+    }
+
+    if (matchedWarnFilters.length > 0) {
+      notices.push(`${matchedWarnFilters.length} warn/hide filter(s) overlap this draft. Add additional context to reduce false-positive moderation outcomes.`)
+    }
+
+    if (includesMutedWord(suggestionContext, mutedWords)) {
+      notices.push('Draft contains terms from your muted-words list; verify intent and wording before posting.')
+    }
+
+    if (hideNsfwTaggedPosts && NSFW_TERMS.some((term) => lower.includes(term))) {
+      notices.push('Your moderation preference currently hides NSFW-tagged content; add context and proper tags if this is safety-relevant.')
+    }
+
+    if (hasProtectedGroupContext && hasHostileFraming) {
+      notices.push('This draft references protected groups with potentially harmful framing. Consider safer, specific criticism of ideas/actions instead of identities.')
+    }
+
+    if (notices.length === 0) {
+      notices.push('Draft is aligned with current moderation preferences. Keep context specific and avoid blanket claims for higher quality discussion.')
+    }
+
+    return notices
+  }, [
+    hideNsfwTaggedPosts,
+    matchedDraftFilters,
+    mutedWords,
+    replyDuplicateCandidates.length,
+    suggestionContext,
+  ])
+
+  const composeAdviceFallback = useMemo(() => buildComposeFallbackSuggestion({
+    draft: suggestionContext,
+    tone: draftTone.temperature,
+    duplicateReplyCount: replyDuplicateCandidates.length,
+    topThreadHighlights: topThreadHighlights.map((reply) => toSnippet(reply.content, 120)),
+    hashtagSuggestions: contextualHashtagSuggestions.map((suggestion) => suggestion.tag),
+    keywordSuggestions: keywordSuggestions.map((suggestion) => suggestion.keyword),
+  }), [
+    contextualHashtagSuggestions,
+    draftTone.temperature,
+    keywordSuggestions,
+    replyDuplicateCandidates.length,
+    suggestionContext,
+    topThreadHighlights,
+  ])
+
+  useEffect(() => {
+    if (!open || publishing) {
+      setComposeAdvice('')
+      setComposeAdviceError(null)
+      setComposeAdviceLoading(false)
+      setComposeAdviceSource('fallback')
+      return
+    }
+
+    const draft = suggestionContext.trim()
+    if (draft.length < 24) {
+      setComposeAdvice(composeAdviceFallback)
+      setComposeAdviceSource('fallback')
+      setComposeAdviceError(null)
+      setComposeAdviceLoading(false)
+      return
+    }
+
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      setComposeAdviceLoading(true)
+      setComposeAdviceError(null)
+
+      const prompt = [
+        'You are an assistant for short social posts.',
+        'Write 2 to 3 sentences of specific, actionable guidance to improve this post.',
+        'Address tone, clarity, and one concrete structural change the author could make.',
+        'Plain text only, no markdown, no bullet points.',
+        'Be direct and specific — reference actual content from the draft.',
+        'Each sentence should add a distinct insight, not repeat the same idea.',
+        'Do not output markdown or bullets.',
+        `Draft: ${JSON.stringify(draft)}`,
+        `Tone: ${draftTone.summary}`,
+        `Duplicate reply candidates: ${replyDuplicateCandidates.length}`,
+        `Top thread highlights: ${JSON.stringify(topThreadHighlights.slice(0, 2).map((reply) => toSnippet(reply.content, 120)))}`,
+        `Recommended hashtags: ${JSON.stringify(contextualHashtagSuggestions.slice(0, 5).map((suggestion) => suggestion.tag))}`,
+        `Recommended keywords: ${JSON.stringify(keywordSuggestions.slice(0, 5).map((suggestion) => suggestion.keyword))}`,
+        `Moderation guidance: ${JSON.stringify(moderationGuidance.slice(0, 3))}`,
+      ].join('\n')
+
+      generateAssistText(prompt, {
+        signal: controller.signal,
+        provider: aiAssistProvider,
+      })
+        .then((result) => {
+          if (controller.signal.aborted) return
+          setComposeAdvice(result.text.length > 0 ? result.text : composeAdviceFallback)
+          setComposeAdviceSource(result.text.length > 0 ? result.source : 'fallback')
+          setComposeAdviceLoading(false)
+        })
+        .catch((assistError: unknown) => {
+          if (controller.signal.aborted) return
+          setComposeAdvice(composeAdviceFallback)
+          setComposeAdviceSource('fallback')
+          setComposeAdviceError(assistError instanceof Error ? assistError.message : 'Gemma compose assist unavailable.')
+          setComposeAdviceLoading(false)
+        })
+    }, 700)
+
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [
+    composeAdviceFallback,
+    contextualHashtagSuggestions,
+    aiAssistProvider,
+    draftTone.summary,
+    keywordSuggestions,
+    moderationGuidance,
+    open,
+    publishing,
+    replyDuplicateCandidates.length,
+    suggestionContext,
+    topThreadHighlights,
+  ])
 
   useEffect(() => {
     if (!open) {
@@ -246,7 +761,11 @@ export function ComposeSheet() {
   const removeMedia = (sha256: string) => {
     if (publishing) return
     setMedia((current) => current.filter((item) => item.sha256 !== sha256))
-    setAltTexts((prev) => { const { [sha256]: _, ...rest } = prev; return rest })
+    setAltTexts((prev) => {
+      const next = { ...prev }
+      delete next[sha256]
+      return next
+    })
     if (editingAltFor === sha256) setEditingAltFor(null)
   }
 
@@ -266,6 +785,12 @@ export function ComposeSheet() {
   const handleHashtagSuggestion = (tag: string) => {
     if (publishing) return
     setBody((current) => applyHashtagSuggestion(current, tag))
+    textareaRef.current?.focus()
+  }
+
+  const handleKeywordSuggestion = (keyword: string) => {
+    if (publishing) return
+    setBody((current) => applyKeywordSuggestion(current, keyword))
     textareaRef.current?.focus()
   }
 
@@ -432,19 +957,19 @@ export function ComposeSheet() {
             />
           </label>
 
-          {(hashtagSuggestionsLoading || hashtagSuggestions.length > 0) && (
+          {(hashtagSuggestionsLoading || trendingTopicsLoading || contextualHashtagSuggestions.length > 0) && (
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
                   Suggested Hashtags
                 </p>
                 <p className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
-                  {hashtagSuggestionsLoading ? 'Updating…' : 'Recent + relevant'}
+                  {hashtagSuggestionsLoading || trendingTopicsLoading ? 'Updating…' : 'Context + trend aware'}
                 </p>
               </div>
 
               <div className="flex flex-wrap gap-2">
-                {hashtagSuggestions.map((suggestion) => (
+                {contextualHashtagSuggestions.map((suggestion) => (
                   <button
                     key={suggestion.tag}
                     type="button"
@@ -460,13 +985,180 @@ export function ComposeSheet() {
                       #{suggestion.tag}
                     </p>
                     <p className="mt-0.5 text-[11px] leading-5 text-[rgb(var(--color-label-tertiary))]">
-                      {suggestion.usageCount} use{suggestion.usageCount === 1 ? '' : 's'} · {formatSuggestionRecency(suggestion.latestCreatedAt)}
+                      {suggestion.reason === 'thread'
+                        ? 'Thread context'
+                        : suggestion.reason === 'trending'
+                          ? `${suggestion.usageCount ?? 0} uses · trending`
+                          : `${suggestion.usageCount ?? 0} use${(suggestion.usageCount ?? 0) === 1 ? '' : 's'} · ${formatSuggestionRecency(suggestion.latestCreatedAt ?? 0)}`}
                     </p>
                   </button>
                 ))}
               </div>
             </div>
           )}
+
+          {keywordSuggestions.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+                  Suggested Keywords
+                </p>
+                <p className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
+                  Popular + semantic + thread context
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {keywordSuggestions.map((suggestion) => (
+                  <button
+                    key={`${suggestion.reason}:${suggestion.keyword}`}
+                    type="button"
+                    onClick={() => handleKeywordSuggestion(suggestion.keyword)}
+                    disabled={publishing}
+                    className="
+                      rounded-[14px] border border-[rgb(var(--color-fill)/0.18)]
+                      bg-[rgb(var(--color-bg-secondary))] px-3 py-2 text-left
+                      transition-colors active:opacity-80 disabled:opacity-40
+                    "
+                  >
+                    <p className="text-[13px] font-semibold text-[rgb(var(--color-label))]">
+                      {suggestion.keyword}
+                    </p>
+                    <p className="mt-0.5 text-[11px] leading-5 text-[rgb(var(--color-label-tertiary))]">
+                      {suggestion.reason === 'trending'
+                        ? 'Trending keyword'
+                        : suggestion.reason === 'semantic-filter'
+                          ? 'From your semantic filters'
+                          : 'From thread context'}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-3 rounded-[18px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg-secondary))] p-3.5">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+                AI Assist
+              </p>
+              <span
+                className={
+                  `rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                    draftTone.temperature === 'caution'
+                      ? 'bg-orange-500/15 text-orange-600'
+                      : draftTone.temperature === 'supportive'
+                        ? 'bg-emerald-500/15 text-emerald-600'
+                        : 'bg-[rgb(var(--color-fill)/0.2)] text-[rgb(var(--color-label-secondary))]'
+                  }`
+                }
+              >
+                {draftTone.summary}
+              </span>
+            </div>
+
+            <p className="text-[13px] leading-6 text-[rgb(var(--color-label-secondary))]">
+              {draftTone.details}
+            </p>
+
+            <div className="rounded-[14px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] p-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
+                  Draft quality guidance
+                </p>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={aiAssistProvider}
+                    onChange={(event) => {
+                      const next = event.target.value as AiAssistProvider
+                      setAiAssistProvider(next)
+                      setAiAssistProviderState(next)
+                    }}
+                    className="rounded-[10px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg-secondary))] px-2 py-1 text-[11px] text-[rgb(var(--color-label-secondary))]"
+                    aria-label="AI provider"
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="gemma">Gemma</option>
+                    <option value="gemini">Gemini</option>
+                  </select>
+
+                  <span className="text-[11px] text-[rgb(var(--color-label-tertiary))]">
+                    {composeAdviceLoading ? 'Analyzing…' : composeAdviceSource === 'gemma' ? 'Gemma on-device' : composeAdviceSource === 'gemini' ? 'Gemini API' : 'Fallback'}
+                  </span>
+                </div>
+              </div>
+              <p className="mt-1.5 text-[12px] leading-5 text-[rgb(var(--color-label-secondary))]">
+                {composeAdvice || composeAdviceFallback}
+              </p>
+              {composeAdviceError && (
+                <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">
+                  {composeAdviceError}
+                </p>
+              )}
+            </div>
+
+            {replyReference && (
+              <div className="space-y-2">
+                <p className="text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
+                  Reply context intelligence
+                </p>
+
+                {threadRepliesLoading ? (
+                  <p className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
+                    Scanning thread context…
+                  </p>
+                ) : (
+                  <>
+                    {replyDuplicateCandidates.length > 0 && (
+                      <div className="rounded-[14px] border border-orange-500/30 bg-orange-500/10 p-2.5">
+                        <p className="text-[12px] font-medium text-orange-700">
+                          Similar replies detected
+                        </p>
+                        <div className="mt-1.5 space-y-1.5">
+                          {replyDuplicateCandidates.slice(0, 2).map((entry) => (
+                            <p key={entry.reply.id} className="text-[12px] leading-5 text-orange-700/95">
+                              ~{Math.round(entry.similarity * 100)}% match from {shortPubkey(entry.reply.pubkey)}: {toSnippet(entry.reply.content, 90)}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {topThreadHighlights.length > 0 && (
+                      <div className="space-y-1.5">
+                        <p className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
+                          High-signal replies in this thread
+                        </p>
+                        <div className="space-y-1.5">
+                          {topThreadHighlights.slice(0, 2).map((reply) => (
+                            <p key={reply.id} className="text-[12px] leading-5 text-[rgb(var(--color-label-secondary))]">
+                              {shortPubkey(reply.pubkey)}: {toSnippet(reply.content, 110)}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <p className="text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
+                Moderation-aware guidance
+              </p>
+              <p className="text-[12px] leading-5 text-[rgb(var(--color-label-tertiary))]">
+                {keywordFiltersLoading || muteListLoading
+                  ? 'Syncing filters and mute preferences…'
+                  : `Using ${activeKeywordFilters.length} active filter rule(s) and your mute list to personalize recommendations.`}
+              </p>
+              {moderationGuidance.map((notice) => (
+                <p key={notice} className="text-[12px] leading-5 text-[rgb(var(--color-label-tertiary))]">
+                  {notice}
+                </p>
+              ))}
+            </div>
+          </div>
 
           {attachmentsAllowed && (
             <div className="space-y-3">
@@ -686,6 +1378,87 @@ export function ComposeSheet() {
               )}
             </div>
           )}
+
+          <div className="space-y-2">
+            <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+              Live Preview
+            </p>
+
+            <div className="rounded-[18px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg-secondary))] p-3">
+              {threadMode && threadTitle.trim().length > 0 && (
+                <p className="mb-2 text-[14px] font-semibold text-[rgb(var(--color-label))]">
+                  {threadTitle.trim()}
+                </p>
+              )}
+
+              {body.trim().length > 0 ? (
+                <NoteContent
+                  content={body}
+                  interactive={false}
+                  allowTranslation={false}
+                  showEntityPreviews={false}
+                />
+              ) : (
+                <p className="text-[13px] text-[rgb(var(--color-label-tertiary))]">
+                  Start typing to preview your post.
+                </p>
+              )}
+
+              {previewLinks.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {previewLinks.map((url) => (
+                    <LinkPreviewCard key={url} url={url} />
+                  ))}
+                </div>
+              )}
+
+              {(media.length > 0 || selectedGifs.length > 0) && (
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  {media.slice(0, 3).map((blob) => {
+                    const previewUrl = getBlobPreviewUrl(blob)
+                    const kind = inferBlobPreviewKind(blob)
+                    return (
+                      <div
+                        key={`preview-${blob.sha256}`}
+                        className="aspect-square overflow-hidden rounded-[12px] bg-[rgb(var(--color-fill)/0.08)]"
+                      >
+                        {kind === 'image' && previewUrl ? (
+                          <img
+                            src={previewUrl}
+                            alt={altTexts[blob.sha256] ?? blob.nip94?.alt ?? ''}
+                            loading="lazy"
+                            decoding="async"
+                            referrerPolicy="no-referrer"
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center px-2 text-center text-[11px] text-[rgb(var(--color-label-secondary))]">
+                            {kind.toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+
+                  {selectedGifs.slice(0, 2).map((gif) => (
+                    <div
+                      key={`preview-gif-${gif.id}`}
+                      className="aspect-square overflow-hidden rounded-[12px] bg-[rgb(var(--color-fill)/0.08)]"
+                    >
+                      <img
+                        src={gif.previewUrl}
+                        alt={gif.title}
+                        loading="lazy"
+                        decoding="async"
+                        referrerPolicy="no-referrer"
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
 
           {!currentUser && (
             <p className="text-[13px] text-[rgb(var(--color-system-red))]">

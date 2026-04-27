@@ -2,6 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { EventPreviewCard } from '@/components/nostr/EventPreviewCard'
 import { useConversationThread } from '@/hooks/useConversationThread'
 import {
+  buildReplyTree,
+  collectDefaultCollapsedIds,
+  countDescendants,
+  type ReplyTreeNode,
+} from '@/lib/nostr/conversationTree'
+import {
   getConversationRootReference,
   parseCommentEvent,
   parseTextNoteReply,
@@ -13,77 +19,7 @@ import { Kind } from '@/types'
 interface ConversationSectionProps {
   event: NostrEvent
   className?: string
-}
-
-interface ReplyTreeNode {
-  event: NostrEvent
-  children: ReplyTreeNode[]
-}
-
-function sortChronologically(events: NostrEvent[]): NostrEvent[] {
-  return [...events].sort((a, b) => (
-    a.created_at - b.created_at || a.id.localeCompare(b.id)
-  ))
-}
-
-function getReplyParentEventId(reply: NostrEvent): string | null {
-  if (reply.kind === Kind.ShortNote) {
-    return parseTextNoteReply(reply)?.parentEventId ?? null
-  }
-  if (reply.kind === Kind.Comment) {
-    return parseCommentEvent(reply)?.parentEventId ?? null
-  }
-  return null
-}
-
-function sortTree(nodes: ReplyTreeNode[]): ReplyTreeNode[] {
-  return [...nodes]
-    .sort((a, b) => (
-      a.event.created_at - b.event.created_at || a.event.id.localeCompare(b.event.id)
-    ))
-    .map((node) => ({
-      event: node.event,
-      children: sortTree(node.children),
-    }))
-}
-
-function buildReplyTree(replies: NostrEvent[]): ReplyTreeNode[] {
-  const sortedReplies = sortChronologically(replies)
-  const byId = new Map<string, ReplyTreeNode>()
-  for (const reply of sortedReplies) {
-    byId.set(reply.id, { event: reply, children: [] })
-  }
-
-  const roots: ReplyTreeNode[] = []
-  for (const reply of sortedReplies) {
-    const node = byId.get(reply.id)
-    if (!node) continue
-
-    const parentId = getReplyParentEventId(reply)
-    const parentNode = parentId ? byId.get(parentId) : undefined
-    if (!parentNode || parentId === reply.id) {
-      roots.push(node)
-      continue
-    }
-
-    parentNode.children.push(node)
-  }
-
-  return sortTree(roots)
-}
-
-function countDescendants(node: ReplyTreeNode): number {
-  return node.children.reduce((acc, child) => acc + 1 + countDescendants(child), 0)
-}
-
-function collectDefaultCollapsedIds(nodes: ReplyTreeNode[], depth = 0, set = new Set<string>()): Set<string> {
-  for (const node of nodes) {
-    if (node.children.length > 0 && depth >= 1) {
-      set.add(node.event.id)
-    }
-    collectDefaultCollapsedIds(node.children, depth + 1, set)
-  }
-  return set
+  section?: 'all' | 'root' | 'replies'
 }
 
 function ReplyTreeItem({
@@ -91,19 +27,40 @@ function ReplyTreeItem({
   depth,
   collapsedIds,
   onToggleCollapsed,
+  parentPubkey,
 }: {
   node: ReplyTreeNode
   depth: number
   collapsedIds: Set<string>
   onToggleCollapsed: (id: string) => void
+  parentPubkey?: string
 }) {
   const hasChildren = node.children.length > 0
   const collapsed = hasChildren && collapsedIds.has(node.event.id)
   const totalNestedReplies = hasChildren ? countDescendants(node) : 0
+  const isContinuation = depth > 0 && parentPubkey === node.event.pubkey
 
   return (
     <div className={depth > 0 ? 'ml-4 border-l border-[rgb(var(--color-fill)/0.14)] pl-3' : ''}>
+      {isContinuation && (
+        <p className="mb-1 ml-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-tertiary))]">
+          Thread continuation
+        </p>
+      )}
       <EventPreviewCard event={node.event} compact />
+      {node.detached && (
+        <div className="mt-1.5">
+          <span
+            title="Detached reply"
+            aria-label="Detached reply"
+            className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg-secondary))] text-[rgb(var(--color-label-tertiary))]"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden>
+              <circle cx="5" cy="5" r="1.5" fill="currentColor" />
+            </svg>
+          </span>
+        </div>
+      )}
 
       {hasChildren && (
         <div className="mt-2 space-y-2">
@@ -125,6 +82,7 @@ function ReplyTreeItem({
                   depth={depth + 1}
                   collapsedIds={collapsedIds}
                   onToggleCollapsed={onToggleCollapsed}
+                  parentPubkey={node.event.pubkey}
                 />
               ))}
             </div>
@@ -138,13 +96,17 @@ function ReplyTreeItem({
 export function ConversationSection({
   event,
   className = '',
+  section = 'all',
 }: ConversationSectionProps) {
-  const { rootEvent, replies, loading, rootLoading, error } = useConversationThread(event)
+  const { rootEvent, replies, loading, rootLoading, error, threadingMode } = useConversationThread(event)
   const rootReference = getConversationRootReference(event)
   const noteReply = parseTextNoteReply(event)
   const comment = parseCommentEvent(event)
   const thread = parseThreadEvent(event)
-  const replyTree = useMemo(() => buildReplyTree(replies), [replies])
+  const replyTree = useMemo(
+    () => buildReplyTree(replies, { anchorEventId: event.id }),
+    [event.id, replies],
+  )
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
 
   useEffect(() => {
@@ -153,7 +115,9 @@ export function ConversationSection({
 
   const hasNestedReplies = useMemo(
     () => replies.some((reply) => {
-      const parentId = getReplyParentEventId(reply)
+      const parentId = reply.kind === Kind.ShortNote
+        ? parseTextNoteReply(reply)?.parentEventId
+        : parseCommentEvent(reply)?.parentEventId
       return Boolean(parentId && reply.id !== parentId && replies.some((candidate) => candidate.id === parentId))
     }),
     [replies],
@@ -193,35 +157,42 @@ export function ConversationSection({
     return null
   }
 
-  if (!showRootBlock && !showRepliesBlock) {
+  if (section === 'all' && !showRootBlock && !showRepliesBlock) {
     return null
   }
+  if (section === 'root' && (!showRootBlock || (!rootEvent && !rootLoading))) return null
+  if (section === 'replies' && !showRepliesBlock) return null
 
   return (
     <section className={`space-y-3 ${className}`}>
-      {showRootBlock && (
-        <div className="space-y-2">
-          <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-            In Conversation
-          </p>
+      {(section === 'all' || section === 'root') && showRootBlock && (rootEvent || rootLoading) && (
+        <div>
           {rootEvent ? (
             <EventPreviewCard event={rootEvent} compact linked />
           ) : (
-            <div className="rounded-[18px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg-secondary))] p-3">
-              <p className="text-[14px] text-[rgb(var(--color-label-secondary))]">
-                {rootLoading ? 'Loading conversation root…' : 'Conversation root unavailable.'}
-              </p>
-            </div>
+            <div className="h-[72px] animate-pulse rounded-[18px] bg-[rgb(var(--color-fill)/0.07)]" />
           )}
         </div>
       )}
 
-      {showRepliesBlock && (
+      {(section === 'all' || section === 'replies') && showRepliesBlock && (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-              {label}
-            </p>
+            <div className="inline-flex items-center gap-2">
+              <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+                {label}
+              </p>
+              {threadingMode !== 'standard' && (
+                <span
+                  className="inline-flex items-center rounded-full border border-[rgb(var(--color-fill)/0.16)] bg-[rgb(var(--color-bg-secondary))] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.06em] text-[rgb(var(--color-label-tertiary))]"
+                  title={threadingMode === 'numbered'
+                    ? 'Built with numbered thread reconstruction'
+                    : 'Built with mixed NIP-10 and numbered thread reconstruction'}
+                >
+                  {threadingMode === 'numbered' ? 'Numbered Thread' : 'Mixed Threading'}
+                </span>
+              )}
+            </div>
             {hasNestedReplies && (
               <div className="flex items-center gap-2">
                 <button
@@ -256,6 +227,7 @@ export function ConversationSection({
                   return next
                 })
               }}
+              parentPubkey={event.pubkey}
             />
           ))}
 

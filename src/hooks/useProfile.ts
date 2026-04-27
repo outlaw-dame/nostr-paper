@@ -150,7 +150,7 @@ export function useProfileWithOptions(
    * Uses withRetry for transient relay failures with a 2-attempt cap so the
    * background refresh does not spin for a long time.
    */
-  const fetchFromRelay = useCallback(async (pk: string, signal: AbortSignal) => {
+  const fetchFromRelay = useCallback(async (pk: string, signal: AbortSignal, bg: boolean) => {
     const existing = inflightRelayProfileFetches.get(pk)
     if (existing) {
       await existing.catch(() => {})
@@ -205,7 +205,7 @@ export function useProfileWithOptions(
 
         if (fresh && !signal.aborted) {
           dispatch({ type: 'UPDATE', payload: fresh })
-          if (background && fresh.nip05) {
+          if (bg && fresh.nip05) {
             await refreshNip05(pk, signal)
           }
         }
@@ -221,7 +221,7 @@ export function useProfileWithOptions(
 
     inflightRelayProfileFetches.set(pk, promise)
     await promise
-  }, [background, refreshNip05])
+  }, [refreshNip05])
 
   useEffect(() => {
     if (!pubkey || !isValidHex32(pubkey)) {
@@ -261,11 +261,11 @@ export function useProfileWithOptions(
           // the event-id-aware kind-0 schema.
           const ageSeconds = Math.floor(Date.now() / 1000) - displayProfile.updatedAt
           if (background && (ageSeconds > STALE_THRESHOLD_S || !displayProfile.eventId)) {
-            fetchFromRelay(pubkey, signal).catch(() => {})
+            fetchFromRelay(pubkey, signal, background).catch(() => {})
           }
         } else {
           dispatch({ type: 'LOAD_MISS' })
-          fetchFromRelay(pubkey, signal).catch((err: unknown) => {
+          fetchFromRelay(pubkey, signal, background).catch((err: unknown) => {
             if (signal.aborted) return
             dispatch({
               type:    'ERROR',
@@ -283,7 +283,7 @@ export function useProfileWithOptions(
       })
 
     return () => abortRef.current?.abort()
-  }, [background, pubkey, fetchFromRelay])
+  }, [background, pubkey, fetchFromRelay, refreshNip05])
 
   useEffect(() => {
     if (!background || !pubkey || typeof window === 'undefined') return

@@ -23,6 +23,11 @@ declare const self: ServiceWorkerGlobalScope
 
 const SW_VERSION = '1.0.0'
 
+function isAppleMobileWebKit(): boolean {
+  const ua = self.navigator.userAgent || ''
+  return /iPhone|iPad|iPod/i.test(ua) && /AppleWebKit/i.test(ua)
+}
+
 precacheAndRoute(self.__WB_MANIFEST)
 cleanupOutdatedCaches()
 
@@ -54,9 +59,24 @@ self.addEventListener('fetch', (event) => {
   if (import.meta.env.DEV && isLocalDevelopmentHost(self.location.hostname)) return
   if (url.origin !== self.location.origin) return
   if (request.mode === 'navigate') {
-    event.respondWith(injectCrossOriginHeaders(request))
+    event.respondWith(handleNavigationRequest(request))
   }
 })
+
+async function handleNavigationRequest(request: Request): Promise<Response> {
+  // iOS Safari is more sensitive to navigation-response rewriting in SW.
+  // Keep navigations plain there to avoid occasional blank-page failures.
+  if (isAppleMobileWebKit()) {
+    return fetch(request)
+  }
+
+  try {
+    return await injectCrossOriginHeaders(request)
+  } catch (error) {
+    console.warn('[SW] Navigation header injection failed; falling back to direct fetch:', error)
+    return fetch(request)
+  }
+}
 
 async function injectCrossOriginHeaders(request: Request): Promise<Response> {
   const response = await fetch(request)

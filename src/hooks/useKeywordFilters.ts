@@ -41,12 +41,13 @@ import {
   deleteFilter,
   FILTERS_UPDATED_EVENT,
 } from '@/lib/filters/storage'
-import { extractEventFields, buildSemanticText } from '@/lib/filters/extract'
-import { checkEventText, mergeResults } from '@/lib/filters/matcher'
+import { extractEventFields, extractProfileFields, buildSemanticText } from '@/lib/filters/extract'
+import { checkEventText, checkProfileText, mergeResults } from '@/lib/filters/matcher'
 import {
   getSemanticFilterSettings,
   SEMANTIC_FILTER_SETTINGS_UPDATED_EVENT,
 } from '@/lib/filters/semanticSettings'
+import { getEffectiveKeywordFilters } from '@/lib/filters/systemFilters'
 import { STORAGE_KEY_PUBKEY } from '@/lib/nostr/ndk'
 import { rankSemanticDocuments } from '@/lib/semantic/client'
 import type { CreateFilterInput, FilterCheckResult, KeywordFilter } from '@/lib/filters/types'
@@ -74,6 +75,7 @@ void _refresh()
 
 function _subscribe(fn: () => void): () => void {
   _listeners.add(fn)
+  fn()
   const onExternal = () => { void _refresh() }
   window.addEventListener(FILTERS_UPDATED_EVENT, onExternal)
   return () => {
@@ -139,12 +141,34 @@ export function useEventFilterCheck() {
   useEffect(() => _subscribe(() => tick(t => t + 1)), [])
 
   // Capture a stable snapshot of the current filter array for the closure
-   
+
   return useCallback(
     (event: NostrEvent, profile?: Profile): FilterCheckResult => {
-      if (_loading || _filters.length === 0) return { action: null, matches: [] }
+      const effectiveFilters = getEffectiveKeywordFilters(_filters)
+      if (_loading || effectiveFilters.length === 0) return { action: null, matches: [] }
       const fields = extractEventFields(event, profile)
-      return checkEventText(fields, _filters)
+      return checkEventText(fields, effectiveFilters)
+    },
+    // Intentionally depend on _filters reference — tick() forces a new one
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [_filters, _loading],
+  )
+}
+
+/**
+ * Returns a memoised function that synchronously checks a profile against the
+ * currently active text-based filter rules.
+ */
+export function useProfileFilterCheck() {
+  const [, tick] = useState(0)
+  useEffect(() => _subscribe(() => tick(t => t + 1)), [])
+
+  return useCallback(
+    (profile: Profile): FilterCheckResult => {
+      const effectiveFilters = getEffectiveKeywordFilters(_filters)
+      if (_loading || effectiveFilters.length === 0) return { action: null, matches: [] }
+      const fields = extractProfileFields(profile)
+      return checkProfileText(fields, effectiveFilters)
     },
     // Intentionally depend on _filters reference — tick() forces a new one
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -191,7 +215,7 @@ export function useSemanticFiltering(events: NostrEvent[]): Map<string, FilterCh
   // Only the filters that have semantic: true and are currently active
   const semanticFilters = useMemo(() => {
     const now = Date.now()
-    return _filters.filter(
+    return getEffectiveKeywordFilters(_filters).filter(
       f => f.enabled && f.semantic && (f.expiresAt === null || f.expiresAt > now),
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -274,7 +298,11 @@ export function useSemanticFiltering(events: NostrEvent[]): Map<string, FilterCh
             }
             const allMatches = [...prev.matches, semanticMatch]
             next.set(match.id, {
-              action:  allMatches.some(m => m.action === 'hide') ? 'hide' : 'warn',
+              action: allMatches.some(m => m.action === 'block')
+                ? 'block'
+                : allMatches.some(m => m.action === 'hide')
+                  ? 'hide'
+                  : 'warn',
               matches: allMatches,
             })
           }

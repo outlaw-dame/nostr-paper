@@ -2,6 +2,7 @@ import { withRetry } from '@/lib/retry'
 import type {
   SemanticDocument,
   SemanticMatch,
+  TopicAssignment,
   SemanticWorkerRequest,
   SemanticWorkerResponse,
 } from '@/types'
@@ -204,6 +205,30 @@ export async function rankSemanticDocuments(
   })
 
   return result.matches ?? []
+}
+
+export async function clusterSemanticDocuments(
+  documents: SemanticDocument[],
+  signal?: AbortSignal,
+): Promise<TopicAssignment[]> {
+  if (documents.length === 0) return []
+  if (fatalInitError) {
+    throw fatalInitError
+  }
+
+  const result = await send<{ topics?: TopicAssignment[] }>(
+    { type: 'cluster', payload: { documents } },
+    QUERY_TIMEOUT_MS,
+    signal,
+  ).catch((error) => {
+    const normalized = normalizeSemanticError(error)
+    if (isFatalSemanticInitError(normalized)) {
+      fatalInitError = normalized
+    }
+    throw normalized
+  })
+
+  return result.topics ?? []
 }
 
 export async function closeSemanticSearch(): Promise<void> {

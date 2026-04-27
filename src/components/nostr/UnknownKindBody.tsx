@@ -16,15 +16,44 @@ interface UnknownKindBodyProps {
   className?: string
 }
 
+/** Tags surfaced in the "notable tags" table — lower-priority tags are hidden */
+const NOTABLE_TAG_NAMES = new Set(['d', 'e', 'a', 'p', 't', 'r', 'alt', 'url', 'title', 'summary', 'name', 'subject'])
+
 function getAltDescription(event: NostrEvent): string | null {
   for (const tag of event.tags) {
     if (tag[0] !== 'alt' || typeof tag[1] !== 'string') continue
     const normalized = sanitizeText(tag[1]).trim()
     if (normalized.length > 0) return normalized
   }
+  return null
+}
 
-  const preview = sanitizeText(event.content).trim()
-  return preview.length > 0 ? preview : null
+function getReadableContent(event: NostrEvent): string | null {
+  const raw = sanitizeText(event.content).trim()
+  if (raw.length === 0) return null
+  // If content looks like JSON, don't try to render it as plain text
+  if ((raw.startsWith('{') && raw.endsWith('}')) || (raw.startsWith('[') && raw.endsWith(']'))) {
+    return null
+  }
+  return raw.slice(0, 600) + (raw.length > 600 ? '…' : '')
+}
+
+function getNotableTags(event: NostrEvent): Array<{ name: string; value: string }> {
+  const seen = new Set<string>()
+  const result: Array<{ name: string; value: string }> = []
+  for (const tag of event.tags) {
+    const name = tag[0]
+    const value = tag[1]
+    if (!name || typeof value !== 'string') continue
+    if (!NOTABLE_TAG_NAMES.has(name)) continue
+    const key = `${name}:${value}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    const truncated = value.length > 64 ? `${value.slice(0, 30)}…${value.slice(-16)}` : value
+    result.push({ name, value: truncated })
+    if (result.length >= 8) break
+  }
+  return result
 }
 
 export function UnknownKindBody({
@@ -37,6 +66,8 @@ export function UnknownKindBody({
   const [error, setError] = useState<string | null>(null)
 
   const description = useMemo(() => getAltDescription(event), [event])
+  const readableContent = useMemo(() => getReadableContent(event), [event])
+  const notableTags = useMemo(() => getNotableTags(event), [event])
   const referenceValue = useMemo(
     () => buildEventReferenceValue(event),
     [event],
@@ -82,15 +113,42 @@ export function UnknownKindBody({
         Kind {event.kind}
       </h3>
 
+      {/* alt description takes priority over raw content */}
       {description && (
         <p className="mt-2 whitespace-pre-wrap text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
           {description}
         </p>
       )}
 
+      {/* Readable text content when no alt tag present */}
+      {!description && readableContent && (
+        <p className="mt-2 whitespace-pre-wrap text-[14px] leading-6 text-[rgb(var(--color-label-secondary))] line-clamp-4">
+          {readableContent}
+        </p>
+      )}
+
+      {/* Notable tags table */}
+      {notableTags.length > 0 && (
+        <div className="mt-3 overflow-hidden rounded-[12px] border border-[rgb(var(--color-fill)/0.10)]">
+          {notableTags.map(({ name, value }) => (
+            <div
+              key={`${name}:${value}`}
+              className="flex items-baseline gap-2 border-b border-[rgb(var(--color-fill)/0.07)] px-3 py-1.5 last:border-b-0"
+            >
+              <span className="w-[60px] shrink-0 font-mono text-[11px] font-semibold text-[rgb(var(--color-label-secondary))]">
+                {name}
+              </span>
+              <span className="min-w-0 break-all font-mono text-[12px] text-[rgb(var(--color-label))]">
+                {value}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="mt-4 rounded-[16px] border border-[rgb(var(--color-fill)/0.10)] bg-[rgb(var(--color-bg))] p-3">
         <p className="text-[13px] leading-6 text-[rgb(var(--color-label-secondary))]">
-          This client does not have a first-class renderer for this kind yet. Trusted NIP-89 app recommendations are limited to your own key and the people you follow.
+          This client does not have a first-class renderer for kind {event.kind} yet. Trusted NIP-89 app recommendations are limited to your own key and the people you follow.
         </p>
       </div>
 

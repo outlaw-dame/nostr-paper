@@ -6,6 +6,24 @@ import { visualizer } from 'rollup-plugin-visualizer'
 
 const DEV_NIP05_PROXY_PATH = '/__dev/nip05'
 const DEV_NIP05_PROXY_TIMEOUT_MS = 8_000
+
+// ── Relay WebSocket Proxy ─────────────────────────────────────
+// Proxies WebSocket relay connections through the Vite dev server.
+// Allows Tagr (and other relay clients) to connect via ws://localhost:PORT/__dev/relay-ws
+// instead of directly to wss:// when firewalls or network conditions prevent direct WSS.
+// Set VITE_TAGR_RELAY_URL=ws://localhost:5173/__dev/relay-ws in .env.local to use it.
+const DEV_RELAY_PROXY_PATH = '/__dev/relay-ws'
+const DEV_RELAY_PROXY_ALLOWED_HOSTS = new Set([
+  'relay.nos.social',
+  'relay.damus.io',
+  'relay.nostr.band',
+  'nos.lol',
+  'relay.snort.social',
+  'relay.primal.net',
+  'nostr.wine',
+  '127.0.0.1',
+  'localhost',
+])
 const DEV_NIP05_PROXY_MAX_BYTES = 256_000
 
 // ── Translation Proxies ─────────────────────────────────────
@@ -43,9 +61,7 @@ const DEV_FEED_PROXY_TIMEOUT_MS = 12_000
 const DEV_FEED_PROXY_MAX_BYTES = 1 * 1024 * 1024
 const DEV_FEED_PROXY_MAX_REDIRECTS = 3
 const DEV_SERVER_PORT = Number.parseInt(process.env.VITE_DEV_PORT ?? '5173', 10) || 5173
-const SEARCH_RELAY_PROXY_PATH = (process.env.VITE_SEARCH_RELAY_PROXY_PATH ?? '/relay').trim() || '/relay'
-const SEARCH_RELAY_PROXY_TARGET = (process.env.VITE_SEARCH_RELAY_PROXY_TARGET ?? 'ws://127.0.0.1:3301').trim()
-const ENABLE_LOCAL_CROSS_ORIGIN_ISOLATION = process.env.VITE_ENABLE_LOCAL_COI === 'true'
+const ENABLE_LOCAL_CROSS_ORIGIN_ISOLATION = process.env.VITE_ENABLE_LOCAL_COI !== 'false'
 const SAFE_BROWSING_BACKEND_ORIGIN = (process.env.SAFE_BROWSING_BACKEND_ORIGIN ?? 'http://127.0.0.1:7080').trim()
 const LOCAL_CROSS_ORIGIN_ISOLATION_HEADERS = ENABLE_LOCAL_CROSS_ORIGIN_ISOLATION
   ? {
@@ -101,9 +117,14 @@ function pickManualChunk(id: string): string | undefined {
     }
   }
 
+  if (normalized.includes('/src/lib/ai/')) {
+    return 'ai-tools'
+  }
+
   if (
     normalized.includes('/src/lib/translation/') ||
-    normalized.includes('/src/components/translation/')
+    normalized.includes('/src/components/translation/') ||
+    normalized.includes('/src/lib/gemma/')
   ) {
     return 'translation'
   }
@@ -586,112 +607,118 @@ function safeBrowsingDevProxyPlugin() {
 }
 
 function mediaFetchDevProxyPlugin() {
+  function makeMiddleware(): Parameters<import('vite').ViteDevServer['middlewares']['use']>[0] {
+    return async (req, res, next) => {
+      if (!req.url?.startsWith(DEV_MEDIA_PROXY_PATH)) {
+        next()
+        return
+      }
+
+      if (req.method !== 'GET') {
+        jsonResponse(res, 405, { error: 'Method Not Allowed' }, req.headers.origin)
+        return
+      }
+
+      const reqUrl = new URL(req.url, 'http://localhost')
+      const rawTarget = reqUrl.searchParams.get('url') ?? ''
+
+      let targetUrl: URL
+      try {
+        targetUrl = new URL(rawTarget)
+      } catch {
+        jsonResponse(res, 400, { error: 'Invalid URL parameter' }, req.headers.origin)
+        return
+      }
+
+      if (!isAllowedOGTarget(targetUrl)) {
+        jsonResponse(res, 403, { error: 'Target URL not allowed' }, req.headers.origin)
+        return
+      }
+
+      const timeoutSignal = AbortSignal.timeout(DEV_MEDIA_PROXY_TIMEOUT_MS)
+      let currentUrl = targetUrl.href
+
+      try {
+        let upstream!: Response
+        let redirects = 0
+
+        while (redirects <= DEV_MEDIA_PROXY_MAX_REDIRECTS) {
+          upstream = await fetch(currentUrl, {
+            method: 'GET',
+            headers: {
+              Accept: 'image/*,video/*,application/octet-stream;q=0.9,*/*;q=0.1',
+              'User-Agent': 'Mozilla/5.0 (compatible; NostrPaper/1.0; +https://github.com/nostr-paper)',
+            },
+            redirect: 'manual',
+            signal: timeoutSignal,
+          })
+
+          if (upstream.status >= 301 && upstream.status <= 308) {
+            const location = upstream.headers.get('location')
+            if (!location) break
+            let nextTarget: URL
+            try {
+              nextTarget = new URL(location, currentUrl)
+            } catch {
+              break
+            }
+            if (!isAllowedOGTarget(nextTarget)) break
+            currentUrl = nextTarget.href
+            redirects++
+            continue
+          }
+
+          break
+        }
+
+        if (!upstream.ok) {
+          jsonResponse(res, 502, { error: `Upstream responded with ${upstream.status}` }, req.headers.origin)
+          return
+        }
+
+        const contentType = upstream.headers.get('content-type') ?? 'application/octet-stream'
+        if (
+          !contentType.toLowerCase().startsWith('image/') &&
+          !contentType.toLowerCase().startsWith('video/') &&
+          contentType.toLowerCase() !== 'application/octet-stream'
+        ) {
+          jsonResponse(res, 415, { error: 'Upstream asset is not image/video media' }, req.headers.origin)
+          return
+        }
+
+        const buffer = Buffer.from(await upstream.arrayBuffer())
+        if (buffer.byteLength > DEV_MEDIA_PROXY_MAX_BYTES) {
+          jsonResponse(res, 413, { error: 'Upstream media too large' }, req.headers.origin)
+          return
+        }
+
+        res.statusCode = 200
+        res.setHeader('Content-Type', contentType)
+        res.setHeader('Cache-Control', 'public, max-age=300')
+        res.setHeader('Access-Control-Allow-Origin', req.headers.origin ?? '*')
+        res.end(buffer)
+      } catch (error) {
+        const isTimeout = error instanceof DOMException && error.name === 'TimeoutError'
+        jsonResponse(
+          res,
+          isTimeout ? 504 : 502,
+          { error: isTimeout ? 'Media fetch proxy timeout' : 'Media fetch proxy request failed' },
+          req.headers.origin,
+        )
+      }
+    }
+  }
+
   return {
     name: 'media-fetch-dev-proxy',
     configureServer(server: import('vite').ViteDevServer) {
-      server.middlewares.use(async (req, res, next) => {
-        if (!req.url?.startsWith(DEV_MEDIA_PROXY_PATH)) {
-          next()
-          return
-        }
-
-        if (req.method !== 'GET') {
-          jsonResponse(res, 405, { error: 'Method Not Allowed' }, req.headers.origin)
-          return
-        }
-
-        const reqUrl = new URL(req.url, 'http://localhost')
-        const rawTarget = reqUrl.searchParams.get('url') ?? ''
-
-        let targetUrl: URL
-        try {
-          targetUrl = new URL(rawTarget)
-        } catch {
-          jsonResponse(res, 400, { error: 'Invalid URL parameter' }, req.headers.origin)
-          return
-        }
-
-        if (!isAllowedOGTarget(targetUrl)) {
-          jsonResponse(res, 403, { error: 'Target URL not allowed' }, req.headers.origin)
-          return
-        }
-
-        const timeoutSignal = AbortSignal.timeout(DEV_MEDIA_PROXY_TIMEOUT_MS)
-        let currentUrl = targetUrl.href
-
-        try {
-          let upstream!: Response
-          let redirects = 0
-
-          while (redirects <= DEV_MEDIA_PROXY_MAX_REDIRECTS) {
-            upstream = await fetch(currentUrl, {
-              method: 'GET',
-              headers: {
-                Accept: 'image/*,video/*,application/octet-stream;q=0.9,*/*;q=0.1',
-                'User-Agent': 'Mozilla/5.0 (compatible; NostrPaper/1.0; +https://github.com/nostr-paper)',
-              },
-              redirect: 'manual',
-              signal: timeoutSignal,
-            })
-
-            if (upstream.status >= 301 && upstream.status <= 308) {
-              const location = upstream.headers.get('location')
-              if (!location) break
-              let nextTarget: URL
-              try {
-                nextTarget = new URL(location, currentUrl)
-              } catch {
-                break
-              }
-              if (!isAllowedOGTarget(nextTarget)) break
-              currentUrl = nextTarget.href
-              redirects++
-              continue
-            }
-
-            break
-          }
-
-          if (!upstream.ok) {
-            jsonResponse(res, 502, { error: `Upstream responded with ${upstream.status}` }, req.headers.origin)
-            return
-          }
-
-          const contentType = upstream.headers.get('content-type') ?? 'application/octet-stream'
-          if (
-            !contentType.toLowerCase().startsWith('image/') &&
-            !contentType.toLowerCase().startsWith('video/') &&
-            contentType.toLowerCase() !== 'application/octet-stream'
-          ) {
-            jsonResponse(res, 415, { error: 'Upstream asset is not image/video media' }, req.headers.origin)
-            return
-          }
-
-          const buffer = Buffer.from(await upstream.arrayBuffer())
-          if (buffer.byteLength > DEV_MEDIA_PROXY_MAX_BYTES) {
-            jsonResponse(res, 413, { error: 'Upstream media too large' }, req.headers.origin)
-            return
-          }
-
-          res.statusCode = 200
-          res.setHeader('Content-Type', contentType)
-          res.setHeader('Cache-Control', 'public, max-age=300')
-          res.setHeader('Access-Control-Allow-Origin', req.headers.origin ?? '*')
-          res.end(buffer)
-        } catch (error) {
-          const isTimeout = error instanceof DOMException && error.name === 'TimeoutError'
-          jsonResponse(
-            res,
-            isTimeout ? 504 : 502,
-            { error: isTimeout ? 'Media fetch proxy timeout' : 'Media fetch proxy request failed' },
-            req.headers.origin,
-          )
-        }
-      })
+      server.middlewares.use(makeMiddleware())
+    },
+    configurePreviewServer(server: import('vite').PreviewServer) {
+      server.middlewares.use(makeMiddleware())
     },
   }
 }
-
 function feedDevProxyPlugin() {
   return {
     name: 'feed-dev-proxy',
@@ -1184,6 +1211,105 @@ function lingvaDevProxyPlugin() {
   }
 }
 
+function relayDevProxyPlugin() {
+  return {
+    name: 'relay-dev-proxy',
+    configureServer(server: import('vite').ViteDevServer) {
+      if (!server.httpServer) return
+
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const tls = require('tls') as typeof import('tls')
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const net = require('net') as typeof import('net')
+
+      server.httpServer.on(
+        'upgrade',
+        (
+          req: import('http').IncomingMessage,
+          socket: import('stream').Duplex,
+          head: Buffer,
+        ) => {
+          if (!req.url?.startsWith(DEV_RELAY_PROXY_PATH)) return
+
+          const parsedUrl = new URL(req.url, 'http://localhost')
+          const targetParam = parsedUrl.searchParams.get('target') ?? 'wss://relay.nos.social'
+
+          let targetUrl: URL
+          try { targetUrl = new URL(targetParam) }
+          catch { socket.destroy(); return }
+
+          if (!DEV_RELAY_PROXY_ALLOWED_HOSTS.has(targetUrl.hostname)) {
+            socket.destroy(); return
+          }
+          if (targetUrl.protocol !== 'wss:' && targetUrl.protocol !== 'ws:') {
+            socket.destroy(); return
+          }
+
+          const isSecure = targetUrl.protocol === 'wss:'
+          const port = targetUrl.port
+            ? parseInt(targetUrl.port, 10)
+            : (isSecure ? 443 : 80)
+          const hostname = targetUrl.hostname
+          const wsKey = req.headers['sec-websocket-key'] ?? 'dGhlIHNhbXBsZSBub25jZQ=='
+          const wsProtocol = req.headers['sec-websocket-protocol']
+
+          // Build the forwarded HTTP upgrade request
+          const upgradeLines = [
+            `GET ${targetUrl.pathname || '/'} HTTP/1.1`,
+            `Host: ${hostname}`,
+            'Upgrade: websocket',
+            'Connection: Upgrade',
+            'Sec-WebSocket-Version: 13',
+            `Sec-WebSocket-Key: ${wsKey}`,
+            ...(wsProtocol ? [`Sec-WebSocket-Protocol: ${wsProtocol}`] : []),
+            '',
+            '',
+          ].join('\r\n')
+
+          const upstream: import('tls').TLSSocket | import('net').Socket = isSecure
+            ? tls.connect({ host: hostname, port, servername: hostname })
+            : net.connect({ host: hostname, port })
+
+          upstream.once('secureConnect', () => upstream.write(upgradeLines))
+          upstream.once('connect', () => { if (!isSecure) upstream.write(upgradeLines) })
+
+          socket.on('error', () => upstream.destroy())
+          upstream.on('error', () => socket.destroy())
+
+          // Wait for the relay's 101 Switching Protocols response
+          let buf = Buffer.alloc(0)
+          upstream.on('data', (chunk: Buffer) => {
+            buf = Buffer.concat([buf, chunk])
+            const hEnd = buf.indexOf('\r\n\r\n')
+            if (hEnd < 0) return
+
+            if (!buf.slice(0, hEnd).toString('ascii').startsWith('HTTP/1.1 101')) {
+              socket.destroy(); upstream.destroy(); return
+            }
+
+            // Forward the 101 upgrade response to the browser
+            socket.write(
+              'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
+              + buf.slice(0, hEnd + 4).toString('ascii').split('\r\n')
+                .filter(l => l.startsWith('Sec-WebSocket-Accept:'))
+                .join('\r\n')
+              + '\r\n\r\n',
+            )
+            const leftover = buf.slice(hEnd + 4)
+            if (leftover.length) socket.write(leftover)
+            if (head.length) upstream.write(head)
+
+            // Bidirectional pipe
+            upstream.removeAllListeners('data')
+            upstream.pipe(socket)
+            socket.pipe(upstream)
+          })
+        },
+      )
+    },
+  }
+}
+
 function nip05DevProxyPlugin() {
   return {
     name: 'nip05-dev-proxy',
@@ -1292,6 +1418,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       wasmMimePlugin(),
+      relayDevProxyPlugin(),
       tenorDevProxyPlugin(),
       translationDevProxyPlugin(),
       lingvaDevProxyPlugin(),
@@ -1319,7 +1446,7 @@ export default defineConfig(({ mode }) => {
           // Semantic search assets are large and only needed on demand. Keep
           // them out of the install-time precache so the app shell stays small.
           globIgnores: ['assets/ort-wasm-*.wasm', 'assets/semantic.worker-*.js', 'assets/moderation.worker-*.js', 'assets/mediaModeration.worker-*.js'],
-          maximumFileSizeToCacheInBytes: 7 * 1024 * 1024,
+          maximumFileSizeToCacheInBytes: 30 * 1024 * 1024,
         },
         manifest: {
           name: 'Nostr Paper',
@@ -1376,11 +1503,6 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       headers: LOCAL_CROSS_ORIGIN_ISOLATION_HEADERS,
       proxy: {
-        [SEARCH_RELAY_PROXY_PATH]: {
-          target: SEARCH_RELAY_PROXY_TARGET,
-          ws: true,
-          changeOrigin: true,
-        },
         '/api/safe-browsing/check': {
           target: SAFE_BROWSING_BACKEND_ORIGIN,
           changeOrigin: true,
@@ -1394,17 +1516,10 @@ export default defineConfig(({ mode }) => {
 
     preview: {
       headers: LOCAL_CROSS_ORIGIN_ISOLATION_HEADERS,
-      proxy: {
-        [SEARCH_RELAY_PROXY_PATH]: {
-          target: SEARCH_RELAY_PROXY_TARGET,
-          ws: true,
-          changeOrigin: true,
-        },
-      },
     },
 
     optimizeDeps: {
-      exclude: ['@sqlite.org/sqlite-wasm'],
+      exclude: ['@sqlite.org/sqlite-wasm', '@mediapipe/tasks-genai'],
     },
 
     worker: {
@@ -1426,6 +1541,15 @@ export default defineConfig(({ mode }) => {
       globals: true,
       environment: 'jsdom',
       setupFiles: ['./src/test-setup.ts'],
+      include: ['src/**/*.{test,spec}.ts', 'src/**/*.{test,spec}.tsx'],
+      exclude: ['**/node_modules/**', '**/*.ui.test.ts', '**/*.ui.test.tsx'],
+      pool: 'forks',
+      poolOptions: {
+        forks: {
+          minForks: 1,
+          maxForks: 1,
+        },
+      },
       coverage: {
         provider: 'v8',
         reporter: ['text', 'json', 'html'],

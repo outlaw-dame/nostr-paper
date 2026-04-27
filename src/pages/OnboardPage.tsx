@@ -22,6 +22,7 @@ import {
 } from '@/lib/nostr/ndk'
 import { useApp } from '@/contexts/app-context'
 import { NDKPrivateKeySigner } from '@nostr-dev-kit/ndk'
+import { tApp } from '@/lib/i18n/app'
 
 // ── Saved-session card ────────────────────────────────────────
 
@@ -113,7 +114,7 @@ function KeyInputScreen({
   const handleSubmit = useCallback(async () => {
     const trimmed = value.trim()
     if (!trimmed) {
-      setError(mode === 'nsec' ? 'Enter your private key.' : 'Enter your public key.')
+      setError(mode === 'nsec' ? tApp('onboardEnterPrivateError') : tApp('onboardEnterPublicError'))
       return
     }
     setError(null)
@@ -125,7 +126,7 @@ function KeyInputScreen({
         dispatch({ type: 'SET_USER', payload: { pubkey } })
         onSuccess(pubkey)
       } catch {
-        setError('Invalid private key — make sure it starts with nsec1…')
+        setError(tApp('onboardInvalidPrivateError'))
       } finally {
         setLoading(false)
       }
@@ -143,7 +144,7 @@ function KeyInputScreen({
         }
 
         if (!pubkey) {
-          setError('Invalid public identity — use npub1…, nprofile1…, 64-character hex, or name@domain.com.')
+          setError(tApp('onboardInvalidPublicError'))
           return
         }
 
@@ -151,7 +152,7 @@ function KeyInputScreen({
         dispatch({ type: 'SET_USER', payload: { pubkey } })
         onSuccess(pubkey)
       } catch {
-        setError('Could not resolve that public identity right now. Try again.')
+        setError(tApp('onboardResolvePublicError'))
       } finally {
         setLoading(false)
       }
@@ -172,23 +173,23 @@ function KeyInputScreen({
           className="h-4 w-4">
           <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
         </svg>
-        Back
+        {tApp('onboardBack')}
       </button>
 
       <h2 className="text-[26px] font-bold tracking-tight text-[rgb(var(--color-label))] mb-1">
-        {isNsec ? 'Enter private key' : 'Enter public identity'}
+        {isNsec ? tApp('onboardEnterPrivateTitle') : tApp('onboardEnterPublicTitle')}
       </h2>
       <p className="text-[15px] text-[rgb(var(--color-label-secondary))] mb-8 leading-relaxed">
         {isNsec
-          ? 'Your key is stored only in this browser and never sent anywhere.'
-        : 'Read-only access — use npub, nprofile, hex pubkey, or NIP-05 (name@domain.com).'}
+          ? tApp('onboardPrivateHint')
+        : tApp('onboardPublicHint')}
       </p>
 
       {/* Input */}
       <div className="relative mb-2">
         <input
           type={isNsec ? 'password' : 'text'}
-          placeholder={isNsec ? 'nsec1…' : 'npub1…, nprofile1…, hex, or name@domain.com'}
+          placeholder={isNsec ? tApp('onboardPrivatePlaceholder') : tApp('onboardPublicPlaceholder')}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') void handleSubmit() }}
@@ -225,7 +226,7 @@ function KeyInputScreen({
           transition-all active:scale-[0.98]
         "
       >
-        {loading ? 'Signing in…' : isNsec ? 'Sign In' : 'Browse Read-Only'}
+        {loading ? tApp('onboardConnecting') : isNsec ? tApp('onboardSignIn') : tApp('onboardBrowseReadOnly')}
       </button>
     </div>
   )
@@ -292,14 +293,14 @@ export default function OnboardPage() {
     try {
       const ndk = getNDK()
       if (!ndk.signer) {
-        setExtError('Extension found but could not connect. Try refreshing.')
+        setExtError(tApp('onboardExtensionConnectError'))
         return
       }
       const user = await ndk.signer.user()
       dispatch({ type: 'SET_USER', payload: { pubkey: user.pubkey } })
       navigate('/', { replace: true })
     } catch (err) {
-      setExtError(err instanceof Error ? err.message : 'Extension login failed.')
+      setExtError(err instanceof Error ? err.message : tApp('onboardExtensionLoginFailed'))
     } finally {
       setExtLoading(false)
     }
@@ -340,10 +341,10 @@ export default function OnboardPage() {
         {/* Wordmark / branding */}
         <div className="mb-10">
           <h1 className="text-[34px] font-bold tracking-[-0.03em] text-[rgb(var(--color-label))]">
-            Paper
+            {tApp('onboardBrandTitle')}
           </h1>
           <p className="mt-1 text-[16px] text-[rgb(var(--color-label-secondary))]">
-            Your Nostr reader
+            {tApp('onboardBrandSubtitle')}
           </p>
         </div>
 
@@ -351,7 +352,7 @@ export default function OnboardPage() {
         {savedPubkey && savedMethod && (
           <div className="mb-6">
             <p className="mb-2 text-[13px] font-medium text-[rgb(var(--color-label-secondary))] uppercase tracking-wide px-1">
-              Continue as
+              {tApp('onboardContinueAs')}
             </p>
             <SavedUserCard
               pubkey={savedPubkey}
@@ -365,7 +366,7 @@ export default function OnboardPage() {
         {savedPubkey && (
           <div className="flex items-center gap-3 mb-6">
             <div className="flex-1 h-px bg-[rgb(var(--color-fill)/0.16)]" />
-            <span className="text-[13px] text-[rgb(var(--color-label-tertiary))]">or</span>
+            <span className="text-[13px] text-[rgb(var(--color-label-tertiary))]">{tApp('onboardDividerOr')}</span>
             <div className="flex-1 h-px bg-[rgb(var(--color-fill)/0.16)]" />
           </div>
         )}
@@ -382,7 +383,7 @@ export default function OnboardPage() {
             mb-3
           "
         >
-          Enter your Nostr key to sign in
+          {tApp('onboardSignInCta')}
         </button>
 
         {/* Extension (if available) */}
@@ -401,7 +402,7 @@ export default function OnboardPage() {
               mb-3
             "
           >
-            {extLoading ? 'Connecting…' : 'Use Browser Extension'}
+            {extLoading ? tApp('onboardConnecting') : tApp('onboardUseExtension')}
           </button>
         )}
 
@@ -419,7 +420,7 @@ export default function OnboardPage() {
             transition-opacity active:opacity-60
           "
         >
-          Browse read-only with public identity (NIP-05 supported)
+          {tApp('onboardBrowsePublic')}
         </button>
 
         <button
@@ -431,7 +432,7 @@ export default function OnboardPage() {
             transition-opacity active:opacity-60
           "
         >
-          Browse without an account
+          {tApp('onboardBrowseAnonymous')}
         </button>
 
         {/* Manage saved logins */}
@@ -442,7 +443,7 @@ export default function OnboardPage() {
               onClick={handleForgetSaved}
               className="text-[14px] text-[rgb(var(--color-label-quaternary))] underline-offset-2 hover:underline"
             >
-              Forget saved login
+              {tApp('onboardForgetSaved')}
             </button>
           </div>
         )}

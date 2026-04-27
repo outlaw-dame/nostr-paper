@@ -3,7 +3,7 @@ import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
 import { recordMediaUrlFailure, recordMediaUrlSuccess, shouldAttemptMediaUrl } from '@/lib/media/failureBackoff'
 import { buildAttachmentPlaybackPlan } from '@/lib/media/playback'
 import { buildAttachmentMediaModerationDocument } from '@/lib/moderation/mediaContent'
-import { canRenderMediaAttachmentInline, getMediaAttachmentKind, getMediaAttachmentPreviewUrl, getMediaAttachmentSourceUrl } from '@/lib/nostr/imeta'
+import { canRenderMediaAttachmentInline, getMediaAttachmentKind, getMediaAttachmentPreviewUrl, getMediaAttachmentSourceUrl, getOrderedImageCandidates } from '@/lib/nostr/imeta'
 import type { Nip92MediaAttachment } from '@/types'
 
 interface NoteMediaAttachmentsProps {
@@ -11,6 +11,8 @@ interface NoteMediaAttachmentsProps {
   className?: string
   compact?: boolean
   interactive?: boolean
+  isSensitive?: boolean
+  sensitiveReason?: string | null
 }
 
 function formatByteSize(bytes?: number): string | null {
@@ -26,9 +28,24 @@ function stopPropagation(event: MouseEvent<HTMLElement>) {
 }
 
 function buildPreviewCandidates(attachment: Nip92MediaAttachment): string[] {
+  const kind = getMediaAttachmentKind(attachment)
+
+  if (kind === 'image') {
+    // Include all ranked image candidates (AVIF > WebP > PNG > JPEG > GIF) so the
+    // error-retry loop walks from the best available format down to the baseline.
+    const ranked = getOrderedImageCandidates(attachment).map((c) => c.url)
+    const extras = [
+      getMediaAttachmentPreviewUrl(attachment),
+      getMediaAttachmentSourceUrl(attachment),
+    ]
+    const all = [...ranked, ...extras]
+    return [...new Set(all.filter((v): v is string => typeof v === 'string' && v.length > 0))]
+      .filter((candidate) => shouldAttemptMediaUrl(candidate))
+  }
+
   const candidates = [
     getMediaAttachmentPreviewUrl(attachment),
-    getMediaAttachmentKind(attachment) === 'image' ? getMediaAttachmentSourceUrl(attachment) : null,
+    null,
   ]
 
   return [...new Set(candidates.filter((value): value is string => typeof value === 'string' && value.length > 0))]
@@ -85,10 +102,14 @@ function AttachmentTile({
   attachment,
   compact = false,
   interactive = true,
+  isSensitive = false,
+  sensitiveReason,
 }: {
   attachment: Nip92MediaAttachment
   compact?: boolean
   interactive?: boolean
+  isSensitive?: boolean
+  sensitiveReason?: string | null
 }) {
   const kind = getMediaAttachmentKind(attachment)
   const previewCandidates = useMemo(() => buildPreviewCandidates(attachment), [attachment])
@@ -96,7 +117,7 @@ function AttachmentTile({
     () => buildAttachmentMediaModerationDocument(attachment),
     [attachment],
   )
-  const { blocked, loading } = useMediaModerationDocument(moderationDocument)
+  const { blocked, loading } = useMediaModerationDocument(moderationDocument, { failClosed: kind === 'video' })
   const playbackPlan = useMemo(
     () => (kind === 'video' || kind === 'audio' ? buildAttachmentPlaybackPlan(attachment, kind) : null),
     [attachment, kind],
@@ -110,6 +131,7 @@ function AttachmentTile({
   const [previewFailed, setPreviewFailed] = useState(previewCandidates.length === 0)
   const [playbackFailed, setPlaybackFailed] = useState(false)
   const [showAlt, setShowAlt] = useState(false)
+  const [videoRevealed, setVideoRevealed] = useState(false)
 
   const previewUrl = previewCandidates[previewIndex] ?? null
   const sourceUrl = playbackPlan?.sources[0]?.url ?? buildSourceCandidates(attachment)[0] ?? null
@@ -131,28 +153,42 @@ function AttachmentTile({
   }
 
   if (kind === 'image' && previewUrl && !previewFailed) {
+    // Build the ranked source list for <picture> — sources before previewIndex
+    // have already failed so we skip them.  The <img> fallback carries the
+    // current previewUrl so the JS retry loop still works for CDN errors.
+    const pictureSources = getOrderedImageCandidates(attachment).filter(
+      (c) => previewCandidates.indexOf(c.url) >= previewIndex,
+    )
+
     return (
       <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))]">
         <div className="relative">
-          <img
-            src={previewUrl}
-            alt={attachment.alt ?? ''}
-            loading="lazy"
-            decoding="async"
-            referrerPolicy="no-referrer"
-            onLoad={() => {
-              recordMediaUrlSuccess(previewUrl)
-            }}
-            onError={() => {
-              recordMediaUrlFailure(previewUrl)
-              if (previewIndex < previewCandidates.length - 1) {
-                setPreviewIndex(previewIndex + 1)
-              } else {
-                setPreviewFailed(true)
-              }
-            }}
-            className={compact ? 'h-full w-full object-cover aspect-[4/3]' : 'max-h-[70vh] w-full object-cover'}
-          />
+          <picture>
+            {pictureSources.map((source) =>
+              source.type ? (
+                <source key={source.url} srcSet={source.url} type={source.type} />
+              ) : null,
+            )}
+            <img
+              src={previewUrl}
+              alt={attachment.alt ?? ''}
+              loading="lazy"
+              decoding="async"
+              referrerPolicy="no-referrer"
+              onLoad={() => {
+                recordMediaUrlSuccess(previewUrl)
+              }}
+              onError={() => {
+                recordMediaUrlFailure(previewUrl)
+                if (previewIndex < previewCandidates.length - 1) {
+                  setPreviewIndex(previewIndex + 1)
+                } else {
+                  setPreviewFailed(true)
+                }
+              }}
+              className={compact ? 'h-full w-full object-cover aspect-[4/3]' : 'max-h-[70vh] w-full object-cover'}
+            />
+          </picture>
           {attachment.alt && (
             <AltBadge alt={attachment.alt} show={showAlt} onToggle={handleAltToggle} />
           )}
@@ -222,7 +258,10 @@ function AttachmentTile({
         )
       }
 
-      if (sourceUrl && !playbackFailed && canRenderInlinePlayback) {
+      // Only render a raw video in compact mode when a moderation document
+      // exists (meaning the preview was classified). Without a classifiable
+      // preview thumbnail we cannot screen the video — show a file card instead.
+      if (moderationDocument && sourceUrl && !playbackFailed && canRenderInlinePlayback) {
         return (
           <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))]">
             <video
@@ -250,6 +289,32 @@ function AttachmentTile({
     }
 
     if (sourceUrl && !playbackFailed && canRenderInlinePlayback) {
+      // Require a moderationDocument (thumbnail scan) before rendering the video.
+      // Without a classifiable thumbnail we cannot screen the content — show a file card instead.
+      if (!moderationDocument) {
+        return <GenericFileCard attachment={attachment} compact={false} interactive={interactive} />
+      }
+
+      if (isSensitive && !videoRevealed) {
+        return (
+          <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))] aspect-video flex items-center justify-center">
+            <div className="text-center p-6">
+              <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">Content warning</p>
+              {sensitiveReason && (
+                <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">{sensitiveReason}</p>
+              )}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setVideoRevealed(true) }}
+                className="mt-4 rounded-full bg-[rgb(var(--color-fill)/0.12)] px-4 py-2 text-[14px] font-medium text-[rgb(var(--color-label))]"
+              >
+                Show video
+              </button>
+            </div>
+          </div>
+        )
+      }
+
       return (
         <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))]">
           <div className="relative">
@@ -451,6 +516,8 @@ export function NoteMediaAttachments({
   className = '',
   compact = false,
   interactive = true,
+  isSensitive = false,
+  sensitiveReason,
 }: NoteMediaAttachmentsProps) {
   const renderableAttachments = useMemo(
     () => attachments.filter((attachment) => canRenderMediaAttachmentInline(attachment)),
@@ -471,6 +538,8 @@ export function NoteMediaAttachments({
           attachment={attachment}
           compact={compact}
           interactive={interactive}
+          isSensitive={isSensitive}
+          sensitiveReason={sensitiveReason ?? null}
         />
       ))}
     </div>

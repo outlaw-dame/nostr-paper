@@ -121,6 +121,24 @@ export function BlossomUpload({
           Try again
         </button>
       )}
+
+      {(state.status === 'done' || state.status === 'error') && (state.diagnostics?.length ?? 0) > 0 && (
+        <div className="mt-3 rounded-xl border border-[rgb(var(--color-fill)/0.3)] bg-[rgb(var(--color-bg-secondary))] p-3 text-left">
+          <p className="text-[12px] font-semibold text-[rgb(var(--color-label))]">Upload Diagnostics</p>
+          <ul className="mt-2 space-y-1">
+            {state.diagnostics?.map((diag) => (
+              <li key={`${diag.server}:${diag.transport}:${diag.success ? 'ok' : 'err'}`} className="text-[12px] text-[rgb(var(--color-label-secondary))]">
+                <span className={diag.success ? 'text-[#34C759]' : 'text-[#FF3B30]'}>{diag.success ? 'PASS' : 'FAIL'}</span>
+                {' '}
+                <span className="font-medium">{diag.transport.toUpperCase()}</span>
+                {' '}
+                <span className="opacity-80">{diag.server}</span>
+                {diag.message ? <span className="block opacity-70">{diag.message}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }

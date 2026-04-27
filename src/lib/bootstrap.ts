@@ -29,6 +29,12 @@ export interface BootstrapResult {
   persistent:  boolean
 }
 
+function isAppleMobileWebKit(): boolean {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent || ''
+  return /iPhone|iPad|iPod/i.test(ua) && /AppleWebKit/i.test(ua)
+}
+
 /**
  * Bootstrap the application.
  * Designed to be resilient — NDK failure won't block DB-only offline use.
@@ -54,10 +60,14 @@ export async function bootstrap(
   // ── 2. COI headers check ──────────────────────────────────
   // SharedArrayBuffer requires cross-origin isolation
   if (typeof SharedArrayBuffer === 'undefined') {
-    console.warn(
-      '[Bootstrap] SharedArrayBuffer unavailable — OPFS performance limited. ' +
-      'Ensure COOP/COEP headers are set.'
-    )
+    const message =
+      '[Bootstrap] SharedArrayBuffer unavailable — using memory storage fallback. ' +
+      'For OPFS performance, serve with COOP/COEP headers.'
+    if (import.meta.env.DEV && !isAppleMobileWebKit()) {
+      console.warn(message)
+    } else {
+      console.info(message)
+    }
     result.storageMode = 'memory'
   } else {
     result.storageMode = 'opfs'

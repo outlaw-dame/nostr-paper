@@ -9,10 +9,12 @@ import {
   type TranslationPreflight,
   type TranslationResult,
 } from '@/lib/translation/client'
+import { hasMeaningfulTranslationText } from '@/lib/translation/text'
 import {
   loadTranslationDevQueueMetricsEnabled,
   TRANSLATION_SETTINGS_UPDATED_EVENT,
 } from '@/lib/translation/storage'
+import { tTranslationUi } from '@/lib/translation/i18n'
 
 interface TranslateTextPanelProps {
   text: string
@@ -114,6 +116,7 @@ export function TranslateTextPanel({
   const pendingRequestIsAutoRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
   const trimmedText = text.trim()
+  const hasMeaningfulText = useMemo(() => hasMeaningfulTranslationText(trimmedText), [trimmedText])
   const now = Date.now()
 
   useEffect(() => {
@@ -184,7 +187,7 @@ export function TranslateTextPanel({
   }, [])
 
   useEffect(() => {
-    if (!trimmedText) {
+    if (!trimmedText || !hasMeaningfulText) {
       setPreflight(null)
       return
     }
@@ -210,7 +213,7 @@ export function TranslateTextPanel({
     return () => {
       cancelled = true
     }
-  }, [autoStart, settingsVersion, trimmedText])
+  }, [autoStart, hasMeaningfulText, settingsVersion, trimmedText])
 
   useEffect(() => {
     if (!trimmedText || !requested) return
@@ -251,13 +254,24 @@ export function TranslateTextPanel({
           setRequested(false)
           return
         }
+        if (requestIsAuto) {
+          setResult(null)
+          setError(null)
+          setErrorCode(null)
+          setRequested(false)
+
+          if (code === 'network' || code === 'provider' || code === 'config' || code === 'unavailable') {
+            setAutoBlockedUntil(Date.now() + AUTO_RETRY_COOLDOWN_MS)
+          }
+          return
+        }
         const message = translationError instanceof TranslationServiceError
           ? (translationError.code === 'config' || translationError.code === 'unavailable'
-            ? 'Translation is not available with current settings.'
+            ? tTranslationUi('translationUnavailableCurrentSettings')
             : translationError.message)
           : translationError instanceof Error
             ? translationError.message
-            : 'Translation failed.'
+            : tTranslationUi('translationFailed')
         setResult(null)
         setError(message)
         setErrorCode(code)
@@ -266,8 +280,8 @@ export function TranslateTextPanel({
         const shouldShowToast = code === 'config' || code === 'unavailable' || code === 'network' || code === 'provider'
         if (shouldShowToast) {
           setToastMessage(code === 'config' || code === 'unavailable'
-            ? 'Translation needs setup. Open Translation Settings.'
-            : 'Translation failed. You can retry or adjust Translation Settings.')
+            ? tTranslationUi('toastNeedsSetup')
+            : tTranslationUi('toastFailed'))
           setToastVisible(true)
           if (toastTimerRef.current !== null) {
             window.clearTimeout(toastTimerRef.current)
@@ -278,9 +292,6 @@ export function TranslateTextPanel({
           }, 4800)
         }
 
-        if (autoStart && !autoAttempted && (code === 'network' || code === 'provider')) {
-          setAutoBlockedUntil(Date.now() + AUTO_RETRY_COOLDOWN_MS)
-        }
       } finally {
         if (!controller.signal.aborted) {
           setLoading(false)
@@ -329,7 +340,7 @@ export function TranslateTextPanel({
   }, [detectedLanguage, result])
   const sameLanguage = preflight?.sameLanguage ?? false
 
-  if (!trimmedText) return null
+  if (!trimmedText || !hasMeaningfulText) return null
   if (sameLanguage || sameLanguageResult || errorCode === 'same-language') return null
 
   const requestTranslation = () => {
@@ -365,17 +376,17 @@ export function TranslateTextPanel({
               onPointerDownCapture={stopPropagation}
               className="text-[12px] font-semibold tracking-[0.01em] text-[#007AFF]"
             >
-              🌐 Translate
+              🌐 {tTranslationUi('translateAction')}
             </button>
           )}
           {autoLongText && (
             <span className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
-              Long post: tap to translate on demand.
+              {tTranslationUi('longPostHint')}
             </span>
           )}
           {autoBlocked && (
             <span className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
-              Retry available in a few seconds.
+              {tTranslationUi('retrySoonHint')}
             </span>
           )}
         </div>
@@ -383,13 +394,16 @@ export function TranslateTextPanel({
 
       {loading && (
         <p className="text-[13px] italic text-[rgb(var(--color-label-tertiary))]">
-          Translating…
+          {tTranslationUi('translating')}
         </p>
       )}
 
       {import.meta.env.DEV && showQueueMetrics && (autoQueueSnapshot.active > 0 || autoQueueSnapshot.queued > 0) && (
         <p className="text-[11px] text-[rgb(var(--color-label-tertiary))]">
-          Auto-translate queue: {autoQueueSnapshot.active} active, {autoQueueSnapshot.queued} waiting
+          {tTranslationUi('autoQueueLabel', {
+            active: autoQueueSnapshot.active,
+            queued: autoQueueSnapshot.queued,
+          })}
         </p>
       )}
 
@@ -397,8 +411,8 @@ export function TranslateTextPanel({
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="text-[12px] text-[rgb(var(--color-system-red))]" title={error}>
             {errorCode === 'config' || errorCode === 'unavailable'
-              ? 'Translation unavailable'
-              : 'Translation failed'}
+              ? tTranslationUi('translationUnavailable')
+              : tTranslationUi('translationFailed')}
           </span>
           <button
             type="button"
@@ -406,7 +420,7 @@ export function TranslateTextPanel({
             onPointerDownCapture={stopPropagation}
             className="text-[12px] font-medium text-[rgb(var(--color-system-red))] underline underline-offset-2"
           >
-            Retry
+            {tTranslationUi('retry')}
           </button>
           {(errorCode === 'config' || errorCode === 'unavailable') && (
             <Link
@@ -415,7 +429,7 @@ export function TranslateTextPanel({
               onPointerDownCapture={stopPropagation}
               className="text-[12px] text-[#007AFF] underline underline-offset-2"
             >
-              Open Translation Settings
+              {tTranslationUi('openTranslationSettings')}
             </Link>
           )}
         </div>
@@ -434,7 +448,9 @@ export function TranslateTextPanel({
           )}
 
           <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-[rgb(var(--color-label-tertiary))]">
-            <span>{sourceLabel ? `Translated from ${sourceLabel}` : 'Translated'}</span>
+            <span>{sourceLabel
+              ? tTranslationUi('translatedFrom', { source: sourceLabel })
+              : tTranslationUi('translated')}</span>
             <span>·</span>
             <span>{providerLabel}</span>
             <span>·</span>
@@ -444,7 +460,7 @@ export function TranslateTextPanel({
               onPointerDownCapture={stopPropagation}
               className="font-medium text-[#007AFF]"
             >
-              {hidden ? 'Show translation' : 'Hide translation'}
+              {hidden ? tTranslationUi('showTranslation') : tTranslationUi('hideTranslation')}
             </button>
             <span>·</span>
             <button
@@ -453,7 +469,7 @@ export function TranslateTextPanel({
               onPointerDownCapture={stopPropagation}
               className="font-medium text-[#007AFF]"
             >
-              Re-translate
+              {tTranslationUi('retranslate')}
             </button>
           </p>
         </>
@@ -470,7 +486,7 @@ export function TranslateTextPanel({
                 onPointerDownCapture={stopPropagation}
                 className="font-medium text-[#007AFF] underline underline-offset-2"
               >
-                Open Translation Settings
+                {tTranslationUi('openTranslationSettings')}
               </Link>
             </p>
           </div>

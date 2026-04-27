@@ -42,6 +42,11 @@ type ContentToken =
   | { type: 'nostr';  value: string }
   | { type: 'newline' }
 
+function normalizeBridgeType(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  return value.trim().toLowerCase().replace(/[\s-]+/g, '_')
+}
+
 function tryParseBridgeContent(content: string): string {
   const trimmed = content.trim()
 
@@ -69,18 +74,58 @@ function tryParseBridgeContent(content: string): string {
 
   try {
     const data = JSON.parse(trimmed)
+    const normalizedType = normalizeBridgeType(data?.type)
 
     // Handle "zone_presence" (Holepunch/Keet/P2P Gateway status)
-    if (data && data.type === 'zone_presence') {
+    if (data && normalizedType === 'zone_presence') {
       const role = typeof data.role === 'string' ? data.role : 'Node'
       const cpu = data.metrics?.cpuPct
       return `📡 Zone Presence: ${role}${cpu !== undefined ? ` (CPU: ${cpu}%)` : ''}`
+    }
+
+    // Handle swarm device records (custom kind 30078 payloads)
+    if (data && normalizedType === 'swarm_device_record') {
+      const deviceName = typeof data.name === 'string'
+        ? data.name
+        : typeof data.deviceName === 'string'
+          ? data.deviceName
+          : typeof data.deviceId === 'string'
+            ? data.deviceId
+            : 'Unknown device'
+      const status = typeof data.status === 'string' ? data.status : 'active'
+      return `🧩 Swarm Device: ${deviceName} (${status})`
     }
 
     // Handle common chat-bridge JSON format (e.g. YouTube/Twitch bridges)
     // { p: platform, u: user, m: message, ... }
     if (data && typeof data === 'object' && typeof data.m === 'string' && typeof data.u === 'string') {
       return `${data.u}: ${data.m}`
+    }
+
+    // Handle gateway grant requests
+    if (data && normalizedType === 'gateway_grant_request') {
+      return 'Gateway Grant Request: ' + (data.requestId ?? 'pending...')
+    }
+
+    // Handle device gateway grant request variants
+    if (data && (normalizedType === 'device_gateway_grant_request' || normalizedType === 'device_gateway_grant_status')) {
+      const requestId = typeof data.requestId === 'string' ? data.requestId : 'pending...'
+      const shortId = requestId === 'pending...' ? requestId : requestId.slice(0, 8) + '...'
+      return 'Device Gateway Grant: ' + shortId
+    }
+
+    // Handle grant list responses
+    if (data && data.action === 'list_grants') {
+      const count = Array.isArray(data.availableCameras) ? data.availableCameras.length : 0
+      const deviceText = count !== 1 ? 's' : ''
+      return 'Available Cameras: ' + count + ' device' + deviceText
+    }
+
+    // Handle device status updates
+    if (data && data.toDevicePk && typeof data.requestId === 'string') {
+      const type = normalizedType || 'update'
+      const shortId = data.requestId.slice(0, 8)
+      return 'Device ' + type + ': ' + shortId + '...'
     }
   } catch {
     // Not JSON, return original content
@@ -321,6 +366,134 @@ function tokensToPlainText(tokens: ContentToken[]): string {
     .trim()
 }
 
+/**
+ * Calculate text length excluding URLs (they don't count against character limit).
+ */
+function getTextLengthWithoutUrls(tokens: ContentToken[]): number {
+  let length = 0
+  for (const token of tokens) {
+    switch (token.type) {
+      case 'url':
+        // URLs don't count
+        break
+      case 'text':
+        length += token.value.length
+        break
+      case 'hashtag':
+        length += token.value.length + 1 // +1 for '#'
+        break
+      case 'cashtag':
+        length += token.value.length + 1 // +1 for '$'
+        break
+      case 'nostr':
+        length += token.value.length
+        break
+      case 'newline':
+        length += 1
+        break
+    }
+  }
+  return length
+}
+
+/**
+ * Truncate tokens to a maximum display length on word boundaries.
+ * URLs do NOT count against the character limit.
+ * This ensures Tailwind's line-clamp doesn't cut mid-word.
+ */
+function truncateTokensAtWordBoundary(tokens: ContentToken[], maxLength: number): ContentToken[] {
+  const result: ContentToken[] = []
+  let charCount = 0
+  let truncated = false
+
+  for (const token of tokens) {
+    if (truncated) break
+
+    switch (token.type) {
+      case 'newline':
+        // Insert newline but track as character
+        result.push(token)
+        charCount += 1
+        break
+
+      case 'text': {
+        const remaining = maxLength - charCount
+        if (remaining <= 0) {
+          truncated = true
+          break
+        }
+
+        if (token.value.length <= remaining) {
+          // Fits completely
+          result.push(token)
+          charCount += token.value.length
+        } else {
+          // Need to truncate - find word boundary
+          let truncated_text = token.value.slice(0, remaining)
+          
+          // Try to find the last space to avoid cutting mid-word
+          const lastSpace = truncated_text.lastIndexOf(' ')
+          if (lastSpace > Math.max(remaining * 0.6, 10)) {
+            // Good word break found (at least 60% of allocated space or 10 chars)
+            truncated_text = truncated_text.slice(0, lastSpace).trimEnd()
+          }
+
+          if (truncated_text.length > 0) {
+            result.push({ type: 'text', value: truncated_text })
+            charCount += truncated_text.length
+          }
+          truncated = true
+        }
+        break
+      }
+
+      case 'url': {
+        // URLs don't count against character limit, always include them
+        result.push(token)
+        break
+      }
+
+      case 'hashtag': {
+        const hashtagLen = token.value.length + 1 // '#' + tag
+        const remaining = maxLength - charCount
+        if (remaining >= hashtagLen) {
+          result.push(token)
+          charCount += hashtagLen
+        } else {
+          truncated = true
+        }
+        break
+      }
+
+      case 'cashtag': {
+        const cashtagLen = token.value.length + 1 // '$' + tag
+        const remaining = maxLength - charCount
+        if (remaining >= cashtagLen) {
+          result.push(token)
+          charCount += cashtagLen
+        } else {
+          truncated = true
+        }
+        break
+      }
+
+      case 'nostr': {
+        const nostrLen = token.value.length // rough estimate
+        const remaining = maxLength - charCount
+        if (remaining >= nostrLen) {
+          result.push(token)
+          charCount += nostrLen
+        } else {
+          truncated = true
+        }
+        break
+      }
+    }
+  }
+
+  return result
+}
+
 export function NoteContent({
   content,
   className = '',
@@ -336,10 +509,17 @@ export function NoteContent({
     () => filterTokens(tokenize(tryParseBridgeContent(content)), hiddenUrlSet),
     [content, hiddenUrlSet],
   )
-  const translationSourceText = React.useMemo(
+  const plainText = React.useMemo(
     () => tokensToPlainText(tokens),
     [tokens],
   )
+  const translationSourceText = plainText
+  const shouldClampCompactText = React.useMemo(() => {
+    if (!plainText) return false
+    const textLengthExcludingUrls = getTextLengthWithoutUrls(tokens)
+    if (textLengthExcludingUrls <= 500) return false
+    return true
+  }, [plainText, tokens])
   const entityCandidates = React.useMemo(
     () => collectEntityCandidates(
       tokens.filter(
@@ -351,14 +531,20 @@ export function NoteContent({
     [tokens],
   )
 
+  // For compact mode, truncate tokens at word boundaries to prevent mid-word cuts
+  const compactTokens = React.useMemo(
+    () => compact ? truncateTokensAtWordBoundary(tokens, 500) : tokens,
+    [tokens, compact],
+  )
+
   if (compact) {
     return (
       <>
         <p className={`
           text-[rgb(var(--color-label-secondary))] text-[15px]
-          leading-snug line-clamp-2 ${className}
+          leading-snug ${shouldClampCompactText ? 'line-clamp-2' : ''} ${className}
         `}>
-          {tokens.map((token, index) => renderToken(token, index, true, interactive))}
+          {compactTokens.map((token, index) => renderToken(token, index, true, interactive))}
         </p>
         {allowTranslation && translationSourceText && (
           <TranslateTextPanel text={translationSourceText} />

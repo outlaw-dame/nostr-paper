@@ -14,6 +14,7 @@ import { registerSW } from 'virtual:pwa-register'
 import { isLocalDevelopmentHost } from '@/lib/runtime/localhost'
 import App from './App'
 import './styles/global.css'
+import { beginBootSession, markBootStage, recordBootFailure } from '@/lib/runtime/startupDiagnostics'
 
 // Disable SW on local hosts (dev server and local preview) to avoid stale-cache
 // loops and hashed-asset mismatches while iterating.
@@ -22,6 +23,24 @@ const shouldRegisterServiceWorker = !shouldSkipServiceWorker
 const LOCAL_CACHE_PREFIXES = ['nostr-paper-', 'workbox-'] as const
 
 document.documentElement.dataset.theme = 'light'
+beginBootSession()
+
+window.addEventListener('error', (event) => {
+  const message = event.error instanceof Error
+    ? event.error.message
+    : event.message || 'Unknown global error'
+  recordBootFailure('main:start', message)
+})
+
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason
+  const message = reason instanceof Error
+    ? reason.message
+    : typeof reason === 'string'
+      ? reason
+      : 'Unhandled promise rejection'
+  recordBootFailure('main:start', message)
+})
 
 async function clearLocalServiceWorkerCaches(): Promise<void> {
   if (typeof caches === 'undefined') return
@@ -65,11 +84,18 @@ async function disableLocalServiceWorkers(): Promise<void> {
 
 // ── PWA Service Worker ────────────────────────────────────────
 const noopUpdateSW: ReturnType<typeof registerSW> = async () => {}
-const updateSW = shouldRegisterServiceWorker
-  ? registerSW({
+let updateSW = noopUpdateSW
+
+if (shouldRegisterServiceWorker) {
+  try {
+    updateSW = registerSW({
       onNeedRefresh() {
         // Dispatch custom event — App.tsx handles the update prompt
-        window.dispatchEvent(new CustomEvent('pwa-update-available'))
+        window.dispatchEvent(new CustomEvent('pwa-update-available', {
+          detail: {
+            applyUpdate: () => updateSW(true),
+          },
+        }))
       },
       onOfflineReady() {
         window.dispatchEvent(new CustomEvent('pwa-offline-ready'))
@@ -85,7 +111,11 @@ const updateSW = shouldRegisterServiceWorker
         console.error('[PWA] Service worker registration failed:', error)
       },
     })
-  : noopUpdateSW
+  } catch (error) {
+    console.warn('[PWA] Service worker registration threw synchronously. Continuing without SW:', error)
+    void disableLocalServiceWorkers()
+  }
+}
 
 if (shouldSkipServiceWorker) {
   console.info('[PWA] Skipping service worker registration on local development hosts.')
@@ -117,3 +147,5 @@ root.render(
     <App />
   )
 )
+
+markBootStage('main:react-mounted')

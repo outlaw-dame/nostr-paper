@@ -531,7 +531,7 @@ export function VideoBody({ event, profile, className = '' }: VideoBodyProps) {
         </section>
       )}
 
-      <QuotePreviewList event={event} />
+      <QuotePreviewList event={event} compact />
       <EventActionBar event={event} />
       <ConversationSection event={event} />
     </article>

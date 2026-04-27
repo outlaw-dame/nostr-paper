@@ -35,8 +35,10 @@ import { getReactionLabel, parseReactionEvent } from '@/lib/nostr/reaction'
 import { getReportPreviewText, parseReportEvent } from '@/lib/nostr/report'
 import { getQuotePostBody, getRepostPreviewText, parseQuoteTags, parseRepostEvent } from '@/lib/nostr/repost'
 import { getUserStatusExternalHref, getUserStatusLabel, parseUserStatusEvent } from '@/lib/nostr/status'
-import { parseCommentEvent, parseThreadEvent } from '@/lib/nostr/thread'
+import { parseCommentEvent, parseNumberedThreadMarker, parseTextNoteReply, parseThreadEvent } from '@/lib/nostr/thread'
 import { parseVideoEvent } from '@/lib/nostr/video'
+import { parseHighlightEvent } from '@/lib/nostr/highlight'
+import { isThreadInspectorEnabled } from '@/lib/runtime/debugSettings'
 import type { NostrEvent } from '@/types'
 
 interface EventPreviewCardProps {
@@ -69,6 +71,7 @@ function getKindLabel(event: NostrEvent): string | null {
   if (parsePollEvent(event)) return 'Poll'
   if (parsePollVoteEvent(event)) return 'Poll vote'
   if (parseDeletionEvent(event)) return 'Deletion request'
+  if (parseHighlightEvent(event)) return 'Highlight'
   if (parseReactionEvent(event)) return 'Reaction'
   if (parseReportEvent(event)) return 'Report'
   if (parseRepostEvent(event)) return 'Repost'
@@ -89,9 +92,28 @@ function PreviewBody({ event, compact = false, interactive = true }: { event: No
             <TwemojiText text={list.title} />
           </h3>
         )}
-        <p className="mt-3 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))] line-clamp-3">
-          <TwemojiText text={list.description ?? getNip51ListPreviewText(event)} />
-        </p>
+        {list.description ? (
+          <p className="mt-2 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))] line-clamp-3">
+            <TwemojiText text={list.description} />
+          </p>
+        ) : null}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {list.publicItems.length > 0 && (
+            <span className="inline-flex items-center rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-0.5 text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
+              {list.publicItems.length} {list.publicItems.length === 1 ? 'item' : 'items'}
+            </span>
+          )}
+          {list.hasPrivateItems && (
+            <span className="inline-flex items-center rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-0.5 text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
+              + private
+            </span>
+          )}
+          {!list.description && list.publicItems.length === 0 && (
+            <p className="text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
+              <TwemojiText text={getNip51ListPreviewText(event)} />
+            </p>
+          )}
+        </div>
       </>
     )
   }
@@ -281,6 +303,24 @@ function PreviewBody({ event, compact = false, interactive = true }: { event: No
     )
   }
 
+  const highlight = parseHighlightEvent(event)
+  if (highlight) {
+    return (
+      <>
+        <blockquote className="mt-3 rounded-[10px] border-l-[3px] border-[rgb(var(--color-system-yellow,255_214_10))] bg-[rgb(var(--color-system-yellow,255_214_10)/0.08)] py-2 pl-3 pr-2">
+          <p className="text-[14px] leading-6 text-[rgb(var(--color-label))] italic line-clamp-3">
+            &ldquo;<TwemojiText text={highlight.excerpt} />&rdquo;
+          </p>
+        </blockquote>
+        {highlight.comment && (
+          <p className="mt-2 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))] line-clamp-2">
+            <TwemojiText text={highlight.comment} />
+          </p>
+        )}
+      </>
+    )
+  }
+
   const userStatus = parseUserStatusEvent(event)
   if (userStatus) {
     const externalHref = getUserStatusExternalHref(userStatus)
@@ -346,6 +386,7 @@ export function EventPreviewCard({
   linked = true,
 }: EventPreviewCardProps) {
   const threadIndex = useSelfThreadIndex(event)
+  const threadInspectorEnabled = isThreadInspectorEnabled()
   const { blocked, loading, decision } = useEventModeration(event)
   const { profile } = useProfile(event.pubkey, { background: false })
   const blockedByTagr = blocked && (decision?.reason?.startsWith('tagr:') ?? false)
@@ -369,6 +410,8 @@ export function EventPreviewCard({
 
   const kindLabel = getKindLabel(event)
   const href = getHref(event)
+  const numberedMarker = parseNumberedThreadMarker(event.content)
+  const parsedReply = parseTextNoteReply(event)
 
   const content = (
     <div className={`rounded-[18px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg-secondary))] p-3 ${className}`}>
@@ -385,6 +428,18 @@ export function EventPreviewCard({
       )}
 
       <ThreadIndexBadge threadIndex={threadIndex} className="mt-3" />
+
+      {threadInspectorEnabled && (
+        <div className="mt-3 rounded-[12px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-2.5 py-2 font-mono text-[11px] leading-5 text-[rgb(var(--color-label-secondary))]">
+          <p>kind={event.kind} id={event.id.slice(0, 12)}... sig={event.sig.slice(0, 12)}...</p>
+          {numberedMarker && (
+            <p>marker={numberedMarker.index}/{numberedMarker.total}</p>
+          )}
+          {parsedReply?.rootEventId && (
+            <p>root={parsedReply.rootEventId.slice(0, 12)}... parent={parsedReply.parentEventId.slice(0, 12)}...</p>
+          )}
+        </div>
+      )}
 
       <PreviewBody event={event} compact={compact} interactive={!linked} />
     </div>

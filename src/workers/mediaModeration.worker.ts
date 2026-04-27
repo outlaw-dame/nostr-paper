@@ -46,11 +46,6 @@ const ALLOW_REMOTE_MODELS = import.meta.env.VITE_MEDIA_MODERATION_ALLOW_REMOTE_M
 const LOCAL_MODEL_PATH = typeof import.meta.env.VITE_MEDIA_MODERATION_LOCAL_MODEL_PATH === 'string'
   ? import.meta.env.VITE_MEDIA_MODERATION_LOCAL_MODEL_PATH.trim()
   : ''
-const MODERATION_CONCURRENCY = (() => {
-  const value = Number(import.meta.env.VITE_MEDIA_MODERATION_CONCURRENCY)
-  if (!Number.isFinite(value)) return 2
-  return Math.max(1, Math.min(6, Math.floor(value)))
-})()
 const MEDIA_PROXY_BASE = typeof import.meta.env.VITE_MEDIA_MODERATION_PROXY_URL === 'string'
   ? import.meta.env.VITE_MEDIA_MODERATION_PROXY_URL.trim()
   : ''
@@ -68,6 +63,7 @@ type ImageClassifier = (
 type CachedMediaModerationDecision = {
   fingerprint: string
   decision: Omit<MediaModerationDecision, 'id'>
+  skipped?: boolean
 }
 
 const moderationStore = createStore('nostr-paper-media-moderation', 'decisions')
@@ -106,7 +102,14 @@ function getWorkerOrigin(): string | null {
 }
 
 function buildMediaProxyUrl(target: string): string | null {
-  const proxyBase = import.meta.env.DEV ? DEV_MEDIA_PROXY_PATH : MEDIA_PROXY_BASE
+  // In dev mode, the Vite dev server plugin handles the proxy path.
+  // In preview mode (DEV=false), we still want the same proxy when running locally,
+  // so fall back to DEV_MEDIA_PROXY_PATH when the origin is localhost / 127.0.0.1.
+  const workerOrigin = getWorkerOrigin()
+  const isLocalOrigin = workerOrigin
+    ? /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(workerOrigin)
+    : false
+  const proxyBase = import.meta.env.DEV || isLocalOrigin ? DEV_MEDIA_PROXY_PATH : MEDIA_PROXY_BASE
   if (!proxyBase) return null
 
   try {
@@ -212,14 +215,17 @@ async function classifyDocument(
 ): Promise<MediaModerationDecision> {
   const classifierInputUrl = resolveClassifierInputUrl(document.url)
   if (!classifierInputUrl) {
-    return evaluateMediaModerationScores(
-      document.id,
-      emptyMediaModerationScores(),
-      {
-        nsfwModel: null,
-        violenceModel: null,
-      },
-    )
+    return {
+      ...evaluateMediaModerationScores(
+        document.id,
+        emptyMediaModerationScores(),
+        {
+          nsfwModel: null,
+          violenceModel: null,
+        },
+      ),
+      skipped: true,
+    }
   }
 
   const [nsfwClassifier, violenceClassifier] = await Promise.all([
@@ -276,23 +282,19 @@ async function moderateDocuments(documents: MediaModerationDocument[]): Promise<
       decisions.set(document.id, {
         id: document.id,
         ...entry.decision,
+        ...(entry.skipped ? { skipped: true } : {}),
       })
     } else {
       missing.push(document)
     }
   }
 
-  for (let start = 0; start < missing.length; start += MODERATION_CONCURRENCY) {
-    const batch = missing.slice(start, start + MODERATION_CONCURRENCY)
-    const results = await Promise.all(batch.map(async (document) => ({
-      document,
-      decision: await classifyDocument(document),
-    })))
+  for (const document of missing) {
+    const decision = await classifyDocument(document)
+    decisions.set(document.id, decision)
 
-    const writes: Array<[string, CachedMediaModerationDecision]> = []
-    for (const { document, decision } of results) {
-      decisions.set(document.id, decision)
-      writes.push([
+    await setMany([
+      [
         cacheKey(document),
         {
           fingerprint: fingerprint(document),
@@ -304,13 +306,10 @@ async function moderateDocuments(documents: MediaModerationDocument[]): Promise<
             violenceModel: decision.violenceModel,
             policyVersion: decision.policyVersion,
           },
-        },
-      ])
-    }
-
-    if (writes.length > 0) {
-      await setMany(writes, moderationStore).catch(() => {})
-    }
+          ...(decision.skipped ? { skipped: true } : {}),
+        } satisfies CachedMediaModerationDecision,
+      ],
+    ], moderationStore).catch(() => {})
   }
 
   return documents

@@ -15,6 +15,7 @@
 
 import type { OGData } from './types'
 import { checkSafeBrowsingURL } from '@/lib/security/safeBrowsing'
+import { withRetry } from '@/lib/retry'
 
 // ── Configuration ─────────────────────────────────────────────
 
@@ -61,14 +62,48 @@ async function doFetch(url: string): Promise<OGData | null> {
 
   const endpoint = `${PROXY_BASE}?url=${encodeURIComponent(url)}`
 
-  try {
-    const res = await fetch(endpoint, {
-      signal: AbortSignal.timeout(12_000),
-    })
-    if (!res.ok) return null
+  class HttpStatusError extends Error {
+    status: number
 
-    const json: unknown = await res.json()
-    return isOGData(json) ? json : null
+    constructor(status: number, message: string) {
+      super(message)
+      this.status = status
+    }
+  }
+
+  try {
+    return await withRetry(
+      async () => {
+        const res = await fetch(endpoint, {
+          signal: AbortSignal.timeout(12_000),
+          headers: {
+            Accept: 'application/json',
+          },
+        })
+
+        if (res.status === 429 || res.status >= 500) {
+          throw new HttpStatusError(res.status, `OG proxy retryable status: ${res.status}`)
+        }
+
+        if (!res.ok) return null
+
+        const json: unknown = await res.json()
+        return isOGData(json) ? json : null
+      },
+      {
+        maxAttempts: 3,
+        baseDelayMs: 400,
+        maxDelayMs: 4_000,
+        jitter: 'full',
+        shouldRetry: (error) => {
+          if (error instanceof DOMException && error.name === 'AbortError') return false
+          if (error instanceof HttpStatusError) {
+            return error.status === 429 || error.status >= 500
+          }
+          return true
+        },
+      },
+    )
   } catch {
     return null
   }
@@ -100,9 +135,12 @@ export async function fetchOGData(url: string): Promise<OGData | null> {
     if (!safe) return null
     return doFetch(url)
   })().then(result => {
-    evictIfNeeded()
-    cache.set(url, result)
     inflight.delete(url)
+
+    // Cache both positive and negative lookups to prevent repeated retries.
+    cache.set(url, result)
+    evictIfNeeded()
+
     return result
   })
 

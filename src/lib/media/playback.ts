@@ -42,6 +42,9 @@ const OPEN_BASE_TYPES = new Set([
   'audio/ogg',
   'audio/opus',
   'audio/flac',
+  // Matroska container — commonly carries AV1, VP9, Opus
+  'video/x-matroska',
+  'video/matroska',
 ])
 
 const COMPATIBILITY_BASE_TYPES = new Set([
@@ -51,7 +54,7 @@ const COMPATIBILITY_BASE_TYPES = new Set([
   'audio/mpeg',
 ])
 
-const OPEN_CODEC_PREFIXES = ['av01', 'vp8', 'vp9', 'opus', 'vorbis', 'flac', 'theora']
+const OPEN_CODEC_PREFIXES = ['av01', 'av1', 'vp08', 'vp8', 'vp09', 'vp9', 'opus', 'vorbis', 'flac', 'theora']
 const COMPATIBILITY_CODEC_PREFIXES = ['avc1', 'avc3', 'h264', 'mp4a', 'aac', 'hev1', 'hvc1']
 
 const supportCache = new Map<string, MediaCanPlayResult | undefined>()
@@ -83,7 +86,7 @@ function inferMimeTypeFromUrl(url: string, kind: MediaPlaybackKind): string | un
   try {
     const pathname = new URL(url).pathname.toLowerCase()
     if (pathname.endsWith('.webm')) return kind === 'audio' ? 'audio/webm' : 'video/webm'
-    if (pathname.endsWith('.mp4')) return kind === 'audio' ? 'audio/mp4' : 'video/mp4'
+    if (pathname.endsWith('.mp4') || pathname.endsWith('.m4v')) return kind === 'audio' ? 'audio/mp4' : 'video/mp4'
     if (pathname.endsWith('.m4a')) return 'audio/mp4'
     if (pathname.endsWith('.mp3')) return 'audio/mpeg'
     if (pathname.endsWith('.aac')) return 'audio/aac'
@@ -91,6 +94,7 @@ function inferMimeTypeFromUrl(url: string, kind: MediaPlaybackKind): string | un
     if (pathname.endsWith('.oga') || pathname.endsWith('.ogg')) return kind === 'audio' ? 'audio/ogg' : 'video/ogg'
     if (pathname.endsWith('.ogv')) return 'video/ogg'
     if (pathname.endsWith('.flac')) return 'audio/flac'
+    if (pathname.endsWith('.mkv')) return 'video/x-matroska'
     if (pathname.endsWith('.m3u8')) return 'application/vnd.apple.mpegurl'
     if (pathname.endsWith('.mpd')) return 'application/dash+xml'
   } catch {
@@ -114,17 +118,34 @@ function buildProbeTypes(
 
   switch (base) {
     case 'video/webm':
+      // VP9 + Opus (best cross-platform open profile)
       probes.add('video/webm; codecs="vp9,opus"')
+      // AV1 + Opus (highest quality open profile, Chrome 70+, Firefox 67+)
       probes.add('video/webm; codecs="av01.0.05M.08,opus"')
+      // VP8 + Vorbis (widest legacy open support)
+      probes.add('video/webm; codecs="vp8,vorbis"')
       break
     case 'audio/webm':
       probes.add('audio/webm; codecs="opus"')
       break
     case 'video/mp4':
+      // AV1 in ISOBMFF — supported in Chrome 70+, Firefox 67+, Safari 17+ (AVIF decoder shares)
+      probes.add('video/mp4; codecs="av01.0.05M.08,opus"')
+      probes.add('video/mp4; codecs="av01.0.05M.08,mp4a.40.2"')
+      // VP9 in MP4 — supported in Chrome/Edge/Firefox
+      probes.add('video/mp4; codecs="vp09.00.10.08,mp4a.40.2"')
+      // H.264 + AAC — compatibility baseline
       probes.add('video/mp4; codecs="avc1.42E01E,mp4a.40.2"')
       break
     case 'audio/mp4':
       probes.add('audio/mp4; codecs="mp4a.40.2"')
+      probes.add('audio/mp4; codecs="opus"')
+      break
+    case 'video/x-matroska':
+    case 'video/matroska':
+      // Matroska probed via WebM as browsers map MKV parsing through the same engine
+      probes.add('video/webm; codecs="av01.0.05M.08,opus"')
+      probes.add('video/webm; codecs="vp9,opus"')
       break
     case 'application/vnd.apple.mpegurl':
       probes.add('application/x-mpegurl')

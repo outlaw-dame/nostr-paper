@@ -88,13 +88,43 @@ export function ErrorScreen({ code, message }: ErrorScreenProps) {
 
 // ── UpdateBanner ─────────────────────────────────────────────
 
-export function UpdateBanner() {
-  const [dismissed, setDismissed] = useState(false)
+interface UpdateBannerProps {
+  onUpdate?: () => Promise<void>
+  onDismiss?: () => void
+}
 
-  const handleUpdate = () => {
-    // Tell SW to skip waiting and reload
-    navigator.serviceWorker.controller?.postMessage({ type: 'SKIP_WAITING' })
+export function UpdateBanner({ onUpdate, onDismiss }: UpdateBannerProps) {
+  const [dismissed, setDismissed] = useState(false)
+  const [updating, setUpdating] = useState(false)
+
+  const forceReload = () => {
     window.location.reload()
+  }
+
+  const handleDismiss = () => {
+    setDismissed(true)
+    onDismiss?.()
+  }
+
+  const handleUpdate = async () => {
+    if (updating) return
+    setUpdating(true)
+
+    try {
+      if (onUpdate) {
+        await onUpdate().catch((error) => {
+          console.warn('[PWA] applyUpdate callback failed, falling back to manual reload:', error)
+        })
+      } else {
+        navigator.serviceWorker.controller?.postMessage({ type: 'SKIP_WAITING' })
+      }
+
+      // Some browser/SW states do not auto-reload after skipWaiting.
+      // Always force a reload fallback so tapping Update is never a no-op.
+      window.setTimeout(forceReload, 150)
+    } finally {
+      setUpdating(false)
+    }
   }
 
   return (
@@ -126,7 +156,7 @@ export function UpdateBanner() {
           </div>
 
           <ActionButton
-            onClick={() => setDismissed(true)}
+            onClick={handleDismiss}
             className="
               text-[rgb(var(--color-label-tertiary))] text-[13px]
               px-2 py-1 tap-none
@@ -145,7 +175,7 @@ export function UpdateBanner() {
               tap-none
             "
           >
-            Update
+            {updating ? 'Updating…' : 'Update'}
           </ActionButton>
         </motion.div>
       )}

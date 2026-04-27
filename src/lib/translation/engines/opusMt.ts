@@ -30,6 +30,7 @@ type TranslationPipeline = (text: string) => Promise<Array<{ translation_text?: 
 
 const pipelineCache = new Map<string, TranslationPipeline>()
 const pipelineAccessOrder: string[] = []
+const MARIAN_FAST_TOKENIZER_WARNING_FRAGMENT = 'MarianTokenizer'
 
 // Xenova/Opus-MT model IDs — confirmed ONNX conversions on HuggingFace Hub.
 // Keys are "src-tgt" using BCP-47 2-letter codes (lowercase).
@@ -125,7 +126,22 @@ async function getOrCreatePipeline(modelId: string): Promise<TranslationPipeline
   }
 
   // Load from HuggingFace Hub and cache
-  const pipe = await pipeline('translation', modelId, { dtype: 'q8' }) as unknown as TranslationPipeline
+  const originalWarn = console.warn
+  console.warn = (...args: unknown[]) => {
+    const first = args[0]
+    if (typeof first === 'string' && first.includes(MARIAN_FAST_TOKENIZER_WARNING_FRAGMENT)) {
+      return
+    }
+    originalWarn(...args)
+  }
+
+  let pipe: TranslationPipeline
+  try {
+    pipe = await pipeline('translation', modelId, { dtype: 'q8' }) as unknown as TranslationPipeline
+  } finally {
+    console.warn = originalWarn
+  }
+
   pipelineCache.set(modelId, pipe)
   pipelineAccessOrder.push(modelId)
   return pipe

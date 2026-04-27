@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BlossomUpload } from '@/components/blossom/BlossomUpload'
 import { useApp } from '@/contexts/app-context'
+import { listSavedSyndicationFeedLinks } from '@/lib/syndication/feedLinks'
 import { getMediaPlaybackProfile, getMediaPlaybackProfileLabel } from '@/lib/media/playback'
 import { deriveMediaDimensions, normalizeNip94Tags } from '@/lib/nostr/fileMetadata'
 import {
@@ -56,6 +57,7 @@ export default function VideoComposePage() {
   const [contentWarningReason, setContentWarningReason] = useState('')
   const [hashtagsInput, setHashtagsInput] = useState('')
   const [referencesInput, setReferencesInput] = useState('')
+  const [showSavedSourcePicker, setShowSavedSourcePicker] = useState(false)
   const [participantsInput, setParticipantsInput] = useState('')
   const [textTracksInput, setTextTracksInput] = useState('')
   const [segmentsInput, setSegmentsInput] = useState('')
@@ -76,6 +78,20 @@ export default function VideoComposePage() {
     if (addressable) return isShort ? 'Kind 34236' : 'Kind 34235'
     return isShort ? 'Kind 22' : 'Kind 21'
   }, [addressable, isShort])
+
+  const savedSources = useMemo(
+    () => listSavedSyndicationFeedLinks(currentUser?.pubkey?.trim() || 'anon'),
+    [currentUser?.pubkey],
+  )
+
+  const handleAddSavedSource = (url: string) => {
+    const existing = referencesInput.trim()
+    const lines = existing ? existing.split('\n').map((l) => l.trim()).filter(Boolean) : []
+    if (!lines.includes(url)) {
+      setReferencesInput(lines.length > 0 ? `${existing}\n${url}` : url)
+    }
+    setShowSavedSourcePicker(false)
+  }
 
   const handleUploaded = async (blob: BlossomBlob, file?: File) => {
     try {
@@ -320,7 +336,7 @@ export default function VideoComposePage() {
                 Upload one or more video sources. Each upload already publishes its own kind-1063 metadata.
               </p>
               <p className="mt-1 text-[12px] leading-5 text-[rgb(var(--color-label-tertiary))]">
-                Recommended: publish an open WebM profile first, then add an MP4 compatibility profile for Safari and older devices.
+                Best practice: upload a WebM (AV1 or VP9 + Opus) as the primary open profile, then add an MP4 (H.264 + AAC) variant for Safari and older devices. WebM/AV1 gives the highest quality at the lowest bitrate and plays natively in Chrome, Firefox, and Edge. MP4/H.264 covers Safari and iOS.
               </p>
             </div>
             <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-3 py-1 text-[12px] font-medium text-[rgb(var(--color-label-secondary))]">
@@ -399,10 +415,41 @@ export default function VideoComposePage() {
             />
           </label>
 
-          <label className="block space-y-2">
-            <span className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-              References
-            </span>
+          <div className="block space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+                References
+              </span>
+              {savedSources.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowSavedSourcePicker((previous) => !previous)}
+                  className="rounded-[8px] border border-[rgb(var(--color-fill)/0.18)] px-2.5 py-1 text-[11px] font-medium text-[rgb(var(--color-label))] active:opacity-80"
+                >
+                  {showSavedSourcePicker ? 'Hide saved' : 'Add from saved'}
+                </button>
+              )}
+            </div>
+
+            {showSavedSourcePicker && (
+              <div className="rounded-[12px] border border-[rgb(var(--color-fill)/0.14)] bg-[rgb(var(--color-bg-secondary))] p-2 space-y-1">
+                {savedSources.map((source) => (
+                  <button
+                    key={source.id}
+                    type="button"
+                    onClick={() => handleAddSavedSource(source.url)}
+                    className="flex w-full items-center justify-between gap-3 rounded-[8px] px-2.5 py-2 text-left hover:bg-[rgb(var(--color-fill)/0.08)] active:opacity-80"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-medium text-[rgb(var(--color-label))]">{source.label}</p>
+                      <p className="truncate text-[11px] text-[rgb(var(--color-label-tertiary))]">{source.url}</p>
+                    </div>
+                    <span className="shrink-0 text-[11px] text-[rgb(var(--color-accent))]">Add</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
             <textarea
               value={referencesInput}
               onChange={(event) => setReferencesInput(event.target.value)}
@@ -410,7 +457,7 @@ export default function VideoComposePage() {
               placeholder={'One URL per line'}
               className="w-full rounded-[16px] border border-[rgb(var(--color-fill)/0.16)] bg-[rgb(var(--color-bg))] px-4 py-3 text-[15px] leading-7 text-[rgb(var(--color-label))] outline-none focus:border-[#007AFF]"
             />
-          </label>
+          </div>
 
           <label className="block space-y-2">
             <span className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">

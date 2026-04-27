@@ -64,6 +64,7 @@ Object.defineProperty(window, 'matchMedia', {
 
 // Silence expected console.error in tests
 const originalError = console.error
+const originalWarn = console.warn
 beforeAll(() => {
   console.error = (...args: unknown[]) => {
     // Suppress React act() warnings and known test noise
@@ -73,8 +74,17 @@ beforeAll(() => {
     )) return
     originalError(...args)
   }
+
+  console.warn = (...args: unknown[]) => {
+    if (typeof args[0] === 'string' && (
+      args[0].includes('React Router Future Flag Warning') ||
+      args[0].includes('useLayoutEffect does nothing on the server')
+    )) return
+    originalWarn(...args)
+  }
 })
 
 afterAll(() => {
   console.error = originalError
+  console.warn = originalWarn
 })

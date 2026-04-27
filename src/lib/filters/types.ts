@@ -28,8 +28,14 @@
 
 // ── Filter rule ──────────────────────────────────────────────────────────────
 
-/** What to do when the filter matches. */
-export type FilterAction = 'hide' | 'warn'
+/**
+ * What to do when the filter matches.
+ *
+ *  'warn'  — show content with a dismissible warning label (default)
+ *  'hide'  — collapse content behind a "show anyway" toggle
+ *  'block' — drop the event at ingest; it is never written to the local DB
+ */
+export type FilterAction = 'hide' | 'warn' | 'block'
 
 /**
  * Which fields to check.

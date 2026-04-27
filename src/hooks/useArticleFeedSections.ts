@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useCallback, useState } from 'react'
 import { getFollows } from '@/lib/db/nostr'
 import { buildArticleFeedSections, type ArticleFeedSection } from '@/lib/feed/articleFeeds'
 import type { SavedTagFeed } from '@/lib/feed/tagFeeds'
@@ -16,6 +16,29 @@ export function useArticleFeedSections(
   const [followingPubkeys, setFollowingPubkeys] = useState<string[]>([])
   const [loading, setLoading] = useState(Boolean(currentUserPubkey))
 
+  const refreshFollowingPubkeys = useCallback(async (signal?: AbortSignal) => {
+    if (!currentUserPubkey) {
+      setFollowingPubkeys([])
+      setLoading(false)
+      return
+    }
+
+    setLoading(true)
+
+    try {
+      const follows = await getFollows(currentUserPubkey)
+      if (signal?.aborted) return
+      setFollowingPubkeys(follows)
+    } catch {
+      if (signal?.aborted) return
+      setFollowingPubkeys([])
+    } finally {
+      if (!signal?.aborted) {
+        setLoading(false)
+      }
+    }
+  }, [currentUserPubkey])
+
   useEffect(() => {
     if (!currentUserPubkey) {
       setFollowingPubkeys([])
@@ -23,28 +46,25 @@ export function useArticleFeedSections(
       return
     }
 
-    let cancelled = false
-    setLoading(true)
+    const controller = new AbortController()
 
-    void (async () => {
-      try {
-        const follows = await getFollows(currentUserPubkey)
-        if (cancelled) return
-        setFollowingPubkeys(follows)
-      } catch {
-        if (cancelled) return
-        setFollowingPubkeys([])
-      } finally {
-        if (!cancelled) {
-          setLoading(false)
-        }
+    void refreshFollowingPubkeys(controller.signal)
+
+    const refreshIfVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshFollowingPubkeys(controller.signal)
       }
-    })()
+    }
+
+    window.addEventListener('focus', refreshIfVisible)
+    document.addEventListener('visibilitychange', refreshIfVisible)
 
     return () => {
-      cancelled = true
+      controller.abort()
+      window.removeEventListener('focus', refreshIfVisible)
+      document.removeEventListener('visibilitychange', refreshIfVisible)
     }
-  }, [currentUserPubkey])
+  }, [currentUserPubkey, refreshFollowingPubkeys])
 
   const sections = useMemo<ArticleFeedSection[]>(() => (
     buildArticleFeedSections({

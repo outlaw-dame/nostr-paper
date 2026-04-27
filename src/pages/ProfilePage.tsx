@@ -13,7 +13,12 @@ import { useProfileModeration } from '@/hooks/useModeration'
 import { useMuteList } from '@/hooks/useMuteList'
 import { usePageHead } from '@/hooks/usePageHead'
 import { useProfile } from '@/hooks/useProfile'
+import { useLivePresence } from '@/hooks/useLivePresence'
 import { useUserStatus } from '@/hooks/useUserStatus'
+import { buildProfileInsightFallback, extractHashtagsFromContents } from '@/lib/ai/insights'
+import { generateAssistText, type AiAssistProvider, type AiAssistSource } from '@/lib/ai/gemmaAssist'
+import { AI_ASSIST_PROVIDER_UPDATED_EVENT, getAiAssistProvider, setAiAssistProvider } from '@/lib/ai/provider'
+import { queryEvents } from '@/lib/db/nostr'
 import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import { buildProfileMetaTags, buildProfileTitle } from '@/lib/nostr/meta'
 import {
@@ -43,8 +48,20 @@ import {
 import { decodeProfileReference } from '@/lib/nostr/nip21'
 import { formatNip05Identifier, parseNip05Identifier, resolveNip05Identifier } from '@/lib/nostr/nip05'
 import { getIdentityUrl, getPlatformDisplayName } from '@/lib/nostr/nip39'
+import { tApp } from '@/lib/i18n/app'
 import type { ContactList, Profile, ProfileBirthday } from '@/types'
 import { Kind } from '@/types'
+
+const PROFILE_INSIGHT_KINDS = [
+  Kind.ShortNote,
+  Kind.Thread,
+  Kind.Poll,
+  Kind.LongFormContent,
+  Kind.Video,
+  Kind.ShortVideo,
+  Kind.AddressableVideo,
+  Kind.AddressableShortVideo,
+] as const
 
 interface ExpandedProfileImage {
   url: string
@@ -109,6 +126,20 @@ function formatTimestamp(timestamp: number): string {
     hour: 'numeric',
     minute: '2-digit',
   })
+}
+
+function getLivePresenceKindLabel(kind: number): string {
+  if (kind === Kind.LiveActivity) return 'Live Activity'
+  if (kind === Kind.MeetingSpace) return 'Meeting Space'
+  if (kind === Kind.MeetingRoom) return 'Meeting Room'
+  return `Kind ${kind}`
+}
+
+function getLivePresenceStatusLabel(status: 'live' | 'planned' | 'ended' | 'unknown'): string {
+  if (status === 'live') return 'Live'
+  if (status === 'planned') return 'Planned'
+  if (status === 'ended') return 'Ended'
+  return 'Status unknown'
 }
 
 function formatBirthday(
@@ -429,6 +460,9 @@ export default function ProfilePage() {
     identifier: 'music',
     background: true,
   })
+  const { presence: livePresence, loading: livePresenceLoading } = useLivePresence(pubkey, {
+    background: true,
+  })
 
   const [contactList, setContactList] = useState<ContactList | null>(null)
   const [contactListLoading, setContactListLoading] = useState(false)
@@ -455,15 +489,18 @@ export default function ProfilePage() {
   const [error, setError] = useState<string | null>(null)
   const [muting, setMuting] = useState(false)
   const [expandedImage, setExpandedImage] = useState<ExpandedProfileImage | null>(null)
+  const [recentProfilePosts, setRecentProfilePosts] = useState<string[]>([])
+  const [profileInsights, setProfileInsights] = useState<string[]>([])
+  const [profileInsightsLoading, setProfileInsightsLoading] = useState(false)
+  const [profileInsightsSource, setProfileInsightsSource] = useState<AiAssistSource | 'fallback'>('fallback')
+  const [aiAssistProvider, setAiAssistProviderState] = useState<AiAssistProvider>(() => getAiAssistProvider())
   const profileBlockedByTagr = profileTextBlocked && (profileModerationDecision?.reason?.startsWith('tagr:') ?? false)
   const displayProfile = useMemo<Profile | null>(() => {
     if (!profile || !profileTextBlocked) return profile
-    const {
-      about: _about,
-      name: _name,
-      display_name: _displayName,
-      ...redactedProfile
-    } = profile
+    const redactedProfile: Profile = { ...profile }
+    delete redactedProfile.about
+    delete redactedProfile.name
+    delete redactedProfile.display_name
     return redactedProfile
   }, [profile, profileTextBlocked])
   const profileMediaDocuments = useMemo(
@@ -485,18 +522,15 @@ export default function ProfilePage() {
   )
   const {
     blockedIds: blockedProfileMediaIds,
-    loading: profileMediaLoading,
   } = useMediaModerationDocuments(profileMediaDocuments)
   const blockedAvatar = profile ? blockedProfileMediaIds.has(`${profile.pubkey}:avatar`) : false
   const blockedBanner = profile ? blockedProfileMediaIds.has(`${profile.pubkey}:banner`) : false
   const renderProfile = useMemo<Profile | null>(() => {
     if (!displayProfile) return displayProfile
 
-    const {
-      picture: _picture,
-      banner: _banner,
-      ...restProfile
-    } = displayProfile
+    const restProfile: Profile = { ...displayProfile }
+    delete restProfile.picture
+    delete restProfile.banner
 
     return {
       ...restProfile,
@@ -566,11 +600,40 @@ export default function ProfilePage() {
     }),
     [displayProfile?.about, displayProfile?.nip05, displayProfile?.nip05Verified],
   )
+  const avatarUrl = renderProfile?.picture ?? null
   const birthdayLabel = useMemo(
     () => formatBirthday(renderProfile?.birthday),
     [renderProfile?.birthday],
   )
   const totalCuratedSets = followSets.length + starterPacks.length + mediaStarterPacks.length + articleCurations.length + appCurations.length
+  const profileContentHashtags = useMemo(
+    () => extractHashtagsFromContents(recentProfilePosts),
+    [recentProfilePosts],
+  )
+
+  const fallbackProfileInsights = useMemo(
+    () => buildProfileInsightFallback({
+      displayName: profileLabel,
+      about: displayProfile?.about ?? '',
+      hashtags: profileContentHashtags,
+      recentPosts: recentProfilePosts,
+    }),
+    [displayProfile?.about, profileContentHashtags, profileLabel, recentProfilePosts],
+  )
+
+  useEffect(() => {
+    const onProviderUpdated = () => {
+      setAiAssistProviderState(getAiAssistProvider())
+    }
+
+    window.addEventListener(AI_ASSIST_PROVIDER_UPDATED_EVENT, onProviderUpdated)
+    window.addEventListener('storage', onProviderUpdated)
+
+    return () => {
+      window.removeEventListener(AI_ASSIST_PROVIDER_UPDATED_EVENT, onProviderUpdated)
+      window.removeEventListener('storage', onProviderUpdated)
+    }
+  }, [])
 
   const scrollToSection = (id: string) => {
     document.getElementById(id)?.scrollIntoView({
@@ -794,6 +857,102 @@ export default function ProfilePage() {
     return () => controller.abort()
   }, [currentUser?.pubkey, pubkey])
 
+  useEffect(() => {
+    if (!pubkey) {
+      setRecentProfilePosts([])
+      return
+    }
+
+    const controller = new AbortController()
+
+    queryEvents({
+      authors: [pubkey],
+      kinds: [...PROFILE_INSIGHT_KINDS],
+      limit: 48,
+    })
+      .then((events) => {
+        if (controller.signal.aborted) return
+        const posts = events
+          .sort((a, b) => b.created_at - a.created_at)
+          .map((event) => event.content.trim())
+          .filter((content) => content.length > 0)
+          .slice(0, 24)
+        setRecentProfilePosts(posts)
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return
+        setRecentProfilePosts([])
+      })
+
+    return () => controller.abort()
+  }, [pubkey])
+
+  useEffect(() => {
+    setProfileInsights(fallbackProfileInsights)
+    setProfileInsightsSource('fallback')
+
+    if (!pubkey || !displayProfile) {
+      setProfileInsightsLoading(false)
+      return
+    }
+
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      setProfileInsightsLoading(true)
+
+      const prompt = [
+        'You are generating profile insights for a social client.',
+        'Write 3 informative sentences about this profile.',
+        'Cover: (1) their main topics and writing style, (2) audience fit or community they belong to, (3) one actionable suggestion for engaging with them.',
+        'Plain text only, no markdown, no bullet points.',
+        'Each sentence must be self-contained and add distinct value.',
+        `Profile label: ${JSON.stringify(profileLabel)}`,
+        `Bio: ${JSON.stringify(displayProfile.about ?? '')}`,
+        `Hashtags: ${JSON.stringify(profileContentHashtags.slice(0, 12))}`,
+        `Recent posts: ${JSON.stringify(recentProfilePosts.slice(0, 8))}`,
+      ].join('\n')
+
+      generateAssistText(prompt, {
+        signal: controller.signal,
+        provider: aiAssistProvider,
+      })
+        .then((result) => {
+          if (controller.signal.aborted) return
+          const lines = result.text
+            .split(/\n+/)
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0)
+            .slice(0, 3)
+
+          if (lines.length > 0) {
+            setProfileInsights(lines)
+            setProfileInsightsSource(result.source)
+          }
+
+          setProfileInsightsLoading(false)
+        })
+        .catch(() => {
+          if (controller.signal.aborted) return
+          setProfileInsights(fallbackProfileInsights)
+          setProfileInsightsSource('fallback')
+          setProfileInsightsLoading(false)
+        })
+    }, 600)
+
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [
+    displayProfile,
+    fallbackProfileInsights,
+    profileContentHashtags,
+    profileLabel,
+    pubkey,
+    recentProfilePosts,
+    aiAssistProvider,
+  ])
+
   const handleSave = async () => {
     if (!pubkey) return
 
@@ -882,7 +1041,7 @@ export default function ProfilePage() {
             disabled={muting || muteListLoading}
             className="mt-6 rounded-[14px] bg-[rgb(var(--color-label))] px-6 py-3 text-[15px] font-medium text-white transition-opacity active:opacity-75 disabled:opacity-40"
           >
-            {muting ? 'Updating…' : 'Unmute'}
+            {muting ? tApp('profileUpdating') : tApp('profileUnmute')}
           </button>
         </div>
       ) : (
@@ -906,10 +1065,10 @@ export default function ProfilePage() {
                 pubkey={pubkey}
                 profile={renderProfile}
                 large
-                {...(renderProfile?.picture
+                {...(avatarUrl
                   ? {
                       onAvatarClick: () => setExpandedImage({
-                        url: renderProfile.picture!,
+                        url: avatarUrl,
                         alt: `${profileLabel} avatar`,
                         title: `${profileLabel} avatar`,
                       }),
@@ -928,31 +1087,31 @@ export default function ProfilePage() {
                 )}
                 {displayProfile?.bot && (
                   <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[rgb(var(--color-label-secondary))]">
-                    Automated account
+                    {tApp('profileAutomatedAccount')}
                   </span>
                 )}
                 {musicStatus && (
                   <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[rgb(var(--color-label-secondary))]">
-                    Live music status
+                    {tApp('profileLiveMusicStatus')}
                   </span>
                 )}
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <ProfileStatBadge
-                  label="Following"
+                  label={tApp('profileFollowing')}
                   value={contactList ? contactList.entries.length : (contactListLoading ? '…' : '0')}
                 />
                 <ProfileStatBadge
-                  label="Badges"
+                  label={tApp('profileBadges')}
                   value={badgesLoading && badges.length === 0 ? '…' : badges.length}
                 />
                 <ProfileStatBadge
-                  label="Curated Sets"
+                  label={tApp('profileCuratedSets')}
                   value={nip51SetsLoading && totalCuratedSets === 0 ? '…' : totalCuratedSets}
                 />
                 <ProfileStatBadge
-                  label="Handlers"
+                  label={tApp('profileHandlers')}
                   value={handlerInfoLoading && handlerInfoEvents.length === 0 ? '…' : handlerInfoEvents.length}
                 />
               </div>
@@ -965,26 +1124,26 @@ export default function ProfilePage() {
                       onClick={() => scrollToSection('profile-metadata')}
                       className="rounded-[14px] bg-[rgb(var(--color-label))] px-4 py-2.5 text-[14px] font-medium text-white transition-opacity active:opacity-75"
                     >
-                      Edit Profile
+                      {tApp('profileEditProfile')}
                     </button>
                     <Link
                       to="/settings"
                       className="rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-4 py-2.5 text-[14px] font-medium text-[rgb(var(--color-label))]"
                     >
-                      Settings
+                      {tApp('profileSettings')}
                     </Link>
                     <Link
                       to="/settings#music-status"
                       className="rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-4 py-2.5 text-[14px] font-medium text-[rgb(var(--color-label))]"
                     >
-                      Music Status
+                      {tApp('profileMusicStatus')}
                     </Link>
                     <button
                       type="button"
                       onClick={handleLogout}
                       className="rounded-[14px] border border-[rgb(var(--color-system-red)/0.22)] bg-[rgb(var(--color-system-red)/0.08)] px-4 py-2.5 text-[14px] font-medium text-[rgb(var(--color-system-red))] transition-opacity active:opacity-75"
                     >
-                      Logout
+                      {tApp('profileLogout')}
                     </button>
                   </>
                 ) : (
@@ -995,11 +1154,11 @@ export default function ProfilePage() {
                         onClick={() => scrollToSection('profile-entry')}
                         className="rounded-[14px] bg-[rgb(var(--color-label))] px-4 py-2.5 text-[14px] font-medium text-white transition-opacity active:opacity-75"
                       >
-                        {currentEntry ? 'Manage Follow' : 'Follow'}
+                        {currentEntry ? tApp('profileManageFollow') : tApp('profileFollow')}
                       </button>
                     ) : (
                       <span className="rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-4 py-2.5 text-[14px] text-[rgb(var(--color-label-secondary))]">
-                        Connect a signer to follow
+                        {tApp('profileConnectSignerFollow')}
                       </span>
                     )}
 
@@ -1014,7 +1173,7 @@ export default function ProfilePage() {
                         transition-opacity active:opacity-75 disabled:opacity-40
                       "
                     >
-                      {muting ? 'Updating…' : isMutedProfile ? 'Unmute' : 'Mute'}
+                      {muting ? tApp('profileUpdating') : isMutedProfile ? tApp('profileUnmute') : tApp('profileMute')}
                     </button>
 
                     <button
@@ -1032,7 +1191,7 @@ export default function ProfilePage() {
                         transition-opacity active:opacity-75 disabled:opacity-40
                       "
                     >
-                      {reported ? 'Reported' : 'Report'}
+                      {reported ? tApp('profileReported') : tApp('profileReport')}
                     </button>
                   </>
                 )}
@@ -1040,7 +1199,7 @@ export default function ProfilePage() {
 
               <div className="mt-4 rounded-[16px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] px-3 py-3">
                 <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-                  Pubkey
+                  {tApp('profilePubkey')}
                 </p>
                 <p className="mt-1 break-all font-mono text-[12px] text-[rgb(var(--color-label-tertiary))]">
                   {pubkey}
@@ -1049,7 +1208,7 @@ export default function ProfilePage() {
 
               <div className="mt-4 rounded-[20px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] p-4">
                 <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-                  Bio
+                  {tApp('profileBio')}
                 </p>
 
                 {profileBlockedByTagr ? (
@@ -1069,9 +1228,44 @@ export default function ProfilePage() {
                   </>
                 ) : (
                   <p className="mt-2 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
-                    {profileLoading || profileModerationLoading ? 'Loading profile bio…' : 'No bio published yet.'}
+                    {profileLoading || profileModerationLoading ? tApp('profileLoadingBio') : tApp('profileNoBio')}
                   </p>
                 )}
+              </div>
+
+              <div className="mt-4 rounded-[20px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+                    Profile Insights
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={aiAssistProvider}
+                      onChange={(event) => {
+                        const next = event.target.value as AiAssistProvider
+                        setAiAssistProvider(next)
+                        setAiAssistProviderState(next)
+                      }}
+                      className="rounded-[10px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg-secondary))] px-2 py-1 text-[11px] text-[rgb(var(--color-label-secondary))]"
+                      aria-label="AI provider"
+                    >
+                      <option value="auto">Auto</option>
+                      <option value="gemma">Gemma</option>
+                      <option value="gemini">Gemini</option>
+                    </select>
+                    <span className="text-[11px] text-[rgb(var(--color-label-tertiary))]">
+                      {profileInsightsLoading ? 'Analyzing…' : profileInsightsSource === 'gemma' ? 'Gemma on-device' : profileInsightsSource === 'gemini' ? 'Gemini API' : 'Fallback'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-2 space-y-2">
+                  {profileInsights.map((insight) => (
+                    <p key={insight} className="text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
+                      {insight}
+                    </p>
+                  ))}
+                </div>
               </div>
 
               {(renderProfile?.website || renderProfile?.lud16 || renderProfile?.lud06 || birthdayLabel) && (
@@ -1133,7 +1327,7 @@ export default function ProfilePage() {
                         NIP-38 Music Status
                       </p>
                       <p className="mt-1 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
-                        Live "currently listening" status for this profile.
+                        Live &quot;currently listening&quot; status for this profile.
                       </p>
                     </div>
                     {isSelf && (
@@ -1155,6 +1349,52 @@ export default function ProfilePage() {
                         : isSelf
                           ? 'No active music status. Publish one from Settings.'
                           : 'No active music status.'}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {(livePresenceLoading || livePresence) && (
+                <div className="mt-4 rounded-[20px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+                        NIP-53 Live Presence
+                      </p>
+                      <p className="mt-1 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
+                        Active live activity and meeting presence for this profile.
+                      </p>
+                    </div>
+                  </div>
+
+                  {livePresence ? (
+                    <div className="mt-4 space-y-3">
+                      <div className="flex flex-wrap items-center gap-2 text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+                        <span>{getLivePresenceKindLabel(livePresence.kind)}</span>
+                        <span>{getLivePresenceStatusLabel(livePresence.status)}</span>
+                        <span>{formatTimestamp(livePresence.createdAt)}</span>
+                      </div>
+
+                      {(livePresence.title || livePresence.summary) && (
+                        <p className="text-[15px] leading-7 text-[rgb(var(--color-label))]">
+                          {livePresence.title ?? livePresence.summary}
+                        </p>
+                      )}
+
+                      {livePresence.streamingUrl && (
+                        <a
+                          href={livePresence.streamingUrl}
+                          target="_blank"
+                          rel="noopener noreferrer nofollow"
+                          className="inline-flex items-center gap-2 rounded-full bg-[rgb(var(--color-fill)/0.09)] px-3 py-1.5 text-[13px] font-medium text-[rgb(var(--color-label))]"
+                        >
+                          Open stream
+                        </a>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="mt-4 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
+                      {livePresenceLoading ? 'Checking live presence…' : 'No active live presence.'}
                     </p>
                   )}
                 </div>

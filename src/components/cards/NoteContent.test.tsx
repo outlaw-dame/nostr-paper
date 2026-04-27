@@ -76,4 +76,40 @@ describe('NoteContent', () => {
     expect(html).toContain('[[[[haxx ready xepicstrange]]]]')
     expect(html).not.toContain('nlogpost:1774054938:')
   })
+
+  it('renders zone presence payloads as readable summaries', () => {
+    const html = renderToStaticMarkup(
+      <StaticRouter location="/">
+        <NoteContent content={JSON.stringify({ type: 'zone_presence', role: 'gateway', metrics: { cpuPct: 1.9 } })} />
+      </StaticRouter>,
+    )
+
+    expect(html).toContain('Zone Presence: gateway (CPU: 1.9%)')
+  })
+
+  it('renders swarm_device_record payloads as readable summaries', () => {
+    const html = renderToStaticMarkup(
+      <StaticRouter location="/">
+        <NoteContent content={JSON.stringify({ type: 'swarm_device_record', deviceName: 'garage-cam-2', status: 'online' })} />
+      </StaticRouter>,
+    )
+
+    expect(html).toContain('Swarm Device: garage-cam-2 (online)')
+  })
+
+  it('renders gateway grant and device gateway grant payload variants', () => {
+    const grantHtml = renderToStaticMarkup(
+      <StaticRouter location="/">
+        <NoteContent content={JSON.stringify({ type: 'gateway_grant_request', requestId: 'gw-grant-9377a145e08cd6cc8c68f6c0' })} />
+      </StaticRouter>,
+    )
+    const deviceGrantHtml = renderToStaticMarkup(
+      <StaticRouter location="/">
+        <NoteContent content={JSON.stringify({ type: 'Device gateway grant request', requestId: 'gw-grant-c3328fe7da20ae3ffacc5ace' })} />
+      </StaticRouter>,
+    )
+
+    expect(grantHtml).toContain('Gateway Grant Request: gw-grant-9377a145e08cd6cc8c68f6c0')
+    expect(deviceGrantHtml).toContain('Device Gateway Grant: gw-grant...')
+  })
 })

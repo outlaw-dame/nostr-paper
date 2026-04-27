@@ -118,6 +118,10 @@ export const Kind = {
   LongFormContent:   30023,
   LongFormDraft:     30024,
   UserStatus:        30315,
+  LiveActivity:      30311,
+  MeetingSpace:      30312,
+  MeetingRoom:       30313,
+  MeetingRoomPresence: 10312,
   AddressableVideo:  34235,
   AddressableShortVideo: 34236,
   FollowSet:         30000,
@@ -138,6 +142,7 @@ export const Kind = {
   ProfileBadges:     30008,
   BadgeDefinition:   30009,
   RelayList:         10002,
+  Highlight:         9802,  // NIP-84 Highlights
   ZapRequest:        9734,
   Zap:               9735,
   NWCInfo:           13194,
@@ -151,6 +156,7 @@ export const Kind = {
   // Blossom / media
   HttpAuth:          27235,  // NIP-98 HTTP Auth
   FileMetadata:      1063,   // NIP-94 File Metadata
+  FileServerPreference: 10096, // NIP-96 preferred file servers
   BlossomServerList: 10063,  // BUD-03 User Server List
 } as const
 
@@ -490,13 +496,32 @@ export interface DBBlossomBlob {
 }
 
 /** Upload state machine */
+export interface BlossomUploadDiagnostic {
+  server: string
+  transport: 'blossom' | 'nip96'
+  success: boolean
+  message?: string
+}
+
 export type BlossomUploadState =
   | { status: 'idle' }
   | { status: 'hashing' }
-  | { status: 'uploading'; server: string; serverIndex: number; serverCount: number }
+  | {
+      status: 'uploading'
+      server: string
+      serverIndex: number
+      serverCount: number
+      diagnostics?: BlossomUploadDiagnostic[]
+    }
   | { status: 'publishing' }
-  | { status: 'done';     blob: BlossomBlob; successfulServers: string[]; warning?: string }
-  | { status: 'error';    error: string }
+  | {
+      status: 'done'
+      blob: BlossomBlob
+      successfulServers: string[]
+      warning?: string
+      diagnostics?: BlossomUploadDiagnostic[]
+    }
+  | { status: 'error'; error: string; diagnostics?: BlossomUploadDiagnostic[] }
 
 // ── Zap Types (NIP-57) ───────────────────────────────────────
 
@@ -546,6 +571,12 @@ export interface SemanticMatch {
   score: number
 }
 
+export interface TopicAssignment {
+  id: string
+  topicId: string
+  keywords: string[]
+}
+
 export type SemanticWorkerRequest =
   | { id: number; type: 'init' }
   | {
@@ -557,6 +588,13 @@ export type SemanticWorkerRequest =
         limit: number
       }
     }
+  | {
+      id: number
+      type: 'cluster'
+      payload: {
+        documents: SemanticDocument[]
+      }
+    }
   | { id: number; type: 'close' }
 
 export type SemanticWorkerResponse =
@@ -564,6 +602,7 @@ export type SemanticWorkerResponse =
       id: number
       result: {
         matches?: SemanticMatch[]
+        topics?: TopicAssignment[]
         model?: string
       }
     }
@@ -588,7 +627,7 @@ export interface ModerationScores {
 
 export interface ModerationDocument {
   id: string
-  kind: 'event' | 'profile'
+  kind: 'event' | 'profile' | 'syndication-entry'
   text: string
   updatedAt: number
 }
@@ -650,6 +689,13 @@ export interface MediaModerationDecision {
   nsfwModel: string | null
   violenceModel: string | null
   policyVersion: string
+  /**
+   * True when the image URL could not be resolved to a classifiable input
+   * (e.g. no media proxy configured for cross-origin URLs). The decision
+   * defaults to 'allow' (fail-open), but callers can surface a "not checked"
+   * indicator rather than silently treating it as a clean pass.
+   */
+  skipped?: boolean
 }
 
 export type MediaModerationWorkerRequest =
@@ -672,30 +718,30 @@ export type MediaModerationWorkerResponse =
     }
   | { id: number; error: string }
 
-// ── Search Router Types ──────────────────────────────────────
+// ── Gemma Worker Types ────────────────────────────────────────
 
-/**
- * Classified intent for a search query.
- * - lexical:  exact-match patterns (hashtags, pubkeys, short keywords)
- * - semantic: conceptual / natural-language queries
- * - hybrid:   mixed intent; use both strategies
- */
-export type SearchIntent = 'lexical' | 'semantic' | 'hybrid'
+export type GemmaModel = 'E2B' | 'E4B'
 
-export type RouterWorkerRequest =
-  | { id: number; type: 'init' }
-  | { id: number; type: 'classify'; payload: { query: string } }
+export interface GemmaInitPayload {
+  /** Absolute URL or path to the .task model file */
+  modelPath: string
+  /** URL to the @mediapipe/tasks-genai WASM directory */
+  wasmPath?: string
+  maxTokens?: number
+  temperature?: number
+  topK?: number
+}
+
+export type GemmaWorkerRequest =
+  | { id: number; type: 'init'; payload: GemmaInitPayload }
+  | { id: number; type: 'generate'; payload: { prompt: string } }
   | { id: number; type: 'close' }
 
-export type RouterWorkerResponse =
-  | {
-      id: number
-      result: {
-        intent?: SearchIntent
-        model?: string
-      }
-    }
-  | { id: number; error: string }
+export type GemmaWorkerResponse =
+  | { id: number; type: 'init_ok' }
+  | { id: number; type: 'token'; partial: string }
+  | { id: number; type: 'done'; fullText: string }
+  | { id: number; type: 'error'; error: string }
 
 // ── Utility Types ────────────────────────────────────────────
 

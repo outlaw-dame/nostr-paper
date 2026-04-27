@@ -8,7 +8,9 @@ import {
 export function useHideNsfwTaggedPosts(): boolean {
   const { currentUser } = useApp()
   const scopeId = useMemo(() => currentUser?.pubkey ?? 'anon', [currentUser?.pubkey])
-  const [enabled, setEnabled] = useState(false)
+  // Default true so the very first render is already filtered — avoids a flash
+  // of NSFW content before the effect reads the persisted setting.
+  const [enabled, setEnabled] = useState(true)
 
   useEffect(() => {
     setEnabled(getHideNsfwTaggedPostsEnabled(scopeId))

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   batchTranslationSegments,
+  hasMeaningfulTranslationText,
   joinTranslatedSegments,
   markdownToPlainText,
   splitTextForTranslation,
@@ -43,5 +44,14 @@ describe('markdownToPlainText', () => {
     expect(markdownToPlainText('# Title\n\n[Link](https://example.com)\n\n- Item')).toBe(
       'Title\n\nLink\n\nItem',
     )
+  })
+})
+
+describe('hasMeaningfulTranslationText', () => {
+  it('ignores emoji-only text and keeps natural language text', () => {
+    expect(hasMeaningfulTranslationText('🔥🔥🔥')).toBe(false)
+    expect(hasMeaningfulTranslationText('   😊   ')).toBe(false)
+    expect(hasMeaningfulTranslationText('Hello')).toBe(true)
+    expect(hasMeaningfulTranslationText('こんにちは')).toBe(true)
   })
 })

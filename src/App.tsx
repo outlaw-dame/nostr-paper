@@ -17,6 +17,7 @@ import { AppProvider } from '@/contexts/AppContext'
 import { useApp } from '@/contexts/app-context'
 import { ComposeSheet } from '@/components/compose/ComposeSheet'
 import { BootSplash } from '@/components/layout/BootSplash'
+import { MusicPresencePublisher } from '@/components/nostr/MusicPresencePublisher'
 import { UpdateBanner } from '@/components/ui/UpdateBanner'
 import { ErrorScreen } from '@/components/ui/ErrorScreen'
 import { OfflineBanner } from '@/components/ui/OfflineBanner'
@@ -67,12 +68,15 @@ const VideoComposePage = lazy(() => import('@/pages/VideoComposePage'))
 const ProfilePage = lazy(() => import('@/pages/ProfilePage'))
 const NotePage    = lazy(() => import('@/pages/NotePage'))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'))
+const DebugPage = lazy(() => import('@/pages/DebugPage'))
 const AppearancePage = lazy(() => import('@/pages/AppearancePage'))
 const ModerationPage = lazy(() => import('@/pages/ModerationPage'))
 const TagFeedsPage = lazy(() => import('@/pages/TagFeedsPage'))
 const FiltersPage  = lazy(() => import('@/pages/FiltersPage'))
 const RelaysPage   = lazy(() => import('@/pages/RelaysPage'))
 const TranslationsPage = lazy(() => import('@/pages/TranslationsPage'))
+const FeedControlsPage = lazy(() => import('@/pages/FeedControlsPage'))
+const SyndicationFeedsPage = lazy(() => import('@/pages/SyndicationFeedsPage'))
 const ActivityPage = lazy(() => import('@/pages/ActivityPage'))
 const OnboardPage  = lazy(() => import('@/pages/OnboardPage'))
 const ExplorePage  = lazy(() => import('@/pages/ExplorePage'))
@@ -84,11 +88,16 @@ function InnerApp() {
   const { status, errors, isOnline } = useApp()
   const location = useLocation()
   const [updateAvailable, setUpdateAvailable] = useState(false)
+  const [applyUpdate, setApplyUpdate] = useState<(() => Promise<void>) | null>(null)
 
   useEffect(() => {
-    const handler = () => setUpdateAvailable(true)
-    window.addEventListener('pwa-update-available', handler)
-    return () => window.removeEventListener('pwa-update-available', handler)
+    const handler = (event: Event) => {
+      const customEvent = event as CustomEvent<{ applyUpdate?: () => Promise<void> }>
+      setApplyUpdate(() => customEvent.detail?.applyUpdate ?? null)
+      setUpdateAvailable(true)
+    }
+    window.addEventListener('pwa-update-available', handler as EventListener)
+    return () => window.removeEventListener('pwa-update-available', handler as EventListener)
   }, [])
 
   if (status === 'idle' || status === 'booting') {
@@ -147,7 +156,12 @@ function InnerApp() {
   return (
     <>
       {!isOnline && <OfflineBanner />}
-      {updateAvailable && <UpdateBanner />}
+      {updateAvailable && (
+        <UpdateBanner
+          {...(applyUpdate ? { onUpdate: applyUpdate } : {})}
+          onDismiss={() => setUpdateAvailable(false)}
+        />
+      )}
 
       <Suspense fallback={<BootSplash minimal />}>
         {/*
@@ -173,9 +187,12 @@ function InnerApp() {
             <Route path="/profile/:pubkey"     element={<ProfilePage />} />
             <Route path="/activity"            element={<ActivityPage />} />
             <Route path="/settings"            element={<SettingsPage />} />
+            <Route path="/settings/debug"      element={<DebugPage />} />
             <Route path="/settings/appearance" element={<AppearancePage />} />
             <Route path="/settings/moderation" element={<ModerationPage />} />
             <Route path="/settings/tag-feeds"  element={<TagFeedsPage />} />
+            <Route path="/settings/feed-controls" element={<FeedControlsPage />} />
+            <Route path="/settings/syndication" element={<SyndicationFeedsPage />} />
             <Route path="/settings/translations" element={<TranslationsPage />} />
             <Route path="/settings/moderation/filters" element={<FiltersPage />} />
             <Route path="/settings/relays"     element={<RelaysPage />} />
@@ -188,6 +205,7 @@ function InnerApp() {
       </Suspense>
 
       <ComposeSheet />
+      <MusicPresencePublisher />
     </>
   )
 }
