@@ -10,8 +10,9 @@
  *
  * Result ordering:
  *   - Local results: BM25 relevance rank, then recency (from queryEventsFts)
- *   - Merged results: local list first, relay-only additions appended and
- *     sorted by created_at DESC (relay rank is unknown after the merge)
+ *   - Merged results: local list first, relay-only additions appended in
+ *     relay insertion order (NIP-50 relays sort by relevance, not time —
+ *     preserving that order is more faithful than re-sorting by created_at)
  *
  * Profile search:
  *   - Runs in parallel with event search against profiles_fts (migration v3)
@@ -290,16 +291,15 @@ export function useSearch(opts: SearchOptions = {}): SearchState & {
   useEffect(() => () => { abortRef.current?.abort() }, [])
 
   // ── Merge + deduplicate ───────────────────────────────────
-  // Local results come first (ordered by FTS rank from the DB).
-  // Relay-only results (not in the local set) are appended and sorted
-  // by recency so they integrate smoothly into the list.
+  // Local results come first (ordered by FTS BM25 rank from the DB).
+  // Relay-only results (not in the local set) are appended in relay
+  // insertion order. NIP-50 relays are REQUIRED to sort by relevance, so
+  // preserving that order is more faithful than re-sorting by recency.
   const events = useMemo<NostrEvent[]>(() => {
     if (relayEvents.length === 0) return localEvents
 
     const seen = new Set(localEvents.map(e => e.id))
-    const relayOnly = relayEvents
-      .filter(e => !seen.has(e.id))
-      .sort((a, b) => b.created_at - a.created_at)
+    const relayOnly = relayEvents.filter(e => !seen.has(e.id))
 
     return [...localEvents, ...relayOnly]
   }, [localEvents, relayEvents])
