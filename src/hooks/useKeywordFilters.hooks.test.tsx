@@ -110,7 +110,7 @@ function makeProfile(): Profile {
 function CrudHarness({
   onSnapshot,
 }: {
-  onSnapshot: (state: ReturnType<typeof useKeywordFilters>) => void
+  onSnapshot: (state: KeywordFiltersState) => void
 }) {
   const state = useKeywordFilters()
 
@@ -119,6 +119,15 @@ function CrudHarness({
   }, [state, onSnapshot])
 
   return null
+}
+
+type KeywordFiltersState = {
+  filters: KeywordFilter[]
+  loading: boolean
+  add: (input: CreateFilterInput) => Promise<KeywordFilter>
+  update: (id: string, patch: Partial<Omit<KeywordFilter, 'id' | 'createdAt'>>) => Promise<void>
+  remove: (id: string) => Promise<void>
+  toggle: (id: string) => Promise<void>
 }
 
 function CheckHarness({
@@ -223,7 +232,7 @@ describe('useKeywordFilters hooks', () => {
   })
 
   it('supports CRUD and toggle with singleton refresh updates', async () => {
-    let latest: ReturnType<typeof useKeywordFilters> | null = null
+    let latest: unknown = null
 
     await act(async () => {
       root.render(
@@ -239,25 +248,27 @@ describe('useKeywordFilters hooks', () => {
     await syncFilters()
 
     expect(latest).not.toBeNull()
-    if (!latest) throw new Error('expected hook state to be available')
-    expect(latest.filters).toHaveLength(1)
+    if (!latest || typeof latest !== 'object' || !('filters' in latest)) {
+      throw new Error('expected hook state to be available')
+    }
+    expect((latest as KeywordFiltersState).filters).toHaveLength(1)
 
     await act(async () => {
-      await latest?.toggle('f1')
+      await (latest as KeywordFiltersState | null)?.toggle('f1')
       await flush()
     })
 
     expect(mockRefs.updateFilter).toHaveBeenCalledWith('f1', { enabled: false })
 
     await act(async () => {
-      await latest?.toggle('missing-id')
+      await (latest as KeywordFiltersState | null)?.toggle('missing-id')
       await flush()
     })
 
     expect(mockRefs.updateFilter).toHaveBeenCalledTimes(1)
 
     await act(async () => {
-      await latest?.add({
+      await (latest as KeywordFiltersState | null)?.add({
         term: 'abuse',
         action: 'warn',
         scope: 'content',
@@ -266,8 +277,8 @@ describe('useKeywordFilters hooks', () => {
         enabled: true,
         expiresAt: null,
       })
-      await latest?.update('f2', { action: 'block' })
-      await latest?.remove('f2')
+      await (latest as KeywordFiltersState | null)?.update('f2', { action: 'block' })
+      await (latest as KeywordFiltersState | null)?.remove('f2')
       await flush()
     })
 
@@ -280,8 +291,10 @@ describe('useKeywordFilters hooks', () => {
     await syncFilters()
 
     expect(latest).not.toBeNull()
-    if (!latest) throw new Error('expected hook state to be available after refresh')
-    expect(latest.filters).toHaveLength(2)
+    if (!latest || typeof latest !== 'object' || !('filters' in latest)) {
+      throw new Error('expected hook state to be available after refresh')
+    }
+    expect((latest as KeywordFiltersState).filters).toHaveLength(2)
   })
 
   it('returns null result while loading/empty and delegates to matcher when filters exist', async () => {
