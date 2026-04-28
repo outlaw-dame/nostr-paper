@@ -200,10 +200,19 @@ export function sumZapMsats(receipts: ParsedZapReceipt[]): number {
   return receipts.reduce((sum, r) => sum + (r.amountMsats ?? 0), 0)
 }
 
+function formatCompactFloor(value: number, unit: number, suffix: string): string {
+  const scaled = value / unit
+  const flooredTenths = Math.floor(scaled * 10) / 10
+  const rendered = Number.isInteger(flooredTenths)
+    ? String(Math.trunc(flooredTenths))
+    : flooredTenths.toFixed(1)
+  return `${rendered}${suffix}`
+}
+
 export function formatZapAmount(msats: number): string {
   const sats = Math.floor(msats / 1000)
-  if (sats >= 1_000_000) return `${(sats / 1_000_000).toFixed(1)}M`
-  if (sats >= 1_000) return `${(sats / 1_000).toFixed(0)}k`
+  if (sats >= 1_000_000) return formatCompactFloor(sats, 1_000_000, 'M')
+  if (sats >= 1_000) return formatCompactFloor(sats, 1_000, 'k')
   return String(sats)
 }
 
