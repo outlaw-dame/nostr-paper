@@ -11,7 +11,23 @@ interface MockRefs {
   rankSemanticDocuments: ReturnType<typeof vi.fn>
 }
 
-let mockRefs: MockRefs
+const mockRefs: MockRefs = {
+  currentFilters: [
+    {
+      id: 'filter-1',
+      term: 'violence',
+      action: 'hide',
+      scope: 'content',
+      wholeWord: false,
+      semantic: true,
+      enabled: true,
+      createdAt: 1,
+      expiresAt: null,
+    },
+  ] as KeywordFilter[],
+  loadFilters: vi.fn<() => Promise<KeywordFilter[]>>(),
+  rankSemanticDocuments: vi.fn(),
+}
 
 vi.mock('@/lib/filters/systemFilters', () => ({
   SYSTEM_KEYWORD_FILTERS: [],
@@ -35,30 +51,14 @@ vi.mock('@/lib/filters/semanticSettings', () => ({
   SEMANTIC_FILTER_SETTINGS_UPDATED_EVENT: 'nostr-paper:semantic-filter-settings-updated',
 }))
 
-mockRefs = {
-  currentFilters: [
-    {
-      id: 'filter-1',
-      term: 'violence',
-      action: 'hide',
-      scope: 'content',
-      wholeWord: false,
-      semantic: true,
-      enabled: true,
-      createdAt: 1,
-      expiresAt: null,
-    },
-  ] as KeywordFilter[],
-  loadFilters: vi.fn<() => Promise<KeywordFilter[]>>(),
-  rankSemanticDocuments: vi.fn(),
-}
-
 mockRefs.loadFilters.mockImplementation(async () => mockRefs.currentFilters)
 
+/* eslint-disable no-unused-vars */
 interface HarnessProps {
   events: NostrEvent[]
-  onResult: (result: Map<string, FilterCheckResult>) => void
+  onResult(result: Map<string, FilterCheckResult>): void
 }
+/* eslint-enable no-unused-vars */
 
 function Harness({ events, onResult }: HarnessProps) {
   const result = useSemanticFiltering(events)

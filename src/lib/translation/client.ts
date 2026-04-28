@@ -67,7 +67,9 @@ const LIBRE_MAX_SEGMENTS_PER_REQUEST = 20
 const CACHE_LIMIT = 150
 const translationCache = new Map<string, TranslationResult>()
 const inflightTranslations = new Map<string, Promise<TranslationResult>>()
-let opusMtModulePromise: Promise<typeof import('@/lib/translation/engines/opusMt')> | null = null
+const importOpusMtModule = () => import('@/lib/translation/engines/opusMt')
+type OpusMtModule = Awaited<ReturnType<typeof importOpusMtModule>>
+let opusMtModulePromise: Promise<OpusMtModule> | null = null
 
 function getDeepLProxyUrl(): string | null {
   return import.meta.env.DEV ? DEEPL_DEV_PROXY_URL : (DEEPL_PROD_PROXY_URL ?? null)
@@ -77,8 +79,8 @@ function getLibreProxyUrl(): string | null {
   return import.meta.env.DEV ? LIBRE_DEV_PROXY_URL : (LIBRE_PROD_PROXY_URL ?? null)
 }
 
-async function loadOpusMtModule(): Promise<typeof import('@/lib/translation/engines/opusMt')> {
-  opusMtModulePromise ??= import('@/lib/translation/engines/opusMt')
+async function loadOpusMtModule(): Promise<OpusMtModule> {
+  opusMtModulePromise ??= importOpusMtModule()
   return opusMtModulePromise
 }
 

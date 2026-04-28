@@ -264,7 +264,6 @@ export function useSyndicationFeedModeration(feed: SyndicationFeed | null): {
           .map((item) => buildSyndicationEntryModerationDocument(item, feedSourceUrl))
           .filter((doc): doc is ModerationDocument => doc !== null)
       : [],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [feed, feedSourceUrl],
   )
 

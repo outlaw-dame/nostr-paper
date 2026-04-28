@@ -29,7 +29,7 @@ import { AuthorRow } from '@/components/profile/AuthorRow'
 import { TwemojiText } from '@/components/ui/TwemojiText'
 import { ExpandedNote } from './ExpandedNote'
 import { NoteContent } from './NoteContent'
-import { getQuotePostBody, getRepostPreviewText, parseQuoteTags } from '@/lib/nostr/repost'
+import { getRepostPreviewText, parseQuoteTags } from '@/lib/nostr/repost'
 import { getProxyInfo, getProtocolMeta } from '@/lib/nostr/proxyTag'
 import { recordMediaUrlFailure, recordMediaUrlSuccess, shouldAttemptMediaUrl } from '@/lib/media/failureBackoff'
 import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
@@ -76,7 +76,6 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
     video,
     repost,
     thread,
-    attachments,
     contentWarning,
     quoteBody,
     isArticleStory,
