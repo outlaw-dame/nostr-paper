@@ -9,6 +9,7 @@ const pg = new Pool({ connectionString: process.env.POSTGRES_URL });
 
 const INGEST_STREAM = process.env.REDIS_STREAM || 'events.ingest';
 const EMBED_STREAM = process.env.EMBED_STREAM || 'events.embed';
+const DLQ_STREAM = process.env.LEXICAL_DLQ_STREAM || 'events.ingest.dlq';
 const GROUP = 'lexical-index';
 const CONSUMER = `worker-${Math.random().toString(36).slice(2)}`;
 const MAX_RETRIES = Number(process.env.LEXICAL_MAX_RETRIES || 5);
@@ -72,6 +73,23 @@ async function enqueueEmbeddingJob(eventId: string, text: string) {
       event_id: eventId,
       text
     })
+  ));
+}
+
+async function sendToDlq(id: string, payload: string, err: unknown) {
+  await withRetry('sendLexicalToDlq', () => redis.xadd(
+    DLQ_STREAM,
+    '*',
+    'source_stream',
+    INGEST_STREAM,
+    'source_group',
+    GROUP,
+    'source_id',
+    id,
+    'error',
+    err instanceof Error ? err.message : String(err),
+    'payload',
+    payload
   ));
 }
 
@@ -235,6 +253,12 @@ async function run() {
           await redis.xack(INGEST_STREAM, GROUP, id);
         } catch (err) {
           log.error({ err, id }, 'failed processing lexical message');
+          try {
+            await sendToDlq(id, payload, err);
+            await redis.xack(INGEST_STREAM, GROUP, id);
+          } catch (dlqErr) {
+            log.error({ err: dlqErr, id }, 'failed routing lexical message to dlq');
+          }
         }
       }
     }

@@ -14,6 +14,15 @@ const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 20;
 const LOG_RELAY_REQS = process.env.LOG_RELAY_REQS === 'true';
 
+function sanitizeLimit(rawLimit: unknown): number {
+  const parsed = safeNumber(rawLimit);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_LIMIT;
+  }
+  const normalized = Math.trunc(parsed as number);
+  return Math.max(1, Math.min(normalized, MAX_LIMIT));
+}
+
 /**
  * Sanitizers (strict)
  */
@@ -73,10 +82,7 @@ function setupWebSocketServer() {
           const search = safeString(filter.search);
           if (!search) continue;
 
-          const limit = Math.min(
-            safeNumber(filter.limit) ?? DEFAULT_LIMIT,
-            MAX_LIMIT
-          );
+          const limit = sanitizeLimit(filter.limit);
 
           const kinds = safeArray<number>(filter.kinds);
           const authors = safeArray<string>(filter.authors);

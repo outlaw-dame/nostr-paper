@@ -10,6 +10,7 @@ const ConfigSchema = z.object({
   REPLAY_WINDOW_SEC: z.coerce.number().int().positive().default(10),
   MAX_EVENT_BYTES: z.coerce.number().int().positive().default(131072),
   MAX_TAGS: z.coerce.number().int().positive().default(1000),
+  MAX_MESSAGE_QUEUE: z.coerce.number().int().positive().default(5000),
   LOG_LEVEL: z.enum(['trace','debug','info','warn','error','fatal']).default('info')
 });
 

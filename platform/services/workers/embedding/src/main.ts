@@ -9,6 +9,7 @@ const redis = new Redis(process.env.REDIS_URL!);
 const pg = new Client({ connectionString: process.env.POSTGRES_URL });
 
 const STREAM = process.env.EMBED_STREAM || 'events.embed';
+const DLQ_STREAM = process.env.EMBED_DLQ_STREAM || 'events.embed.dlq';
 const GROUP = 'embedding';
 const CONSUMER = `embed-${Math.random().toString(36).slice(2)}`;
 const MODEL_ID = process.env.EMBEDDING_MODEL_ID || 'Xenova/all-MiniLM-L6-v2';
@@ -93,6 +94,23 @@ function toPgVector(values: number[]): string {
   return `[${values.join(',')}]`;
 }
 
+async function sendToDlq(id: string, payload: string, err: unknown) {
+  await withRetry('sendEmbedToDlq', () => redis.xadd(
+    DLQ_STREAM,
+    '*',
+    'source_stream',
+    STREAM,
+    'source_group',
+    GROUP,
+    'source_id',
+    id,
+    'error',
+    err instanceof Error ? err.message : String(err),
+    'payload',
+    payload
+  ));
+}
+
 async function processMessage(payload: string) {
   const job = parseJob(payload);
   const embedding = await withRetry('embedText', () => embedText(job.text));
@@ -171,6 +189,12 @@ async function run() {
             await withRetry('xack', () => redis.xack(STREAM, GROUP, id));
           } catch (err) {
             log.error({ err, id }, 'embedding failed');
+            try {
+              await sendToDlq(id, payload, err);
+              await withRetry('xack', () => redis.xack(STREAM, GROUP, id));
+            } catch (dlqErr) {
+              log.error({ err: dlqErr, id }, 'failed routing embedding message to dlq');
+            }
           }
         }
       }

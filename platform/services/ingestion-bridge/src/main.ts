@@ -108,7 +108,13 @@ function connectLoop() {
       ws.send(JSON.stringify(req));
 
       let messageQueue = Promise.resolve();
+      let queuedMessages = 0;
       ws.on('message', (data) => {
+        if (queuedMessages >= config.MAX_MESSAGE_QUEUE) {
+          logger.warn({ maxQueue: config.MAX_MESSAGE_QUEUE }, 'dropping message due to queue backpressure');
+          return;
+        }
+        queuedMessages += 1;
         messageQueue = messageQueue
           .then(async () => {
             try {
@@ -129,6 +135,9 @@ function connectLoop() {
             } catch (err) {
               logger.error({ err }, 'message handling error');
             }
+          })
+          .finally(() => {
+            queuedMessages = Math.max(0, queuedMessages - 1);
           })
           .catch((err) => {
             logger.error({ err }, 'message queue error');
