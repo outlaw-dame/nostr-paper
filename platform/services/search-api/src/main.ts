@@ -1,11 +1,11 @@
 import WebSocket, { WebSocketServer } from 'ws';
-import { Client } from 'pg';
+import { Pool } from 'pg';
 import pino from 'pino';
 import { embedText, warmupEmbedder } from 'semantic-embedder';
 
 const log = pino({ level: process.env.LOG_LEVEL || 'info' });
 
-const db = new Client({
+const db = new Pool({
   connectionString: process.env.POSTGRES_URL
 });
 
@@ -50,10 +50,11 @@ function toPgVector(values: number[]): string {
   return `[${values.join(',')}]`;
 }
 
-const wss = new WebSocketServer({ port: PORT });
+function setupWebSocketServer() {
+  const wss = new WebSocketServer({ port: PORT });
 
-wss.on('connection', (ws) => {
-  ws.on('message', async (data) => {
+  wss.on('connection', (ws) => {
+    ws.on('message', async (data) => {
     try {
       const msg = JSON.parse(data.toString());
       if (!Array.isArray(msg)) return;
@@ -225,17 +226,21 @@ wss.on('connection', (ws) => {
         ws.send(JSON.stringify(['NOTICE', 'invalid request']));
       } catch {}
     }
+    });
+
+    ws.on('error', (err) => {
+      log.error({ err }, 'ws error');
+    });
   });
 
-  ws.on('error', (err) => {
-    log.error({ err }, 'ws error');
-  });
-});
+  return wss;
+}
 
 async function main() {
-  await db.connect();
+  await db.query('SELECT 1');
   log.info('warming semantic embedder');
   await warmupEmbedder();
+  setupWebSocketServer();
   log.info(`search relay (hybrid + RRF + pagination) running on :${PORT}`);
 }
 

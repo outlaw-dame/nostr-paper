@@ -14,6 +14,7 @@ const DEDUPE_PREFIX = `ingestion-bridge:${config.BRIDGE_NAME}:dedupe:`;
 
 let ws: WebSocket | null = null;
 let stopped = false;
+let lastPersistedTs: number | null = null;
 
 function buildSince(nowSec: number, lastTs: number | null) {
   if (lastTs == null) {
@@ -61,7 +62,12 @@ async function handleEvent(raw: any) {
   };
 
   await publishEvent(redis, config.REDIS_STREAM, envelope);
-  await setState(redis, STATE_KEY, e.created_at);
+
+  // Keep redis state monotonic and avoid redundant writes under event bursts.
+  if (lastPersistedTs == null || e.created_at > lastPersistedTs) {
+    await setState(redis, STATE_KEY, e.created_at);
+    lastPersistedTs = e.created_at;
+  }
 }
 
 function connectLoop() {
@@ -70,6 +76,7 @@ function connectLoop() {
   const run = async () => {
     while (!stopped) {
       const lastTs = await getState(redis, STATE_KEY);
+      lastPersistedTs = lastTs;
       const nowSec = Math.floor(Date.now() / 1000);
       const since = buildSince(nowSec, lastTs);
 
@@ -100,25 +107,32 @@ function connectLoop() {
       const req = ['REQ', subId, { since }];
       ws.send(JSON.stringify(req));
 
-      ws.on('message', async (data) => {
-        try {
-          const msg = JSON.parse(data.toString());
-          const [type, sid, payload] = msg;
+      let messageQueue = Promise.resolve();
+      ws.on('message', (data) => {
+        messageQueue = messageQueue
+          .then(async () => {
+            try {
+              const msg = JSON.parse(data.toString());
+              const [type, sid, payload] = msg;
 
-          if (type === 'EVENT' && sid === subId) {
-            await handleEvent(payload);
-          }
+              if (type === 'EVENT' && sid === subId) {
+                await handleEvent(payload);
+              }
 
-          if (type === 'EOSE' && sid === subId) {
-            logger.info('initial backfill complete (EOSE)');
-          }
+              if (type === 'EOSE' && sid === subId) {
+                logger.info('initial backfill complete (EOSE)');
+              }
 
-          if (type === 'NOTICE') {
-            logger.warn({ notice: payload }, 'relay notice');
-          }
-        } catch (err) {
-          logger.error({ err }, 'message handling error');
-        }
+              if (type === 'NOTICE') {
+                logger.warn({ notice: payload }, 'relay notice');
+              }
+            } catch (err) {
+              logger.error({ err }, 'message handling error');
+            }
+          })
+          .catch((err) => {
+            logger.error({ err }, 'message queue error');
+          });
       });
 
       await new Promise<void>((resolve) => {

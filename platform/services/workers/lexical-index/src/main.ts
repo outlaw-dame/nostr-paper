@@ -1,11 +1,11 @@
 import Redis from 'ioredis';
-import { Client } from 'pg';
+import { Pool } from 'pg';
 import pino from 'pino';
 
 const log = pino({ level: process.env.LOG_LEVEL || 'info' });
 
 const redis = new Redis(process.env.REDIS_URL!);
-const pg = new Client({ connectionString: process.env.POSTGRES_URL });
+const pg = new Pool({ connectionString: process.env.POSTGRES_URL });
 
 const INGEST_STREAM = process.env.REDIS_STREAM || 'events.ingest';
 const EMBED_STREAM = process.env.EMBED_STREAM || 'events.embed';
@@ -195,7 +195,7 @@ async function processMessage(payload: string) {
 }
 
 async function run() {
-  await pg.connect();
+  await pg.query('SELECT 1');
   await ensureGroup();
 
   while (true) {

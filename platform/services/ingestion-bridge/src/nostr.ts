@@ -1,7 +1,7 @@
 import { verifyEvent } from 'nostr-tools/pure';
 import { z } from 'zod';
 
-const TagSchema = z.tuple([z.string(), z.string().optional(), z.string().optional(), z.string().optional()]);
+const TagSchema = z.array(z.string());
 
 export const NostrEventSchema = z.object({
   id: z.string().length(64),
