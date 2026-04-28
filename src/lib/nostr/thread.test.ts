@@ -2,6 +2,9 @@ import { finalizeEvent, generateSecretKey } from 'nostr-tools'
 import { naddrEncode } from 'nostr-tools/nip19'
 import {
   getConversationRootReference,
+  hasQuoteTags,
+  isQuoteRepost,
+  isTextNoteReply,
   isThreadComment,
   parseCommentEvent,
   parseNumberedThreadMarker,
@@ -235,5 +238,123 @@ describe('getConversationRootReference', () => {
       kind: Kind.LongFormContent,
       address,
     })
+  })
+})
+
+describe('isTextNoteReply', () => {
+  it('returns true for a kind-1 event with a marked root e-tag', () => {
+    const reply = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 1_720_000_000,
+      tags: [['e', '1'.repeat(64), '', 'root', '2'.repeat(64)]],
+      content: 'reply',
+    })
+    expect(isTextNoteReply(reply)).toBe(true)
+  })
+
+  it('returns true for a kind-1 event with a legacy positional e-tag', () => {
+    const reply = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 1_720_000_100,
+      tags: [['e', '1'.repeat(64), 'wss://relay.example.com']],
+      content: 'legacy reply',
+    })
+    expect(isTextNoteReply(reply)).toBe(true)
+  })
+
+  it('returns false for a kind-1 event with no e-tags', () => {
+    const note = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 1_720_000_200,
+      tags: [],
+      content: 'standalone note',
+    })
+    expect(isTextNoteReply(note)).toBe(false)
+  })
+
+  it('returns false for a non-kind-1 event', () => {
+    const thread = signEvent({
+      kind: Kind.Thread,
+      created_at: 1_720_000_300,
+      tags: [['title', 'Test']],
+      content: 'a thread',
+    })
+    expect(isTextNoteReply(thread)).toBe(false)
+  })
+})
+
+describe('hasQuoteTags', () => {
+  it('returns true when the event has a q-tag', () => {
+    const event = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 1_720_000_000,
+      tags: [['q', '1'.repeat(64), 'wss://relay.example.com', '2'.repeat(64)]],
+      content: 'quoting nostr:note1...',
+    })
+    expect(hasQuoteTags(event)).toBe(true)
+  })
+
+  it('returns false when there are no q-tags', () => {
+    const event = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 1_720_000_100,
+      tags: [['e', '1'.repeat(64), '', 'root']],
+      content: 'plain reply',
+    })
+    expect(hasQuoteTags(event)).toBe(false)
+  })
+})
+
+describe('isQuoteRepost', () => {
+  it('returns true for a pure quote (q-tag, no reply e-tags)', () => {
+    const quote = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 1_720_000_000,
+      tags: [['q', '1'.repeat(64), 'wss://relay.example.com', '2'.repeat(64)]],
+      content: 'look at this: nostr:note1...',
+    })
+    expect(isQuoteRepost(quote)).toBe(true)
+  })
+
+  it('returns false for a quote-reply (has both q-tag and reply e-tags)', () => {
+    const quoteReply = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 1_720_000_100,
+      tags: [
+        ['e', '1'.repeat(64), '', 'root', '2'.repeat(64)],
+        ['q', '3'.repeat(64), 'wss://relay.example.com', '4'.repeat(64)],
+      ],
+      content: 'reply with quote',
+    })
+    // isTextNoteReply + hasQuoteTags both true; isQuoteRepost should be false
+    expect(isTextNoteReply(quoteReply)).toBe(true)
+    expect(hasQuoteTags(quoteReply)).toBe(true)
+    expect(isQuoteRepost(quoteReply)).toBe(false)
+  })
+
+  it('returns false for a plain reply (no q-tags)', () => {
+    const reply = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 1_720_000_200,
+      tags: [['e', '1'.repeat(64), '', 'root', '2'.repeat(64)]],
+      content: 'reply',
+    })
+    expect(isQuoteRepost(reply)).toBe(false)
+  })
+
+  it('returns false for a non-kind-1 event even with q-tags', () => {
+    const comment = signEvent({
+      kind: Kind.Comment,
+      created_at: 1_720_000_300,
+      tags: [
+        ['K', '1'],
+        ['E', '1'.repeat(64), '', '2'.repeat(64)],
+        ['k', '1'],
+        ['e', '1'.repeat(64), '', '2'.repeat(64)],
+        ['q', '3'.repeat(64)],
+      ],
+      content: 'comment with quote ref',
+    })
+    expect(isQuoteRepost(comment)).toBe(false)
   })
 })
