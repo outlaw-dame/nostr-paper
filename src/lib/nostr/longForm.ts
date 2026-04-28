@@ -15,9 +15,14 @@
  * Spec: https://github.com/nostr-protocol/nips/blob/master/23.md
  */
 
+import { NDKEvent } from '@nostr-dev-kit/ndk'
 import { naddrEncode, decodeNostrURI } from 'nostr-tools/nip19'
+import { insertEvent } from '@/lib/db/nostr'
 import { parseAddressCoordinate } from '@/lib/nostr/addressable'
+import { withOptionalClientTag } from '@/lib/nostr/appHandlers'
+import { getNDK } from '@/lib/nostr/ndk'
 import { getNip21Route } from '@/lib/nostr/nip21'
+import { withRetry } from '@/lib/retry'
 import {
   extractURLs,
   isSafeMediaURL,
@@ -428,4 +433,105 @@ export function getNostrUriRoute(uri: string): string | null {
 
 export function isSafeMarkdownLinkDestination(value: string): boolean {
   return typeof value === 'string' && isSafeHttpUrlOrNostr(value)
+}
+
+// ── Publish ──────────────────────────────────────────────────
+
+export interface PublishLongFormOptions {
+  /** Unique addressable identifier (`d` tag). Required. */
+  identifier: string
+  /** Markdown body content. Required. */
+  content: string
+  /** Article title. */
+  title?: string
+  /** Short excerpt / summary. */
+  summary?: string
+  /** Cover image URL (must be a safe media URL). */
+  image?: string
+  /** Hashtags — each normalised to lowercase, max MAX_HASHTAGS. */
+  hashtags?: string[]
+  /** Unix timestamp override for `published_at`. Defaults to now. */
+  publishedAt?: number
+  /**
+   * When true publish kind-30024 (NIP-23 draft).
+   * When false (default) publish kind-30023 (published article).
+   */
+  isDraft?: boolean
+  signal?: AbortSignal
+}
+
+/**
+ * Sign and publish a NIP-23 long-form article (kind-30023) or draft (kind-30024).
+ *
+ * Requires a NIP-07 signer to be available via NDK.
+ * Returns the raw published event.
+ */
+export async function publishLongForm({
+  identifier,
+  content,
+  title,
+  summary,
+  image,
+  hashtags = [],
+  publishedAt,
+  isDraft = false,
+  signal,
+}: PublishLongFormOptions): Promise<NostrEvent> {
+  const ndk = getNDK()
+  if (!ndk.signer) {
+    throw new Error('No signer available — install a NIP-07 extension to publish articles.')
+  }
+
+  const normalizedId = normalizeLongFormIdentifier(identifier)
+  if (!normalizedId) {
+    throw new Error('Identifier (`d` tag) is required and must not be empty or contain control characters.')
+  }
+
+  const now = Math.floor(Date.now() / 1000)
+  const publishedAtValue = publishedAt !== undefined ? publishedAt : now
+
+  const safeImage = image && isSafeMediaURL(image) ? image : undefined
+
+  const normalizedHashtags = [...new Set(
+    hashtags
+      .map((h) => sanitizeText(h).trim().toLowerCase())
+      .filter((h) => h.length > 0),
+  )].slice(0, MAX_HASHTAGS)
+
+  const tags: string[][] = [
+    ['d', normalizedId],
+    ...(title   ? [['title',        sanitizeText(title).trim().slice(0, MAX_TITLE_CHARS)]]   : []),
+    ...(summary ? [['summary',      sanitizeText(summary).trim().slice(0, MAX_SUMMARY_CHARS)]] : []),
+    ...(safeImage ? [['image', safeImage]] : []),
+    ['published_at', String(publishedAtValue)],
+    ...normalizedHashtags.map((h) => ['t', h]),
+  ]
+
+  const tagsWithClient = await withOptionalClientTag(tags, signal)
+
+  const event = new NDKEvent(ndk)
+  event.kind = isDraft ? Kind.LongFormDraft : Kind.LongFormContent
+  event.content = content
+  event.tags = tagsWithClient
+
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+  await event.sign()
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+
+  await withRetry(
+    async () => {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+      await event.publish()
+    },
+    {
+      maxAttempts: 2,
+      baseDelayMs: 750,
+      maxDelayMs: 2_500,
+      ...(signal ? { signal } : {}),
+    },
+  )
+
+  const rawEvent = event.rawEvent() as unknown as NostrEvent
+  await insertEvent(rawEvent)
+  return rawEvent
 }

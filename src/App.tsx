@@ -80,6 +80,12 @@ const SyndicationFeedsPage = lazy(() => import('@/pages/SyndicationFeedsPage'))
 const ActivityPage = lazy(() => import('@/pages/ActivityPage'))
 const OnboardPage  = lazy(() => import('@/pages/OnboardPage'))
 const ExplorePage  = lazy(() => import('@/pages/ExplorePage'))
+const ArticleComposePage = lazy(() => import('@/pages/ArticleComposePage'))
+
+const COMPOSE_SHEET_ROUTE = {
+  pathname: '/',
+  search: '?compose=1',
+} as const
 
 // ── Inner App (access to context) ────────────────────────────
 
@@ -170,6 +176,12 @@ function InnerApp() {
           <Routes location={location} key={location.pathname}>
             <Route path="/"                   element={<FeedPage />} />
             <Route path="/t/:tag"             element={<FeedPage />} />
+            <Route path="/compose"            element={<Navigate to={COMPOSE_SHEET_ROUTE} replace />} />
+            <Route path="/article/new"        element={<ArticleComposePage />} />
+            <Route path="/compose/article"    element={<Navigate to="/article/new" replace />} />
+            <Route path="/compose/video"      element={<Navigate to="/video/new" replace />} />
+            <Route path="/compose/poll"       element={<Navigate to="/poll/new" replace />} />
+            <Route path="/compose/list"       element={<Navigate to="/list/new" replace />} />
             <Route path="/search"             element={<SearchPage />} />
             <Route path="/explore"            element={<ExplorePage />} />
             <Route path="/article/:pubkey/:identifier" element={<ArticlePage />} />
