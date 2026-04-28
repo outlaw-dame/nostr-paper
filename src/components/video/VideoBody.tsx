@@ -139,7 +139,6 @@ export function VideoBody({ event, profile, className = '' }: VideoBodyProps) {
       </article>
     )
   }
-
   const requiresReveal = contentWarning !== null || followStatus === false
   const isAudioVariant = (selectedVariant?.mimeType ?? '').startsWith('audio/')
   const trackSources = video.textTracks.filter(track => isSafeURL(track.reference))

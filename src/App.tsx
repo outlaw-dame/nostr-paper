@@ -80,7 +80,6 @@ const SyndicationFeedsPage = lazy(() => import('@/pages/SyndicationFeedsPage'))
 const ActivityPage = lazy(() => import('@/pages/ActivityPage'))
 const OnboardPage  = lazy(() => import('@/pages/OnboardPage'))
 const ExplorePage  = lazy(() => import('@/pages/ExplorePage'))
-const LiteRtPrototypePage = lazy(() => import('@/pages/LiteRtPrototypePage'))
 
 // ── Inner App (access to context) ────────────────────────────
 
@@ -128,13 +127,12 @@ function InnerApp() {
             onClick={async () => {
               try {
                 const root = await navigator.storage.getDirectory()
-                const rootWithKeys = root as FileSystemDirectoryHandle & { keys(): AsyncIterable<string> }
-                for await (const name of rootWithKeys.keys()) {
+                for await (const name of (root as unknown as { keys: () => AsyncIterable<string> }).keys()) {
                   await root.removeEntry(name, { recursive: true })
                 }
                 window.location.reload()
               } catch {
-                alert('Failed to clear data automatically. Please clear site data in DevTools > Application.')
+                window.alert('Failed to clear data automatically. Please clear site data in DevTools > Application.')
               }
             }}
             className="mt-8 rounded-full bg-[rgb(var(--color-label))] px-6 py-3 text-[15px] font-medium text-[rgb(var(--color-bg))] active:opacity-80"
@@ -196,7 +194,6 @@ function InnerApp() {
             <Route path="/settings/translations" element={<TranslationsPage />} />
             <Route path="/settings/moderation/filters" element={<FiltersPage />} />
             <Route path="/settings/relays"     element={<RelaysPage />} />
-            <Route path="/settings/ai/litert-prototype" element={<LiteRtPrototypePage />} />
             <Route path="/filters"             element={<Navigate to="/settings/moderation/filters" replace />} />
             <Route path="/onboard"             element={<OnboardPage />} />
             <Route path="*"                    element={<Navigate to="/" replace />} />
@@ -216,11 +213,11 @@ export default function App() {
   return (
     <AppProvider>
       <KonstaApp theme="ios" dark={false} safeAreas>
-        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-          <AppErrorBoundary>
+        <AppErrorBoundary>
+          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <InnerApp />
-          </AppErrorBoundary>
-        </BrowserRouter>
+          </BrowserRouter>
+        </AppErrorBoundary>
       </KonstaApp>
     </AppProvider>
   )

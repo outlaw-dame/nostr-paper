@@ -218,15 +218,12 @@ const DEFAULT_SECTIONS: FeedRailSection[] = [
   },
 ]
 
-// Safe: DEFAULT_SECTIONS is a non-empty module-level constant
-const DEFAULT_FIRST_SECTION = DEFAULT_SECTIONS[0] as FeedRailSection
-
 const TAG_FEEDS_SECTION: FeedRailSection = {
   id: 'tag-feeds:manage',
   label: 'Tags',
   summary: 'Create and manage saved tag feeds.',
   href: '/settings/tag-feeds',
-  filter: DEFAULT_FIRST_SECTION.filter,
+  filter: DEFAULT_SECTIONS[0]?.filter ?? { limit: 50 },
 }
 
 const COMPOSE_TRIGGER_OFFSET = 85  // px downward pull to open compose sheet
@@ -546,6 +543,7 @@ function ArticleFeedShowcase({
 }
 
 export default function FeedPage() {
+  const fallbackSection = DEFAULT_SECTIONS[0] ?? TAG_FEEDS_SECTION
   const navigate = useNavigate()
   const location = useLocation()
   const { currentUser } = useApp()
@@ -583,7 +581,7 @@ export default function FeedPage() {
       emptyTagSection: TAG_FEEDS_SECTION,
     })
   }, [routeSection, savedTagSections])
-  const [activeSectionId, setActiveSectionId] = useState(DEFAULT_FIRST_SECTION.id)
+  const [activeSectionId, setActiveSectionId] = useState(fallbackSection.id)
   const [activeArticleFeedId, setActiveArticleFeedId] = useState('articles:all-feeds')
   const [repostCarouselVisible, setRepostCarouselVisible] = useState(true)
   const [feedInlineAutoplayEnabled, setFeedInlineAutoplayEnabled] = useState(true)
@@ -593,15 +591,15 @@ export default function FeedPage() {
   const [resumeFeedPosition, setResumeFeedPosition] = useState(true)
 
   const { profile: currentUserProfile } = useProfile(currentUser?.pubkey)
-  const { isMuted, mutedWords, mutedHashtags, loading: muteListLoading } = useMuteList()
+  const { isMuted, mutedWords, mutedHashtags } = useMuteList()
   const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
   const { unreadCount: activityUnreadCount, hasUnread: hasUnreadActivity } = useActivityUnread({ enabled: Boolean(currentUser) })
   const activityUnreadBadgeText = activityUnreadCount > 99 ? '99+' : String(activityUnreadCount)
   const activeSection = useMemo<FeedRailSection>(() => (
     routeSection
       ?? railSections.find((section) => section.id === activeSectionId)
-      ?? DEFAULT_FIRST_SECTION
-  ), [activeSectionId, railSections, routeSection])
+      ?? fallbackSection
+  ), [activeSectionId, fallbackSection, railSections, routeSection])
   const {
     sections: articleFeedSections,
     followingCount: articleFeedFollowingCount,
@@ -640,8 +638,8 @@ export default function FeedPage() {
     [activeTagTimeline],
   )
   const headerSection = useMemo(
-    () => getFeedHeaderSection(activeSection, DEFAULT_FIRST_SECTION),
-    [activeSection],
+    () => getFeedHeaderSection(activeSection, fallbackSection),
+    [activeSection, fallbackSection],
   )
 
   const feedScopeKey = useMemo(
@@ -656,8 +654,9 @@ export default function FeedPage() {
 
   useEffect(() => {
     if (articleFeedSections.length === 0) return
-    if (!articleFeedSections.some((section) => section.id === activeArticleFeedId)) {
-      setActiveArticleFeedId(articleFeedSections[0]?.id ?? '')
+    const firstArticleFeed = articleFeedSections[0]
+    if (firstArticleFeed && !articleFeedSections.some((section) => section.id === activeArticleFeedId)) {
+      setActiveArticleFeedId(firstArticleFeed.id)
     }
   }, [activeArticleFeedId, articleFeedSections])
 
@@ -665,7 +664,6 @@ export default function FeedPage() {
   const {
     events: semanticTimelineEvents,
     scores: semanticTimelineScores,
-    loading: semanticTimelineLoading,
     error: semanticTimelineError,
   } = useTagTimelineSemanticFeed(activeTagTimeline, effectiveFeedSection.filter.kinds)
   const timelineCandidateEvents = useMemo(() => {
@@ -784,7 +782,6 @@ export default function FeedPage() {
   const heroEvent = topicFilteredEvents[0] ?? null
   const secondaryEvents = topicFilteredEvents.slice(1)
   const feedSurfaceLoading = loading || moderationLoading
-  const _feedLoading = loading || semanticTimelineLoading || moderationLoading || muteListLoading
 
   useEffect(() => {
     warmSelfThreadIndexCache(visibleEvents)
@@ -848,9 +845,9 @@ export default function FeedPage() {
 
     const onScroll = () => {
       if (rafSaveRef.current !== null) {
-        cancelAnimationFrame(rafSaveRef.current)
+        window.cancelAnimationFrame(rafSaveRef.current)
       }
-      rafSaveRef.current = requestAnimationFrame(() => {
+      rafSaveRef.current = window.requestAnimationFrame(() => {
         persistFeedPosition()
         rafSaveRef.current = null
       })
@@ -861,7 +858,7 @@ export default function FeedPage() {
     return () => {
       container.removeEventListener('scroll', onScroll)
       if (rafSaveRef.current !== null) {
-        cancelAnimationFrame(rafSaveRef.current)
+        window.cancelAnimationFrame(rafSaveRef.current)
         rafSaveRef.current = null
       }
     }
@@ -942,10 +939,10 @@ export default function FeedPage() {
     }
 
     // Let layout settle before applying the anchor offset.
-    firstFrame = requestAnimationFrame(() => {
+    firstFrame = window.requestAnimationFrame(() => {
       if (cancelled) return
       const firstPassDone = restore()
-      secondFrame = requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
         if (cancelled) return
         const secondPassDone = restore()
         if (firstPassDone || secondPassDone) {
@@ -957,10 +954,10 @@ export default function FeedPage() {
     return () => {
       cancelled = true
       if (firstFrame !== null) {
-        cancelAnimationFrame(firstFrame)
+        window.cancelAnimationFrame(firstFrame)
       }
       if (secondFrame !== null) {
-        cancelAnimationFrame(secondFrame)
+        window.cancelAnimationFrame(secondFrame)
       }
     }
   }, [eose, feedScopeKey, feedSurfaceLoading, resumeFeedPosition, visibleEvents])
@@ -975,9 +972,9 @@ export default function FeedPage() {
     overscan: 5,
   })
   const virtualItems = virtualizer.getVirtualItems()
-  const virtualPaddingTop = virtualItems.length > 0 ? (virtualItems[0]?.start ?? 0) : 0
+  const virtualPaddingTop = virtualItems[0]?.start ?? 0
   const virtualPaddingBottom = virtualItems.length > 0
-    ? virtualizer.getTotalSize() - (virtualItems.at(-1)?.end ?? 0)
+    ? virtualizer.getTotalSize() - (virtualItems[virtualItems.length - 1]?.end ?? 0)
     : 0
 
   const handleCompose = useCallback(() => {
@@ -1389,7 +1386,8 @@ export default function FeedPage() {
               ) : (
                   <div style={{ paddingTop: `${virtualPaddingTop}px`, paddingBottom: `${virtualPaddingBottom}px` }}>
                     {virtualItems.map((virtualRow) => {
-                      const event = secondaryEvents[virtualRow.index] as NostrEvent
+                      const event = secondaryEvents[virtualRow.index]
+                      if (!event) return null
                       return (
                         <div
                           key={event.id}
@@ -1419,13 +1417,15 @@ export default function FeedPage() {
 
 // ── Secondary Card ───────────────────────────────────────────
 
+/* eslint-disable no-unused-vars */
 interface SecondaryCardProps {
   event: NostrEvent
   index: number
-  checkEvent: (_event: NostrEvent, _profile?: Profile) => FilterCheckResult
+  checkEvent(event: NostrEvent, profile?: Profile): FilterCheckResult
   semanticResult: FilterCheckResult
   feedInlineAutoplayEnabled: boolean
 }
+/* eslint-enable no-unused-vars */
 
 export function SecondaryCard({ event, index, checkEvent, semanticResult, feedInlineAutoplayEnabled }: SecondaryCardProps) {
   const navigate = useNavigate()
@@ -1447,7 +1447,6 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
     quoteBody,
     contentWarning,
     isArticleStory,
-    isVideoStory: _isVideoStory,
     isStoryCard,
     articlePreview,
     videoPoster,

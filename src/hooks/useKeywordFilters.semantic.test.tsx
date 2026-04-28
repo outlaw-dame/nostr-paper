@@ -53,10 +53,12 @@ vi.mock('@/lib/filters/semanticSettings', () => ({
 
 mockRefs.loadFilters.mockImplementation(async () => mockRefs.currentFilters)
 
+/* eslint-disable no-unused-vars */
 interface HarnessProps {
   events: NostrEvent[]
-  onResult: (result: Map<string, FilterCheckResult>) => void
+  onResult(result: Map<string, FilterCheckResult>): void
 }
+/* eslint-enable no-unused-vars */
 
 function Harness({ events, onResult }: HarnessProps) {
   const result = useSemanticFiltering(events)

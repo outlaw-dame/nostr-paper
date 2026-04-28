@@ -267,7 +267,7 @@ export default function SettingsPage() {
       await clearMusicStatus()
     } catch (e) {
       console.error('Failed to clear music status', e)
-      alert('Failed to clear status. Please try again.')
+      window.alert('Failed to clear status. Please try again.')
     } finally {
       setClearingStatus(false)
     }
@@ -354,8 +354,9 @@ export default function SettingsPage() {
     setAppleMusicConnecting(true)
     try {
       const token = await authorizeAppleMusic()
-      setAppleMusicConnected(token !== null)
-      if (token === null) {
+      const hasToken = Boolean(token)
+      setAppleMusicConnected(hasToken)
+      if (!hasToken) {
         setMusicServicesError('Apple Music authorization was not completed.')
       }
     } catch {

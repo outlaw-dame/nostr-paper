@@ -76,7 +76,6 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
     video,
     repost,
     thread,
-    attachments: _attachments,
     contentWarning,
     quoteBody,
     isArticleStory,
