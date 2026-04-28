@@ -1417,7 +1417,6 @@ export default function FeedPage() {
 
 // ── Secondary Card ───────────────────────────────────────────
 
-/* eslint-disable no-unused-vars */
 interface SecondaryCardProps {
   event: NostrEvent
   index: number
@@ -1425,7 +1424,6 @@ interface SecondaryCardProps {
   semanticResult: FilterCheckResult
   feedInlineAutoplayEnabled: boolean
 }
-/* eslint-enable no-unused-vars */
 
 export function SecondaryCard({ event, index, checkEvent, semanticResult, feedInlineAutoplayEnabled }: SecondaryCardProps) {
   const navigate = useNavigate()

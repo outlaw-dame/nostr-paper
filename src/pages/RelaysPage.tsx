@@ -259,7 +259,6 @@ function StatusDot({ status }: { status: NDKRelayStatus }) {
   )
 }
 
-/* eslint-disable no-unused-vars */
 interface RelayRowProps {
   entry: RelayEntry
   isDefault: boolean
@@ -270,7 +269,6 @@ interface RelayRowProps {
   onToggleCapability(url: string, capability: 'read' | 'write'): void
   onRemove(url: string): void
 }
-/* eslint-enable no-unused-vars */
 
 function RelayRow({
   entry,
