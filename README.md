@@ -10,8 +10,7 @@ A local-first, privacy-respecting Nostr client PWA inspired by Facebook Paper's 
 
 ## Backend Platform
 
-The backend/relay platform has moved to:
-https://github.com/outlaw-dame/nostr-paper-platform
+The backend/relay platform has moved to [outlaw-dame/nostr-paper-platform](https://github.com/outlaw-dame/nostr-paper-platform).
 
 See [docs/backend.md](docs/backend.md) for details.
 
