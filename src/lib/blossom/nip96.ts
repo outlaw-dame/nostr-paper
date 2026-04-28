@@ -1,4 +1,5 @@
 import { normalizeNip94Tags } from '@/lib/nostr/fileMetadata'
+import { fetchWithRetry } from '@/lib/retry'
 import { isSafeURL, isValidHex32 } from '@/lib/security/sanitize'
 import type { BlossomBlob, Nip94Tags } from '@/types'
 
@@ -27,6 +28,15 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function normalizeBaseUrl(url: string): string {
   return url.replace(/\/+$/, '')
+}
+
+function isHttpsSafeUrl(url: string): boolean {
+  if (!isSafeURL(url)) return false
+  try {
+    return new URL(url.trim()).protocol === 'https:'
+  } catch {
+    return false
+  }
 }
 
 function parseNip94Tags(rawTags: unknown): Record<string, string[]> {
@@ -60,13 +70,29 @@ export async function discoverNip96Server(
   serverUrl: string,
   maxRedirects = 3,
 ): Promise<Nip96ServerDescriptor | null> {
-  let current = normalizeBaseUrl(serverUrl)
+  const normalizedStart = normalizeBaseUrl(serverUrl.trim())
+  if (!isHttpsSafeUrl(normalizedStart)) return null
+
+  let current = normalizedStart
+  let delegatedToUrl: string | undefined
+  const visited = new Set<string>()
 
   for (let attempt = 0; attempt <= maxRedirects; attempt++) {
-    const res = await fetch(`${current}/.well-known/nostr/nip96.json`, {
-      method: 'GET',
-      signal: AbortSignal.timeout(8_000),
-    }).catch(() => null)
+    if (visited.has(current)) return null
+    visited.add(current)
+
+    const res = await fetchWithRetry(
+      `${current}/.well-known/nostr/nip96.json`,
+      {
+        method: 'GET',
+        signal: AbortSignal.timeout(8_000),
+      },
+      {
+        maxAttempts: 2,
+        baseDelayMs: 400,
+        maxDelayMs: 2_000,
+      },
+    ).catch(() => null)
 
     if (!res?.ok) return null
 
@@ -79,15 +105,16 @@ export async function discoverNip96Server(
       : ''
 
     if (delegated.length > 0) {
-      if (!isSafeURL(delegated)) return null
+      if (!isHttpsSafeUrl(delegated)) return null
       current = normalizeBaseUrl(delegated)
+      delegatedToUrl = current
       continue
     }
 
     const apiUrl = typeof descriptor.api_url === 'string' ? descriptor.api_url.trim() : ''
-    if (!isSafeURL(apiUrl)) return null
+    if (!isHttpsSafeUrl(apiUrl)) return null
 
-    const downloadUrl = typeof descriptor.download_url === 'string' && isSafeURL(descriptor.download_url)
+    const downloadUrl = typeof descriptor.download_url === 'string' && isHttpsSafeUrl(descriptor.download_url)
       ? descriptor.download_url
       : undefined
 
@@ -95,7 +122,7 @@ export async function discoverNip96Server(
       serverUrl: current,
       apiUrl,
       ...(downloadUrl ? { downloadUrl } : {}),
-      ...(delegated.length > 0 ? { delegatedToUrl: delegated } : {}),
+      ...(delegatedToUrl ? { delegatedToUrl } : {}),
     }
   }
 
@@ -156,6 +183,10 @@ export async function nip96Upload(
     expiration?: number
   },
 ): Promise<BlossomBlob> {
+  if (!isHttpsSafeUrl(descriptor.apiUrl)) {
+    throw new Error('NIP-96 upload endpoint must be HTTPS.')
+  }
+
   const form = new FormData()
   form.append('file', file)
   form.append('size', String(file.size))
@@ -165,13 +196,21 @@ export async function nip96Upload(
   if (options?.noTransform) form.append('no_transform', 'true')
   if (options?.expiration !== undefined) form.append('expiration', String(options.expiration))
 
-  const res = await fetch(descriptor.apiUrl, {
-    method: 'POST',
-    headers: {
-      Authorization: authHeader,
+  const res = await fetchWithRetry(
+    descriptor.apiUrl,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: authHeader,
+      },
+      body: form,
     },
-    body: form,
-  })
+    {
+      maxAttempts: 2,
+      baseDelayMs: 500,
+      maxDelayMs: 3_000,
+    },
+  )
 
   if (!res.ok) {
     const message = await res.text().catch(() => '')
