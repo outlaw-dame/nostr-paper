@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import OnboardPage from './OnboardPage'
 import { AppContext, type AppContextValue } from '@/contexts/app-context'
 
-const loginWithPubkeyMock = vi.fn()
-const resolveNip05IdentifierMock = vi.fn()
+const loginWithNip46BunkerMock = vi.fn()
+const isValidNip46BunkerTokenMock = vi.fn()
 
 vi.mock('@/hooks/useProfile', () => ({
   useProfile: () => ({ profile: null }),
@@ -17,15 +17,15 @@ vi.mock('@/lib/nostr/nip21', () => ({
 }))
 
 vi.mock('@/lib/nostr/nip05', () => ({
-  parseNip05Identifier: (value: string) => value.includes('@') ? ({ identifier: value.toLowerCase(), localPart: 'alice', domain: 'example.com' }) : null,
-  resolveNip05Identifier: (...args: unknown[]) => resolveNip05IdentifierMock(...args),
+  parseNip05Identifier: () => null,
+  resolveNip05Identifier: vi.fn(),
 }))
 
 vi.mock('@/lib/nostr/ndk', () => ({
   loginWithNsec: vi.fn(),
-  loginWithNip46Bunker: vi.fn(),
-  isValidNip46BunkerToken: () => false,
-  loginWithPubkey: (...args: unknown[]) => loginWithPubkeyMock(...args),
+  loginWithNip46Bunker: (...args: unknown[]) => loginWithNip46BunkerMock(...args),
+  isValidNip46BunkerToken: (...args: unknown[]) => isValidNip46BunkerTokenMock(...args),
+  loginWithPubkey: vi.fn(),
   performLogout: vi.fn(),
   getNDK: vi.fn(),
   STORAGE_KEY_NSEC: 'nostr-paper:nsec',
@@ -60,7 +60,7 @@ async function click(element: Element) {
   })
 }
 
-describe('OnboardPage NIP-05 onboarding', () => {
+describe('OnboardPage NIP-46 onboarding', () => {
   let container: HTMLDivElement
   let root: Root
 
@@ -75,13 +75,12 @@ describe('OnboardPage NIP-05 onboarding', () => {
     if (container) container.remove()
   })
 
-  it('resolves a NIP-05 identifier and continues in read-only mode', async () => {
+  it('connects with a valid bunker token and sets current user', async () => {
     const dispatch = vi.fn()
-    resolveNip05IdentifierMock.mockResolvedValue({
-      identifier: 'alice@example.com',
-      pubkey: 'a'.repeat(64),
-      relays: [],
-    })
+    const token = `bunker://${'a'.repeat(64)}?relay=wss://relay.example.com&secret=testsecret&pubkey=${'b'.repeat(64)}`
+
+    isValidNip46BunkerTokenMock.mockReturnValue(true)
+    loginWithNip46BunkerMock.mockResolvedValue('b'.repeat(64))
 
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -100,20 +99,20 @@ describe('OnboardPage NIP-05 onboarding', () => {
       )
     })
 
-    const readOnlyButton = Array
+    const remoteSignerButton = Array
       .from(container.querySelectorAll('button'))
-      .find((button) => button.textContent?.includes('NIP-05 supported'))
+      .find((button) => button.textContent?.includes('Remote Signer'))
 
-    expect(readOnlyButton).toBeTruthy()
-    await click(readOnlyButton!)
+    expect(remoteSignerButton).toBeTruthy()
+    await click(remoteSignerButton!)
 
     const input = container.querySelector('input') as HTMLInputElement | null
     expect(input).toBeTruthy()
-    await setInputValue(input!, 'alice@example.com')
+    await setInputValue(input!, token)
 
     const submitButton = Array
       .from(container.querySelectorAll('button'))
-      .find((button) => button.textContent?.includes('Browse Read-Only'))
+      .find((button) => button.textContent?.includes('Connect Remote Signer'))
 
     expect(submitButton).toBeTruthy()
     await click(submitButton!)
@@ -123,9 +122,9 @@ describe('OnboardPage NIP-05 onboarding', () => {
       await Promise.resolve()
     })
 
-    expect(resolveNip05IdentifierMock).toHaveBeenCalledWith('alice@example.com')
-    expect(loginWithPubkeyMock).toHaveBeenCalledWith('a'.repeat(64))
-    expect(dispatch).toHaveBeenCalledWith({ type: 'SET_USER', payload: { pubkey: 'a'.repeat(64) } })
+    expect(isValidNip46BunkerTokenMock).toHaveBeenCalledWith(token)
+    expect(loginWithNip46BunkerMock).toHaveBeenCalledWith(token)
+    expect(dispatch).toHaveBeenCalledWith({ type: 'SET_USER', payload: { pubkey: 'b'.repeat(64) } })
     expect(container.textContent).toContain('home')
   })
 })

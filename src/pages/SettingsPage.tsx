@@ -15,7 +15,13 @@ import {
   getMusicPresenceAutopublishEnabled,
   setMusicPresenceAutopublishEnabled,
 } from '@/lib/nostr/musicPresence'
-import { getNDK } from '@/lib/nostr/ndk'
+import {
+  getActiveSignerKind,
+  getNDK,
+  isValidNip46BunkerToken,
+  loginWithNip46Bunker,
+  STORAGE_KEY_NIP46_BUNKER,
+} from '@/lib/nostr/ndk'
 import { clearMusicStatus } from '@/lib/nostr/status'
 import {
   getSpotifyClientId,
@@ -45,7 +51,7 @@ type TranslationHealthTone = 'ok' | 'warn'
 export default function SettingsPage() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { currentUser, logout } = useApp()
+  const { currentUser, logout, dispatch } = useApp()
   const tagFeedScopeId = currentUser?.pubkey ?? 'anon'
   const savedTagFeeds = useSavedTagFeeds(tagFeedScopeId)
   const [clearingStatus, setClearingStatus] = useState(false)
@@ -68,6 +74,14 @@ export default function SettingsPage() {
   const [displayNameSaving, setDisplayNameSaving] = useState(false)
   const [displayNameError, setDisplayNameError] = useState<string | null>(null)
   const [displayNameSaved, setDisplayNameSaved] = useState(false)
+  const [signerKind, setSignerKind] = useState<'none' | 'nip07' | 'nip46' | 'nsec'>('none')
+  const [nip46TokenDraft, setNip46TokenDraft] = useState(() => {
+    if (typeof localStorage === 'undefined') return ''
+    return localStorage.getItem(STORAGE_KEY_NIP46_BUNKER) ?? ''
+  })
+  const [nip46Connecting, setNip46Connecting] = useState(false)
+  const [nip46Error, setNip46Error] = useState<string | null>(null)
+  const [nip46Success, setNip46Success] = useState<string | null>(null)
   const [translationHealthLabel, setTranslationHealthLabel] = useState('Checking…')
   const [translationHealthDetail, setTranslationHealthDetail] = useState('Inspecting translation provider configuration.')
   const [translationHealthTone, setTranslationHealthTone] = useState<TranslationHealthTone>('ok')
@@ -84,6 +98,7 @@ export default function SettingsPage() {
     setResumeFeedPosition(getFeedResumeEnabled(currentUser?.pubkey ?? 'anon'))
     setFeedInlineAutoplayEnabledState(getFeedInlineMediaAutoplayEnabled(currentUser?.pubkey ?? 'anon'))
     setMusicAutoPublishEnabledState(getMusicPresenceAutopublishEnabled())
+    setSignerKind(getActiveSignerKind())
   }, [currentUser?.pubkey])
 
   useEffect(() => {
@@ -256,9 +271,39 @@ export default function SettingsPage() {
   const handleLogout = () => {
     if (logout) {
       logout()
+      setSignerKind('none')
       navigate('/', { replace: true })
     }
   }
+
+  const handleNip46Connect = async () => {
+    const token = nip46TokenDraft.trim()
+    setNip46Error(null)
+    setNip46Success(null)
+
+    if (!isValidNip46BunkerToken(token)) {
+      setNip46Error(tApp('settingsNip46InvalidToken'))
+      return
+    }
+
+    setNip46Connecting(true)
+    try {
+      const pubkey = await loginWithNip46Bunker(token)
+      dispatch({ type: 'SET_USER', payload: { pubkey } })
+      setSignerKind(getActiveSignerKind())
+      setNip46Success(tApp('settingsNip46Connected'))
+    } catch (error) {
+      setNip46Error(error instanceof Error ? sanitizeText(error.message) : tApp('settingsNip46ConnectFailed'))
+    } finally {
+      setNip46Connecting(false)
+    }
+  }
+
+  const signedInHint = signerKind === 'nip46'
+    ? tApp('settingsSignedInHintNip46')
+    : signerKind === 'nsec'
+      ? tApp('settingsSignedInHintNsec')
+      : tApp('settingsSignedInHintNip07')
 
   const handleClearMusicStatus = async () => {
     if (!currentUser?.pubkey) return
@@ -462,8 +507,41 @@ export default function SettingsPage() {
                   )}
                 </div>
                 <p className="text-[13px] text-[rgb(var(--color-label-secondary))] px-1">
-                  {tApp('settingsSignedInHint')}
+                  {signedInHint}
                 </p>
+                <div className="space-y-2">
+                  <label className="block text-[13px] font-medium text-[rgb(var(--color-label-secondary))]">
+                    {tApp('settingsNip46Label')}
+                  </label>
+                  <input
+                    type="text"
+                    value={nip46TokenDraft}
+                    onChange={(event) => {
+                      setNip46TokenDraft(event.target.value)
+                      setNip46Error(null)
+                      setNip46Success(null)
+                    }}
+                    placeholder={tApp('settingsNip46Placeholder')}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    className="w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[14px] font-mono text-[rgb(var(--color-label))] placeholder:text-[rgb(var(--color-label-tertiary))] outline-none transition-colors focus:border-[rgb(var(--color-accent))]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleNip46Connect()}
+                    disabled={nip46Connecting || !nip46TokenDraft.trim()}
+                    className="w-full rounded-[12px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[14px] font-medium text-[rgb(var(--color-label))] disabled:opacity-50"
+                  >
+                    {nip46Connecting ? tApp('settingsConnecting') : tApp('settingsNip46Connect')}
+                  </button>
+                  {nip46Error && (
+                    <p className="text-[13px] text-[rgb(var(--color-system-red))]">{nip46Error}</p>
+                  )}
+                  {nip46Success && !nip46Error && (
+                    <p className="text-[13px] text-[rgb(var(--color-system-green))]">{nip46Success}</p>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={handleLogout}
