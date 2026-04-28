@@ -115,7 +115,7 @@ export async function discoverNip96Server(
     if (!isHttpsSafeUrl(apiUrl)) return null
 
     const downloadUrl = typeof descriptor.download_url === 'string' && isHttpsSafeUrl(descriptor.download_url)
-      ? descriptor.download_url
+      ? descriptor.download_url.trim()
       : undefined
 
     return {
