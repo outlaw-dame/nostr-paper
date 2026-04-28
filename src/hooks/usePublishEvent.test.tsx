@@ -207,12 +207,16 @@ describe('usePublishEvent', () => {
       return api
     }
 
-    const firstPublish = getApi().publish((signal: AbortSignal) => {
-      return new Promise((_, reject) => {
-        signal.addEventListener('abort', () => {
-          reject(new DOMException('Aborted', 'AbortError'))
-        }, { once: true })
+    let firstPublish: Promise<string | null>
+    await act(async () => {
+      firstPublish = getApi().publish((signal: AbortSignal) => {
+        return new Promise((_, reject) => {
+          signal.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'))
+          }, { once: true })
+        })
       })
+      await Promise.resolve()
     })
 
     let secondId: string | null = null
@@ -220,7 +224,7 @@ describe('usePublishEvent', () => {
       secondId = await getApi().publish(async () => ({ id: 'evt-456' }))
     })
 
-    expect(await firstPublish).toBeNull()
+    expect(await firstPublish!).toBeNull()
     expect(secondId).toBe('evt-456')
   })
 })
