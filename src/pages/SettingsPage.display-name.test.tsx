@@ -65,7 +65,11 @@ vi.mock('@/lib/feed/resumeSettings', () => ({
 }))
 
 vi.mock('@/lib/nostr/ndk', () => ({
+  getActiveSignerKind: () => 'nip07',
   getNDK: () => ({ id: 'mock-ndk' }),
+  isValidNip46BunkerToken: () => false,
+  loginWithNip46Bunker: vi.fn(),
+  STORAGE_KEY_NIP46_BUNKER: 'nostr-paper:nip46-bunker',
 }))
 
 vi.mock('@/lib/retry', () => ({

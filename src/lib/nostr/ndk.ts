@@ -13,6 +13,7 @@
 
 import NDK, {
   NDKNip07Signer,
+  NDKNip46Signer,
   NDKPrivateKeySigner,
   NDKRelay,
   type NDKCacheAdapter,
@@ -27,6 +28,7 @@ import { getStoredRelayUrls } from '@/lib/relay/relaySettings'
 import { insertEvent, queryEvents, getProfile, getProfiles } from '@/lib/db/nostr'
 import { isValidRelayURL } from '@/lib/security/sanitize'
 import { shouldBlockEvent } from '@/lib/filters/ingestFilter'
+import { withRetry } from '@/lib/retry'
 import type { Profile, NostrEvent, NostrFilter } from '@/types'
 
 // ── Default Relay Set ────────────────────────────────────────
@@ -85,6 +87,9 @@ const OUTBOX_RELAYS = [
 ] as const
 
 const ENABLE_OUTBOX_MODEL = import.meta.env.VITE_DISABLE_OUTBOX_MODEL !== 'true'
+const NIP46_READY_TIMEOUT_MS = 12_000
+const NIP46_MAX_TOKEN_LENGTH = 2_048
+const NIP46_MAX_RELAY_HINTS = 8
 
 export function getDefaultRelayUrls(): string[] {
   return [...DEFAULT_RELAYS]
@@ -301,7 +306,57 @@ export async function initNDK(options: InitNDKOptions = {}): Promise<NDK> {
     initRelayOptimizer(relays)
   }
 
+  // Optional Phase 2 signer restore: reuse a persisted NIP-46 bunker token
+  // when no browser extension or nsec signer is configured.
+  if (!_ndk.signer && typeof localStorage !== 'undefined') {
+    const storedBunker = localStorage.getItem(STORAGE_KEY_NIP46_BUNKER)?.trim()
+    if (storedBunker?.startsWith('bunker://')) {
+      try {
+        _ndk.signer = await createNip46Signer(_ndk, storedBunker)
+      } catch (error) {
+        console.warn('[NDK] Failed to restore NIP-46 signer:', error)
+        // Self-heal invalid/stale tokens so future boots do not repeatedly
+        // spend time on an unrecoverable signer handshake.
+        localStorage.removeItem(STORAGE_KEY_NIP46_BUNKER)
+      }
+    }
+  }
+
   return _ndk
+}
+
+async function createNip46Signer(ndk: NDK, bunkerConnectionToken: string): Promise<NDKNip46Signer> {
+  const token = bunkerConnectionToken.trim()
+  if (!isValidNip46BunkerToken(token)) {
+    throw new Error('Invalid NIP-46 bunker connection token.')
+  }
+
+  return withRetry(async () => {
+    const signer = NDKNip46Signer.bunker(ndk, token)
+
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('NIP-46 signer timed out while connecting')), NIP46_READY_TIMEOUT_MS)
+    })
+
+    try {
+      await Promise.race([
+        signer.blockUntilReady(),
+        timeoutPromise,
+      ])
+      return signer
+    } catch (error) {
+      signer.stop()
+      throw error
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }, {
+    maxAttempts: 3,
+    baseDelayMs: 500,
+    maxDelayMs: 3_000,
+    shouldRetry: (error, attempt) => attempt < 3 && isTransientNip46Error(error),
+  })
 }
 
 /**
@@ -322,6 +377,63 @@ export async function getCurrentUser(): Promise<NDKUser | null> {
 
 export const STORAGE_KEY_NSEC  = 'nostr-paper:nsec'
 export const STORAGE_KEY_PUBKEY = 'nostr-paper:pubkey'
+export const STORAGE_KEY_NIP46_BUNKER = 'nostr-paper:nip46-bunker'
+
+export type ActiveSignerKind = 'none' | 'nip07' | 'nip46' | 'nsec'
+
+export function getActiveSignerKind(): ActiveSignerKind {
+  if (!_ndk?.signer) return 'none'
+  if (_ndk.signer instanceof NDKNip07Signer) return 'nip07'
+  if (_ndk.signer instanceof NDKNip46Signer) return 'nip46'
+  if (_ndk.signer instanceof NDKPrivateKeySigner) return 'nsec'
+  return 'none'
+}
+
+function isTransientNip46Error(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
+  return (
+    message.includes('timeout') ||
+    message.includes('timed out') ||
+    message.includes('network') ||
+    message.includes('relay') ||
+    message.includes('socket') ||
+    message.includes('connect') ||
+    message.includes('temporary') ||
+    message.includes('econn')
+  )
+}
+
+function isHexPubkey(value: string): boolean {
+  return /^[0-9a-f]{64}$/i.test(value)
+}
+
+export function isValidNip46BunkerToken(value: string): boolean {
+  try {
+    const token = value.trim()
+    if (!token.startsWith('bunker://')) return false
+    if (token.length === 0 || token.length > NIP46_MAX_TOKEN_LENGTH) return false
+
+    const parsed = new URL(token)
+    if (parsed.protocol !== 'bunker:') return false
+
+    const bunkerPubkey = parsed.hostname || parsed.pathname.replace(/^\/+/, '')
+    if (!isHexPubkey(bunkerPubkey)) return false
+
+    const userPubkey = parsed.searchParams.get('pubkey')
+    if (userPubkey && !isHexPubkey(userPubkey)) return false
+
+    const relayHints = parsed.searchParams.getAll('relay')
+    const validRelays = relayHints.filter((relay) => isValidRelayURL(relay) && relay.startsWith('wss://'))
+    if (validRelays.length === 0 || validRelays.length > NIP46_MAX_RELAY_HINTS) return false
+
+    const secret = parsed.searchParams.get('secret')
+    if (secret && secret.length > 256) return false
+
+    return true
+  } catch {
+    return false
+  }
+}
 
 /**
  * Log in with a private key (nsec). Stores nsec in localStorage
@@ -335,6 +447,29 @@ export async function loginWithNsec(nsec: string): Promise<string> {
   ndk.signer = signer
   localStorage.setItem(STORAGE_KEY_NSEC, nsec)
   localStorage.removeItem(STORAGE_KEY_PUBKEY)
+  localStorage.removeItem(STORAGE_KEY_NIP46_BUNKER)
+  return user.pubkey
+}
+
+/**
+ * Log in with a NIP-46 bunker connection token (bunker://...).
+ * The connected token is persisted for restore on next boot.
+ */
+export async function loginWithNip46Bunker(bunkerConnectionToken: string): Promise<string> {
+  const token = bunkerConnectionToken.trim()
+  if (!isValidNip46BunkerToken(token)) {
+    throw new Error('Invalid NIP-46 bunker connection token.')
+  }
+
+  const ndk = getNDK()
+  const signer = await createNip46Signer(ndk, token)
+  const user = await signer.user()
+
+  ndk.signer = signer
+  localStorage.setItem(STORAGE_KEY_NIP46_BUNKER, token)
+  localStorage.removeItem(STORAGE_KEY_NSEC)
+  localStorage.removeItem(STORAGE_KEY_PUBKEY)
+
   return user.pubkey
 }
 
@@ -345,6 +480,7 @@ export async function loginWithNsec(nsec: string): Promise<string> {
 export function loginWithPubkey(pubkey: string): void {
   localStorage.setItem(STORAGE_KEY_PUBKEY, pubkey)
   localStorage.removeItem(STORAGE_KEY_NSEC)
+  localStorage.removeItem(STORAGE_KEY_NIP46_BUNKER)
 }
 
 /**
@@ -353,7 +489,11 @@ export function loginWithPubkey(pubkey: string): void {
 export function performLogout(): void {
   localStorage.removeItem(STORAGE_KEY_NSEC)
   localStorage.removeItem(STORAGE_KEY_PUBKEY)
+  localStorage.removeItem(STORAGE_KEY_NIP46_BUNKER)
   if (_ndk) {
+    if (_ndk.signer instanceof NDKNip46Signer) {
+      _ndk.signer.stop()
+    }
     _ndk.signer = undefined
   }
 }

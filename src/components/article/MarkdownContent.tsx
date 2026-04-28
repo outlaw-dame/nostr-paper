@@ -6,7 +6,7 @@ import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
 import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import { getNip21Route } from '@/lib/nostr/nip21'
 import { isSafeMarkdownLinkDestination } from '@/lib/nostr/longForm'
-import { CASHTAG_PATTERN, HASHTAG_PATTERN, NOSTR_PATTERN, URL_PATTERN, hasEntityBoundaryBefore } from '@/lib/text/entities'
+import { CASHTAG_PATTERN, HASHTAG_PATTERN, NOSTR_PATTERN, URL_PATTERN, hasEntityBoundaryBefore, isNostrReferenceToken } from '@/lib/text/entities'
 import { isSafeMediaURL, isSafeURL, normalizeHashtag, sanitizeText } from '@/lib/security/sanitize'
 
 interface MarkdownContentProps {
@@ -208,7 +208,7 @@ function tokenizeInline(raw: string): InlineToken[] {
       tokens.push({ type: 'em', value: match[8] })
     } else if (matched.startsWith('~~') && matched.endsWith('~~') && match[10]) {
       tokens.push({ type: 'strikethrough', value: match[10] })
-    } else if (matched.startsWith('nostr:')) {
+    } else if (isNostrReferenceToken(matched)) {
       if (!hasEntityBoundaryBefore(raw, match.index)) {
         tokens.push({ type: 'text', value: matched })
       } else {
@@ -258,7 +258,7 @@ function renderLink(label: string, href: string, interactive = true): React.Reac
     )
   }
 
-  const internalRoute = href.startsWith('nostr:') ? getNip21Route(href) : null
+  const internalRoute = getNip21Route(href)
 
   if (internalRoute) {
     return (

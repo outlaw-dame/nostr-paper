@@ -14,10 +14,13 @@ import { decodeProfileReference } from '@/lib/nostr/nip21'
 import { parseNip05Identifier, resolveNip05Identifier } from '@/lib/nostr/nip05'
 import {
   loginWithNsec,
+  loginWithNip46Bunker,
   loginWithPubkey,
+  isValidNip46BunkerToken,
   performLogout,
   getNDK,
   STORAGE_KEY_NSEC,
+  STORAGE_KEY_NIP46_BUNKER,
   STORAGE_KEY_PUBKEY,
 } from '@/lib/nostr/ndk'
 import { useApp } from '@/contexts/app-context'
@@ -32,7 +35,7 @@ function SavedUserCard({
   onSelect,
 }: {
   pubkey: string
-  method: 'nsec' | 'npub'
+  method: 'nsec' | 'npub' | 'nip46'
   onSelect: () => void
 }) {
   const { profile } = useProfile(pubkey)
@@ -102,7 +105,7 @@ function KeyInputScreen({
   onBack,
   onSuccess,
 }: {
-  mode: 'nsec' | 'npub'
+  mode: 'nsec' | 'npub' | 'nip46'
   onBack: () => void
   onSuccess: (pubkey: string) => void
 }) {
@@ -130,7 +133,7 @@ function KeyInputScreen({
       } finally {
         setLoading(false)
       }
-    } else {
+    } else if (mode === 'npub') {
       setLoading(true)
       try {
         let pubkey: string | null = null
@@ -156,10 +159,27 @@ function KeyInputScreen({
       } finally {
         setLoading(false)
       }
+    } else {
+      setLoading(true)
+      try {
+        if (!isValidNip46BunkerToken(trimmed)) {
+          setError(tApp('onboardInvalidNip46Error'))
+          return
+        }
+
+        const pubkey = await loginWithNip46Bunker(trimmed)
+        dispatch({ type: 'SET_USER', payload: { pubkey } })
+        onSuccess(pubkey)
+      } catch {
+        setError(tApp('onboardResolveNip46Error'))
+      } finally {
+        setLoading(false)
+      }
     }
   }, [value, mode, dispatch, onSuccess])
 
   const isNsec = mode === 'nsec'
+  const isNpub = mode === 'npub'
 
   return (
     <div className="flex flex-col h-full">
@@ -177,19 +197,23 @@ function KeyInputScreen({
       </button>
 
       <h2 className="text-[26px] font-bold tracking-tight text-[rgb(var(--color-label))] mb-1">
-        {isNsec ? tApp('onboardEnterPrivateTitle') : tApp('onboardEnterPublicTitle')}
+        {isNsec
+          ? tApp('onboardEnterPrivateTitle')
+          : (isNpub ? tApp('onboardEnterPublicTitle') : tApp('onboardEnterNip46Title'))}
       </h2>
       <p className="text-[15px] text-[rgb(var(--color-label-secondary))] mb-8 leading-relaxed">
         {isNsec
           ? tApp('onboardPrivateHint')
-        : tApp('onboardPublicHint')}
+          : (isNpub ? tApp('onboardPublicHint') : tApp('onboardNip46Hint'))}
       </p>
 
       {/* Input */}
       <div className="relative mb-2">
         <input
           type={isNsec ? 'password' : 'text'}
-          placeholder={isNsec ? tApp('onboardPrivatePlaceholder') : tApp('onboardPublicPlaceholder')}
+          placeholder={isNsec
+            ? tApp('onboardPrivatePlaceholder')
+            : (isNpub ? tApp('onboardPublicPlaceholder') : tApp('onboardNip46Placeholder'))}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') void handleSubmit() }}
@@ -226,7 +250,9 @@ function KeyInputScreen({
           transition-all active:scale-[0.98]
         "
       >
-        {loading ? tApp('onboardConnecting') : isNsec ? tApp('onboardSignIn') : tApp('onboardBrowseReadOnly')}
+        {loading
+          ? tApp('onboardConnecting')
+          : (isNsec ? tApp('onboardSignIn') : (isNpub ? tApp('onboardBrowseReadOnly') : tApp('onboardConnectNip46')))}
       </button>
     </div>
   )
@@ -238,13 +264,13 @@ export default function OnboardPage() {
   const navigate = useNavigate()
   const { dispatch } = useApp()
 
-  const [inputMode, setInputMode] = useState<'nsec' | 'npub' | null>(null)
+  const [inputMode, setInputMode] = useState<'nsec' | 'npub' | 'nip46' | null>(null)
   const [extError, setExtError] = useState<string | null>(null)
   const [extLoading, setExtLoading] = useState(false)
 
   // Detect any saved credentials to show "continue as" card
   const [savedPubkey, setSavedPubkey] = useState<string | null>(null)
-  const [savedMethod, setSavedMethod] = useState<'nsec' | 'npub' | null>(null)
+  const [savedMethod, setSavedMethod] = useState<'nsec' | 'npub' | 'nip46' | null>(null)
 
   useEffect(() => {
     const nsec = localStorage.getItem(STORAGE_KEY_NSEC)
@@ -266,6 +292,21 @@ export default function OnboardPage() {
     if (npub) {
       setSavedPubkey(npub)
       setSavedMethod('npub')
+      return
+    }
+
+    const bunker = localStorage.getItem(STORAGE_KEY_NIP46_BUNKER)
+    if (bunker && isValidNip46BunkerToken(bunker)) {
+      try {
+        const parsed = new URL(bunker)
+        const userPubkey = parsed.searchParams.get('pubkey')
+        if (userPubkey && /^[0-9a-f]{64}$/i.test(userPubkey)) {
+          setSavedPubkey(userPubkey.toLowerCase())
+          setSavedMethod('nip46')
+        }
+      } catch {
+        localStorage.removeItem(STORAGE_KEY_NIP46_BUNKER)
+      }
     }
   }, [])
 
@@ -273,19 +314,36 @@ export default function OnboardPage() {
 
   const handleContinueSaved = useCallback(async () => {
     if (!savedPubkey) return
+    let restored = false
     const nsec = localStorage.getItem(STORAGE_KEY_NSEC)
     if (nsec) {
       try {
         const pubkey = await loginWithNsec(nsec)
         dispatch({ type: 'SET_USER', payload: { pubkey } })
+        restored = true
       } catch {
         localStorage.removeItem(STORAGE_KEY_NSEC)
       }
+    } else if (savedMethod === 'nip46') {
+      const bunker = localStorage.getItem(STORAGE_KEY_NIP46_BUNKER)
+      if (!bunker) return
+      try {
+        const pubkey = await loginWithNip46Bunker(bunker)
+        dispatch({ type: 'SET_USER', payload: { pubkey } })
+        restored = true
+      } catch {
+        localStorage.removeItem(STORAGE_KEY_NIP46_BUNKER)
+        setSavedPubkey(null)
+        setSavedMethod(null)
+      }
     } else {
       dispatch({ type: 'SET_USER', payload: { pubkey: savedPubkey } })
+      restored = true
     }
-    navigate('/', { replace: true })
-  }, [savedPubkey, dispatch, navigate])
+    if (restored) {
+      navigate('/', { replace: true })
+    }
+  }, [savedPubkey, savedMethod, dispatch, navigate])
 
   const handleExtension = useCallback(async () => {
     setExtLoading(true)
@@ -405,6 +463,21 @@ export default function OnboardPage() {
             {extLoading ? tApp('onboardConnecting') : tApp('onboardUseExtension')}
           </button>
         )}
+
+        <button
+          type="button"
+          onClick={() => setInputMode('nip46')}
+          className="
+            w-full rounded-full py-[15px]
+            bg-[rgb(var(--color-surface-elevated))]
+            border border-[rgb(var(--color-fill)/0.16)]
+            text-[17px] font-semibold text-[rgb(var(--color-label))]
+            transition-all active:scale-[0.98]
+            mb-3
+          "
+        >
+          {tApp('onboardUseNip46')}
+        </button>
 
         {extError && (
           <p className="mb-3 text-[13px] text-[rgb(var(--color-system-red))] text-center">{extError}</p>

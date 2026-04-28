@@ -56,7 +56,7 @@ function topTerms(input: string[], limit = 6): string[] {
 }
 
 export function getDaySegment(date = new Date()): DaySegment {
-  const hour = date.getHours()
+  const hour = date.getUTCHours()
   if (hour >= 5 && hour < 16) return 'morning'
   if (hour >= 16 && hour < 22) return 'evening'
   return 'night'
