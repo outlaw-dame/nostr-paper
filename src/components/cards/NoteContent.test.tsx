@@ -66,6 +66,21 @@ describe('NoteContent', () => {
     expect(html).toContain('source')
   })
 
+  it('linkifies raw NIP-19 references (without nostr: prefix)', () => {
+    const npub = npubEncode('a'.repeat(64))
+    const note = noteEncode('b'.repeat(64))
+
+    const html = renderToStaticMarkup(
+      <StaticRouter location="/">
+        <NoteContent content={`Raw refs ${npub} and ${note} should resolve.`} />
+      </StaticRouter>,
+    )
+
+    expect(html).toContain('@Damon')
+    expect(html).toContain(`href="/profile/${npub}"`)
+    expect(html).toContain(`href="/note/${note}"`)
+  })
+
   it('parses nlogpost content correctly', () => {
     const html = renderToStaticMarkup(
       <StaticRouter location="/">

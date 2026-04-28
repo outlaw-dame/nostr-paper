@@ -19,7 +19,7 @@ import { EntityPreviewStack } from '@/components/cards/EntityPreviewStack'
 import { Nip21Mention } from '@/components/nostr/Nip21Mention'
 import { TranslateTextPanel } from '@/components/translation/TranslateTextPanel'
 import { collectEntityCandidates } from '@/lib/text/entityPreview'
-import { CASHTAG_PATTERN, HASHTAG_PATTERN, NOSTR_PATTERN, URL_PATTERN, hasEntityBoundaryBefore } from '@/lib/text/entities'
+import { CASHTAG_PATTERN, HASHTAG_PATTERN, NOSTR_PATTERN, URL_PATTERN, hasEntityBoundaryBefore, isNostrReferenceToken } from '@/lib/text/entities'
 import { normalizeHashtag, sanitizeText, isSafeURL, stripUrlTrailingPunct } from '@/lib/security/sanitize'
 import { TwemojiText } from '@/components/ui/TwemojiText'
 
@@ -177,7 +177,7 @@ function tokenize(raw: string): ContentToken[] {
         continue
       }
       tokens.push({ type: 'cashtag', value: matched.slice(1) })
-    } else if (matched.startsWith('nostr:')) {
+    } else if (isNostrReferenceToken(matched)) {
       if (!hasEntityBoundaryBefore(text, match.index)) {
         tokens.push({ type: 'text', value: matched })
         lastIndex = COMBINED.lastIndex
