@@ -114,7 +114,13 @@ describe('fetchZapInvoice', () => {
     const parsed = new URL(calledUrl)
     expect(parsed.origin + parsed.pathname).toBe('https://wallet.example.com/lnurl/callback')
     expect(parsed.searchParams.get('amount')).toBe('21000')
-    expect(parsed.searchParams.get('nostr')).toContain('"kind":9734')
+
+    const nostrParam = parsed.searchParams.get('nostr')
+    expect(nostrParam).toBeDefined()
+
+    const zapReq = JSON.parse(nostrParam!) as { kind?: number; tags?: string[][] }
+    expect(zapReq.kind).toBe(Kind.ZapRequest)
+    expect(zapReq.tags).toContainEqual(['amount', '21000'])
   })
 
   it('rejects lightning addresses that do not support nostr zaps', async () => {
@@ -124,6 +130,34 @@ describe('fetchZapInvoice', () => {
 
     await expect(fetchZapInvoice({ ...payData, allowsNostr: false }, zapRequest, 21_000))
       .rejects.toThrow("doesn't support Nostr zaps")
+  })
+
+  it('throws when callback returns a non-ok HTTP status', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+    } as Response)
+
+    const zapRequest = {
+      rawEvent: () => ({ kind: Kind.ZapRequest, tags: [['amount', '21000']] }),
+    } as unknown as Parameters<typeof fetchZapInvoice>[1]
+
+    await expect(fetchZapInvoice(payData, zapRequest, 21_000))
+      .rejects.toThrow('LNURL callback returned HTTP 502')
+  })
+
+  it('throws LNURL reason when callback reports an explicit error payload', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: 'ERROR', reason: 'Invoice quota exceeded' }),
+    } as Response)
+
+    const zapRequest = {
+      rawEvent: () => ({ kind: Kind.ZapRequest, tags: [['amount', '21000']] }),
+    } as unknown as Parameters<typeof fetchZapInvoice>[1]
+
+    await expect(fetchZapInvoice(payData, zapRequest, 21_000))
+      .rejects.toThrow('Invoice quota exceeded')
   })
 })
 
@@ -155,9 +189,11 @@ describe('zap amount helpers', () => {
     ])).toBe(3500)
   })
 
-  it('formats sats with plain, k, and M output', () => {
+  it('formats sats with plain, k, and M output without aggressive rounding', () => {
     expect(formatZapAmount(999_000)).toBe('999')
     expect(formatZapAmount(21_000_000)).toBe('21k')
-    expect(formatZapAmount(1_250_000_000)).toBe('1.3M')
+    expect(formatZapAmount(1_500_000)).toBe('1.5k')
+    expect(formatZapAmount(999_600_000)).toBe('999.6k')
+    expect(formatZapAmount(1_250_000_000)).toBe('1.2M')
   })
 })
