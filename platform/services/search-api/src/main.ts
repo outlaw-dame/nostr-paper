@@ -82,6 +82,68 @@ function setupWebSocketServer() {
           const search = safeString(filter.search);
           if (!search) continue;
 
+          // ── Thread fetch ──────────────────────────────────────────────────
+          // thread_id:      fetch all events whose root_id = <event-id> (NIP-10 / NIP-22 by event id)
+          // thread_address: fetch all NIP-22 comments whose root_address = <naddr> (addressable roots)
+          const threadId      = safeString(filter.thread_id);
+          const threadAddress = safeString(filter.thread_address);
+
+          if (threadId || threadAddress) {
+            const limit = sanitizeLimit(filter.limit);
+            const kinds = safeArray<number>(filter.kinds);
+
+            let threadRows: { event_id: string; raw: unknown }[];
+
+            if (threadId) {
+              // Include the root event itself (er.id = $1) plus all descendants
+              // (sd.root_id = $1). Results ordered oldest-first for tree rendering.
+              const res = await db.query(
+                `
+                SELECT er.id AS event_id, er.raw, sd.created_at
+                FROM search_docs sd
+                JOIN events_raw er ON er.id = sd.event_id
+                WHERE
+                  sd.is_searchable = true
+                  AND sd.moderation_state = 'allowed'
+                  AND er.deleted_at IS NULL
+                  AND (sd.root_id = $1 OR er.id = $1)
+                  AND ($2::int[] IS NULL OR sd.kind = ANY($2))
+                ORDER BY sd.created_at ASC
+                LIMIT $3
+                `,
+                [threadId, kinds ?? null, limit],
+              );
+              threadRows = res.rows;
+            } else {
+              // Addressable root (e.g. NIP-23 article): fetch all NIP-22 comments.
+              const res = await db.query(
+                `
+                SELECT er.id AS event_id, er.raw, sd.created_at
+                FROM search_docs sd
+                JOIN events_raw er ON er.id = sd.event_id
+                WHERE
+                  sd.is_searchable = true
+                  AND sd.moderation_state = 'allowed'
+                  AND er.deleted_at IS NULL
+                  AND sd.root_address = $1
+                  AND ($2::int[] IS NULL OR sd.kind = ANY($2))
+                ORDER BY sd.created_at ASC
+                LIMIT $3
+                `,
+                [threadAddress, kinds ?? null, limit],
+              );
+              threadRows = res.rows;
+            }
+
+            for (const row of threadRows) {
+              ws.send(JSON.stringify(['EVENT', subId, row.raw]));
+            }
+            ws.send(JSON.stringify(['EOSE', subId]));
+            continue;
+          }
+          // ─────────────────────────────────────────────────────────────────
+
+
           const limit = sanitizeLimit(filter.limit);
 
           const kinds = safeArray<number>(filter.kinds);

@@ -122,17 +122,101 @@ async function sendToDlq(id: string, payload: string, err: unknown) {
   ));
 }
 
+// Kinds the lexical index ingests:
+//   1     = NIP-01 short note
+//   11    = NIP-7D thread root
+//   1111  = NIP-22 comment
+//   30023 = NIP-23 long-form article
+//   30024 = NIP-23 long-form draft
+const SUPPORTED_KINDS = new Set([1, 11, 1111, 30023, 30024]);
+
+interface ThreadRefs {
+  rootId: string | null;
+  rootAddress: string | null;
+  replyToId: string | null;
+  rootKind: string | null;
+  isReply: boolean;
+}
+
+/**
+ * NIP-10: extract thread references from marked (or legacy positional) e-tags.
+ * Used for kind-1 short notes and kind-11 threads.
+ */
+function extractNip10Refs(tags: string[][]): ThreadRefs {
+  const eTags = tags.filter(t => t[0] === 'e');
+  if (eTags.length === 0) {
+    return { rootId: null, rootAddress: null, replyToId: null, rootKind: null, isReply: false };
+  }
+
+  const rootTag  = eTags.find(t => t[3] === 'root');
+  const replyTag = eTags.find(t => t[3] === 'reply');
+
+  if (rootTag) {
+    const rootId    = rootTag[1]  ?? null;
+    const replyToId = replyTag ? (replyTag[1] ?? null) : rootId;
+    return { rootId, rootAddress: null, replyToId, rootKind: null, isReply: true };
+  }
+
+  // Legacy positional: first e-tag = root, last e-tag = direct parent.
+  const rootId    = eTags[0][1]                    ?? null;
+  const replyToId = eTags[eTags.length - 1][1]     ?? null;
+  return { rootId, rootAddress: null, replyToId, rootKind: null, isReply: true };
+}
+
+/**
+ * NIP-22: extract thread references from uppercase (root scope) and
+ * lowercase (parent scope) tags on kind-1111 comments.
+ *   E / A / K  = root event id / root address / root kind
+ *   e          = parent event id
+ */
+function extractNip22Refs(tags: string[][]): ThreadRefs {
+  const rootEventTag   = tags.find(t => t[0] === 'E');
+  const rootAddrTag    = tags.find(t => t[0] === 'A');
+  const rootKindTag    = tags.find(t => t[0] === 'K');
+  const parentEventTag = tags.find(t => t[0] === 'e');
+
+  const rootId      = rootEventTag?.[1]   ?? null;
+  const rootAddress = rootAddrTag?.[1]    ?? null;
+  const rootKind    = rootKindTag?.[1]    ?? null;
+  // Parent scope falls back to root if no intermediate comment exists yet.
+  const replyToId   = parentEventTag?.[1] ?? rootId;
+
+  return {
+    rootId,
+    rootAddress,
+    replyToId,
+    rootKind,
+    isReply: rootId !== null || rootAddress !== null,
+  };
+}
+
+/** Extract the `title` tag value (kind-11 threads, kind-30023/30024 articles). */
+function extractTitle(tags: string[][]): string | null {
+  const tag = tags.find(t => t[0] === 'title' && t[1]);
+  return tag?.[1] ?? null;
+}
+
 async function processMessage(payload: string) {
   const event = JSON.parse(payload);
 
-  if (event.kind !== 1) {
+  if (!SUPPORTED_KINDS.has(event.kind)) {
     return;
   }
 
-  const hashtags = extractHashtags(event.tags || []);
-  const mentions = extractMentions(event.tags || []);
-  const urls = extractUrls(event.content || '');
-  const searchText = buildSearchText(event.content || '', hashtags);
+  const tags: string[][] = event.tags || [];
+  const hashtags = extractHashtags(tags);
+  const mentions  = extractMentions(tags);
+  const urls      = extractUrls(event.content || '');
+  const title     = extractTitle(tags);
+  const refs: ThreadRefs =
+    event.kind === 1111 ? extractNip22Refs(tags) : extractNip10Refs(tags);
+
+  // Build search text: title first, then content, then hashtag tokens.
+  const textParts: string[] = [];
+  if (title) textParts.push(title);
+  if (event.content) textParts.push(event.content);
+  hashtags.forEach(h => textParts.push(`#${h}`));
+  const searchText = textParts.join(' ').trim();
 
   await pg.query('BEGIN');
 
@@ -140,9 +224,10 @@ async function processMessage(payload: string) {
     await pg.query(
       `
       INSERT INTO events_raw (
-        id, pubkey, kind, created_at, content, tags, raw, source_relay, source_type
+        id, pubkey, kind, created_at, content, tags, raw, source_relay, source_type,
+        reply_to_id, root_id, root_address, root_kind, is_reply
       )
-      VALUES ($1, $2, $3, to_timestamp($4), $5, $6, $7, $8, $9)
+      VALUES ($1, $2, $3, to_timestamp($4), $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       ON CONFLICT (id) DO NOTHING
       `,
       [
@@ -154,7 +239,12 @@ async function processMessage(payload: string) {
         event.tags,
         event.raw,
         event.source?.relay_url ?? null,
-        event.source?.source_type ?? 'unknown'
+        event.source?.source_type ?? 'unknown',
+        refs.replyToId,
+        refs.rootId,
+        refs.rootAddress,
+        refs.rootKind,
+        refs.isReply,
       ]
     );
 
@@ -164,6 +254,7 @@ async function processMessage(payload: string) {
         event_id,
         search_text,
         fts,
+        title_text,
         author_pubkey,
         kind,
         created_at,
@@ -171,7 +262,12 @@ async function processMessage(payload: string) {
         mentions,
         urls,
         moderation_state,
-        is_searchable
+        is_searchable,
+        reply_to_id,
+        root_id,
+        root_address,
+        root_kind,
+        is_reply
       )
       VALUES (
         $1,
@@ -179,30 +275,48 @@ async function processMessage(payload: string) {
         to_tsvector('simple', $2),
         $3,
         $4,
-        to_timestamp($5),
-        $6,
+        $5,
+        to_timestamp($6),
         $7,
         $8,
+        $9,
         'allowed',
-        true
+        true,
+        $10,
+        $11,
+        $12,
+        $13,
+        $14
       )
       ON CONFLICT (event_id) DO UPDATE
       SET
-        search_text = EXCLUDED.search_text,
-        fts = EXCLUDED.fts,
-        hashtags = EXCLUDED.hashtags,
-        mentions = EXCLUDED.mentions,
-        urls = EXCLUDED.urls
+        search_text  = EXCLUDED.search_text,
+        fts          = EXCLUDED.fts,
+        title_text   = EXCLUDED.title_text,
+        hashtags     = EXCLUDED.hashtags,
+        mentions     = EXCLUDED.mentions,
+        urls         = EXCLUDED.urls,
+        reply_to_id  = EXCLUDED.reply_to_id,
+        root_id      = EXCLUDED.root_id,
+        root_address = EXCLUDED.root_address,
+        root_kind    = EXCLUDED.root_kind,
+        is_reply     = EXCLUDED.is_reply
       `,
       [
         event.event_id,
         searchText,
+        title,
         event.pubkey,
         event.kind,
         event.created_at,
         hashtags,
         mentions,
-        urls
+        urls,
+        refs.replyToId,
+        refs.rootId,
+        refs.rootAddress,
+        refs.rootKind,
+        refs.isReply,
       ]
     );
 
@@ -218,15 +332,15 @@ async function processMessage(payload: string) {
       VALUES ($1, 1, 1, $2, to_timestamp($3))
       ON CONFLICT (pubkey) DO UPDATE
       SET
-        event_count = pubkey_usage.event_count + 1,
+        event_count            = pubkey_usage.event_count + 1,
         searchable_event_count = pubkey_usage.searchable_event_count + 1,
-        approx_storage_bytes = pubkey_usage.approx_storage_bytes + EXCLUDED.approx_storage_bytes,
-        last_active_at = GREATEST(pubkey_usage.last_active_at, EXCLUDED.last_active_at)
+        approx_storage_bytes   = pubkey_usage.approx_storage_bytes + EXCLUDED.approx_storage_bytes,
+        last_active_at         = GREATEST(pubkey_usage.last_active_at, EXCLUDED.last_active_at)
       `,
       [
         event.pubkey,
         Buffer.byteLength(JSON.stringify(event.raw ?? event), 'utf8'),
-        event.created_at
+        event.created_at,
       ]
     );
 
