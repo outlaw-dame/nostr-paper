@@ -15,6 +15,35 @@ const CONSUMER = `embed-${Math.random().toString(36).slice(2)}`;
 const MODEL_ID = process.env.EMBEDDING_MODEL_ID || 'Xenova/all-MiniLM-L6-v2';
 const MODEL_VERSION = Number(process.env.EMBEDDING_VERSION || 1);
 const MAX_RETRIES = Number(process.env.EMBED_MAX_RETRIES || 5);
+const METRICS_LOG_INTERVAL_MS = Number(process.env.METRICS_LOG_INTERVAL_MS || 60000);
+
+let processedMessages = 0;
+let failedMessages = 0;
+let dlqRoutedMessages = 0;
+let lastMetricsAt = Date.now();
+
+function maybeLogMetrics(force = false) {
+  const now = Date.now();
+  if (!force && now - lastMetricsAt < METRICS_LOG_INTERVAL_MS) {
+    return;
+  }
+
+  log.info(
+    {
+      processedMessages,
+      failedMessages,
+      dlqRoutedMessages,
+      consumer: CONSUMER,
+      group: GROUP,
+    },
+    'embedding worker metrics',
+  );
+
+  processedMessages = 0;
+  failedMessages = 0;
+  dlqRoutedMessages = 0;
+  lastMetricsAt = now;
+}
 
 let running = true;
 
@@ -187,11 +216,16 @@ async function run() {
           try {
             await processMessage(payload);
             await withRetry('xack', () => redis.xack(STREAM, GROUP, id));
+            processedMessages += 1;
+            maybeLogMetrics();
           } catch (err) {
+            failedMessages += 1;
             log.error({ err, id }, 'embedding failed');
             try {
               await sendToDlq(id, payload, err);
               await withRetry('xack', () => redis.xack(STREAM, GROUP, id));
+              dlqRoutedMessages += 1;
+              maybeLogMetrics();
             } catch (dlqErr) {
               log.error({ err: dlqErr, id }, 'failed routing embedding message to dlq');
             }
@@ -214,6 +248,7 @@ async function run() {
 }
 
 run().catch((err) => {
+  maybeLogMetrics(true);
   log.fatal({ err }, 'embedding worker crashed');
   process.exit(1);
 });

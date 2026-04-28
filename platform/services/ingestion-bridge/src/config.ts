@@ -11,6 +11,7 @@ const ConfigSchema = z.object({
   MAX_EVENT_BYTES: z.coerce.number().int().positive().default(131072),
   MAX_TAGS: z.coerce.number().int().positive().default(1000),
   MAX_MESSAGE_QUEUE: z.coerce.number().int().positive().default(5000),
+  METRICS_LOG_INTERVAL_MS: z.coerce.number().int().positive().default(60000),
   LOG_LEVEL: z.enum(['trace','debug','info','warn','error','fatal']).default('info')
 });
 

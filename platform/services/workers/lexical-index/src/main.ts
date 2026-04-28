@@ -13,6 +13,35 @@ const DLQ_STREAM = process.env.LEXICAL_DLQ_STREAM || 'events.ingest.dlq';
 const GROUP = 'lexical-index';
 const CONSUMER = `worker-${Math.random().toString(36).slice(2)}`;
 const MAX_RETRIES = Number(process.env.LEXICAL_MAX_RETRIES || 5);
+const METRICS_LOG_INTERVAL_MS = Number(process.env.METRICS_LOG_INTERVAL_MS || 60000);
+
+let processedMessages = 0;
+let failedMessages = 0;
+let dlqRoutedMessages = 0;
+let lastMetricsAt = Date.now();
+
+function maybeLogMetrics(force = false) {
+  const now = Date.now();
+  if (!force && now - lastMetricsAt < METRICS_LOG_INTERVAL_MS) {
+    return;
+  }
+
+  log.info(
+    {
+      processedMessages,
+      failedMessages,
+      dlqRoutedMessages,
+      consumer: CONSUMER,
+      group: GROUP,
+    },
+    'lexical worker metrics',
+  );
+
+  processedMessages = 0;
+  failedMessages = 0;
+  dlqRoutedMessages = 0;
+  lastMetricsAt = now;
+}
 
 function backoff(attempt: number) {
   const base = Math.min(1000 * 2 ** attempt, 30000);
@@ -251,11 +280,16 @@ async function run() {
         try {
           await processMessage(payload);
           await redis.xack(INGEST_STREAM, GROUP, id);
+          processedMessages += 1;
+          maybeLogMetrics();
         } catch (err) {
+          failedMessages += 1;
           log.error({ err, id }, 'failed processing lexical message');
           try {
             await sendToDlq(id, payload, err);
             await redis.xack(INGEST_STREAM, GROUP, id);
+            dlqRoutedMessages += 1;
+            maybeLogMetrics();
           } catch (dlqErr) {
             log.error({ err: dlqErr, id }, 'failed routing lexical message to dlq');
           }
@@ -266,6 +300,7 @@ async function run() {
 }
 
 run().catch((err) => {
+  maybeLogMetrics(true);
   log.fatal({ err }, 'lexical worker crashed');
   process.exit(1);
 });

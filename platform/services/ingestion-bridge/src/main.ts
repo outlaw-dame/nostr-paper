@@ -15,6 +15,35 @@ const DEDUPE_PREFIX = `ingestion-bridge:${config.BRIDGE_NAME}:dedupe:`;
 let ws: WebSocket | null = null;
 let stopped = false;
 let lastPersistedTs: number | null = null;
+let droppedByBackpressure = 0;
+let acceptedEvents = 0;
+let validationRejected = 0;
+let maxQueuedMessages = 0;
+let lastMetricsAt = Date.now();
+
+function maybeLogMetrics(force = false) {
+  const now = Date.now();
+  if (!force && now - lastMetricsAt < config.METRICS_LOG_INTERVAL_MS) {
+    return;
+  }
+
+  logger.info(
+    {
+      acceptedEvents,
+      validationRejected,
+      droppedByBackpressure,
+      maxQueuedMessages,
+      queueLimit: config.MAX_MESSAGE_QUEUE,
+    },
+    'ingestion bridge metrics',
+  );
+
+  acceptedEvents = 0;
+  validationRejected = 0;
+  droppedByBackpressure = 0;
+  maxQueuedMessages = 0;
+  lastMetricsAt = now;
+}
 
 function buildSince(nowSec: number, lastTs: number | null) {
   if (lastTs == null) {
@@ -30,6 +59,7 @@ function makeSubId() {
 async function handleEvent(raw: any) {
   const v = validateAndVerifyEvent(raw, { maxBytes: config.MAX_EVENT_BYTES, maxTags: config.MAX_TAGS });
   if (!v.ok) {
+    validationRejected += 1;
     logger.warn({ reason: v.reason }, 'event rejected by validation');
     return;
   }
@@ -62,6 +92,7 @@ async function handleEvent(raw: any) {
   };
 
   await publishEvent(redis, config.REDIS_STREAM, envelope);
+  acceptedEvents += 1;
 
   // Keep redis state monotonic and avoid redundant writes under event bursts.
   if (lastPersistedTs == null || e.created_at > lastPersistedTs) {
@@ -111,10 +142,13 @@ function connectLoop() {
       let queuedMessages = 0;
       ws.on('message', (data) => {
         if (queuedMessages >= config.MAX_MESSAGE_QUEUE) {
+          droppedByBackpressure += 1;
+          maybeLogMetrics();
           logger.warn({ maxQueue: config.MAX_MESSAGE_QUEUE }, 'dropping message due to queue backpressure');
           return;
         }
         queuedMessages += 1;
+        maxQueuedMessages = Math.max(maxQueuedMessages, queuedMessages);
         messageQueue = messageQueue
           .then(async () => {
             try {
@@ -151,6 +185,8 @@ function connectLoop() {
 
       if (stopped) break;
 
+      maybeLogMetrics();
+
       const delay = nextDelay(attempt++);
       logger.warn({ delay }, 'ws closed, reconnecting');
       await new Promise(r => setTimeout(r, delay));
@@ -169,6 +205,7 @@ async function main() {
   const shutdown = async () => {
     if (stopped) return;
     stopped = true;
+    maybeLogMetrics(true);
     logger.info('shutting down');
     try { ws?.close(); } catch {}
     try { await redis.quit(); } catch {}
