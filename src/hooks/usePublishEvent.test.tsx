@@ -207,7 +207,7 @@ describe('usePublishEvent', () => {
       return api
     }
 
-    let firstPublish: Promise<string | null>
+    let firstPublish!: Promise<string | null>
     await act(async () => {
       firstPublish = getApi().publish((signal: AbortSignal) => {
         return new Promise((_, reject) => {
@@ -224,7 +224,7 @@ describe('usePublishEvent', () => {
       secondId = await getApi().publish(async () => ({ id: 'evt-456' }))
     })
 
-    expect(await firstPublish!).toBeNull()
+    expect(await firstPublish).toBeNull()
     expect(secondId).toBe('evt-456')
   })
 })
