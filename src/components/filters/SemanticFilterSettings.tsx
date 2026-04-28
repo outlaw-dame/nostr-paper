@@ -15,8 +15,8 @@ import { motion, AnimatePresence } from 'motion/react'
 import { useSemanticFilterSettings } from '@/hooks/useSemanticFilterSettings'
 import { useKeywordFilters } from '@/hooks/useKeywordFilters'
 import { FilterTipsPanel } from '@/components/filters/FilterTipsPanel'
-import { FILTER_PRESETS, getPresetsByCategory } from '@/lib/filters/presets'
-import type { CreateFilterInput } from '@/lib/filters/types'
+import { getPresetsByCategory } from '@/lib/filters/presets'
+import type { FilterPreset , FILTER_PRESETS} from '@/lib/filters/presets'
 
 // ── Quick Stats ───────────────────────────────────────────────────────────────
 
@@ -452,7 +452,7 @@ export function SemanticFilterSettings() {
   const [contentPresets] = useState(() => getPresetsByCategory('content'))
   const [spamPresets] = useState(() => getPresetsByCategory('spam'))
 
-  const handleApplyPreset = useCallback(async (preset: typeof FILTER_PRESETS[0]) => {
+  const handleApplyPreset = useCallback(async (preset: FilterPreset) => {
     setApplyingPreset(preset.id)
     try {
       for (const filterData of preset.filters) {

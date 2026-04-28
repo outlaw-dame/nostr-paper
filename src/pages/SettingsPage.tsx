@@ -131,7 +131,6 @@ export default function SettingsPage() {
         setSpotifyConnecting(false)
         navigate('/settings', { replace: true })
       })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {

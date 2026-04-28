@@ -130,11 +130,11 @@ export default function SearchPage() {
   )
   const {
     allowedIds: allowedEventIds,
-    loading: eventModerationLoading,
+    loading: _eventModerationLoading,
   } = useModerationDocuments(eventModerationDocuments)
   const {
     allowedIds: allowedProfileIds,
-    loading: profileModerationLoading,
+    loading: _profileModerationLoading,
   } = useModerationDocuments(profileModerationDocuments)
   const visibleEvents = useMemo(
     () => filterNsfwTaggedEvents(
@@ -391,7 +391,7 @@ function EventResult({
   semanticResult,
 }: {
   event: NostrEvent
-  checkEvent: (event: NostrEvent, profile?: Profile) => FilterCheckResult
+  checkEvent: (_event: NostrEvent, _profile?: Profile) => FilterCheckResult
   semanticResult: FilterCheckResult
 }) {
   const { profile } = useProfile(event.pubkey, { background: false })

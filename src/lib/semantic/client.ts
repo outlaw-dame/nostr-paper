@@ -14,6 +14,8 @@ let worker: Worker | null = null
 let seq = 0
 let fatalInitError: Error | null = null
 
+const SEMANTIC_UNAVAILABLE_MESSAGE = 'Semantic search is unavailable in this environment.'
+
 const pending = new Map<number, {
   resolve: (value: unknown) => void
   reject: (reason: unknown) => void
@@ -26,6 +28,11 @@ function abortError(): DOMException {
 
 function normalizeSemanticError(error: unknown): Error {
   const message = error instanceof Error ? error.message : String(error)
+  
+  if (message === SEMANTIC_UNAVAILABLE_MESSAGE) {
+    return error instanceof Error ? error : new Error(message)
+  }
+
   if (
     message.includes('not valid JSON') ||
     message.includes('<!doctype') ||
@@ -72,7 +79,11 @@ function getWorker(): Worker {
 
     worker.onerror = (event) => {
       const message = event.message || 'Semantic worker crashed'
-      rejectPending(new Error(message))
+      const normalized = normalizeSemanticError(new Error(message))
+      if (isFatalSemanticInitError(normalized)) {
+        fatalInitError = normalized
+      }
+      rejectPending(normalized)
       worker?.terminate()
       worker = null
     }
@@ -87,7 +98,7 @@ function getWorker(): Worker {
   return worker
 }
 
-type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 
 function send<T>(
   request: DistributiveOmit<SemanticWorkerRequest, 'id'>,
@@ -103,6 +114,10 @@ function send<T>(
     const id = seq++
     const semanticWorker = getWorker()
     let settled = false
+
+    const abortListener = signal
+      ? () => settleReject(abortError())
+      : null
 
     const cleanup = () => {
       if (abortListener) signal?.removeEventListener('abort', abortListener)
@@ -129,11 +144,9 @@ function send<T>(
       settleReject(new Error(`Semantic worker timeout after ${timeoutMs}ms`))
     }, timeoutMs)
 
-    const abortListener = signal
-      ? () => settleReject(abortError())
-      : null
-
-    if (abortListener) signal?.addEventListener('abort', abortListener, { once: true })
+    if (abortListener && signal) {
+      signal.addEventListener('abort', abortListener, { once: true })
+    }
 
     pending.set(id, {
       resolve: settleResolve,

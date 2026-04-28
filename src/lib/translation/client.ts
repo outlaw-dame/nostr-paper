@@ -25,6 +25,8 @@ import {
 import { listLingvaLanguages, translateWithLingva } from '@/lib/translation/engines/lingva'
 import { getGemmaTransportSummary, listGemmaLanguages, translateWithGemma } from '@/lib/translation/engines/gemma'
 import { getGeminiTransportSummary, listGeminiLanguages, translateWithGemini } from '@/lib/translation/engines/gemini'
+import { decideTranslationProvider } from '@/lib/ai/taskPolicy'
+import { recordTaskPolicyOutcome } from '@/lib/ai/taskPolicyTelemetry'
 import { isRecord } from '@/lib/translation/utils'
 
 export interface TranslationLanguage {
@@ -998,14 +1000,20 @@ export async function translateTextWithConfiguration(
     throw new TranslationServiceError('Nothing to translate.', { code: 'config' })
   }
 
-  const preflight = inspectTranslationWithConfiguration(configuration, normalizedText)
+  const selection = decideTranslationProvider(configuration, normalizedText)
+  const effectiveConfiguration: TranslationConfiguration = {
+    ...configuration,
+    provider: selection.provider,
+  }
+
+  const preflight = inspectTranslationWithConfiguration(effectiveConfiguration, normalizedText)
   if (preflight.sameLanguage) {
     throw new TranslationServiceError('Text already matches your target language.', {
       code: 'same-language',
     })
   }
 
-  const cacheKey = buildCacheKey(configuration, normalizedText)
+  const cacheKey = buildCacheKey(effectiveConfiguration, normalizedText)
   const cached = translationCache.get(cacheKey)
   if (cached) {
     return cached
@@ -1017,33 +1025,60 @@ export async function translateTextWithConfiguration(
   }
 
   const promise = (async () => {
+    const startedAt = performance.now()
     let result: TranslationResult
-    switch (configuration.provider) {
-      case 'deepl':
-        result = await translateWithDeepL(configuration, normalizedText, signal)
-        break
-      case 'libretranslate':
-        result = await translateWithLibreTranslate(configuration, normalizedText, signal)
-        break
-      case 'translang':
-        result = await callTranslang(configuration, normalizedText, signal)
-        break
-      case 'lingva':
-        result = await callLingva(configuration, normalizedText, signal)
-        break
-      case 'small100':
-        result = await callSmall100(configuration, normalizedText, signal)
-        break
-      case 'opusmt':
-        result = await callOpusMt(configuration, normalizedText, signal)
-        break
-      case 'gemma':
-        result = await callGemma(configuration, normalizedText, signal)
-        break
-      case 'gemini':
-        result = await callGemini(configuration, normalizedText, signal)
-        break
+    try {
+      switch (effectiveConfiguration.provider) {
+        case 'deepl':
+          result = await translateWithDeepL(effectiveConfiguration, normalizedText, signal)
+          break
+        case 'libretranslate':
+          result = await translateWithLibreTranslate(effectiveConfiguration, normalizedText, signal)
+          break
+        case 'translang':
+          result = await callTranslang(effectiveConfiguration, normalizedText, signal)
+          break
+        case 'lingva':
+          result = await callLingva(effectiveConfiguration, normalizedText, signal)
+          break
+        case 'small100':
+          result = await callSmall100(effectiveConfiguration, normalizedText, signal)
+          break
+        case 'opusmt':
+          result = await callOpusMt(effectiveConfiguration, normalizedText, signal)
+          break
+        case 'gemma':
+          result = await callGemma(effectiveConfiguration, normalizedText, signal)
+          break
+        case 'gemini':
+          result = await callGemini(effectiveConfiguration, normalizedText, signal)
+          break
+      }
+    } catch (error) {
+      recordTaskPolicyOutcome({
+        task: 'translation',
+        runtime: effectiveConfiguration.provider,
+        success: false,
+        latencyMs: Math.round(performance.now() - startedAt),
+        error: error instanceof Error ? error.message : String(error),
+        context: {
+          textLength: normalizedText.length,
+          targetLanguage: getConfiguredTargetLanguage(effectiveConfiguration),
+        },
+      })
+      throw error
     }
+
+    recordTaskPolicyOutcome({
+      task: 'translation',
+      runtime: effectiveConfiguration.provider,
+      success: true,
+      latencyMs: Math.round(performance.now() - startedAt),
+      context: {
+        textLength: normalizedText.length,
+        targetLanguage: result.targetLanguage,
+      },
+    })
 
     evictTranslationCacheIfNeeded()
     translationCache.set(cacheKey, result)

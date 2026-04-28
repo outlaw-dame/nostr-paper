@@ -75,6 +75,21 @@ export interface RankedHybridMatch<T> {
   hybridScore: number
 }
 
+/**
+ * Strip leading `#` from standalone hashtag tokens so "#Apple" and "Apple"
+ * are treated identically throughout the entire search pipeline — intent
+ * classification, lexical scoring, and semantic ranking all see the same form.
+ *
+ * "#Bitcoin #nostr" → "bitcoin nostr"  (lowercased by the FTS layer later)
+ * "#Apple"          → "Apple"
+ * "domain:foo.com"  → "domain:foo.com"  (extension keys untouched)
+ */
+function normalizeHashtagQuery(query: string): string {
+  // Match # only when it immediately follows the start of the string or whitespace,
+  // i.e. a standalone hashtag token — not a fragment of a URL or filter key.
+  return query.replace(/(^|\s)#(\w)/g, '$1$2').trim()
+}
+
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw new DOMException('Aborted', 'AbortError')
@@ -334,6 +349,8 @@ export async function hybridSearchEvents(
     semanticQueryOverride?: string
   } = {},
 ): Promise<HybridSearchResponse<NostrEvent>> {
+  // Normalise up front so "#Apple" and "Apple" are identical everywhere below.
+  query = normalizeHashtagQuery(query)
   const { signal, lexicalOnly, explain, semanticQueryOverride, ...searchOptions } = opts
   const limit = Math.min(opts.limit ?? 50, 200)
   const lexicalLimit = Math.min(Math.max(limit * 2, limit), 240)
@@ -435,6 +452,8 @@ export async function hybridSearchProfiles(
   lexicalOnly = false,
   explain = false,
 ): Promise<HybridSearchResponse<Profile>> {
+  // Normalise up front so "#Apple" and "Apple" are identical everywhere below.
+  query = normalizeHashtagQuery(query)
   const cappedLimit = Math.min(limit, 100)
   const lexicalLimit = Math.min(Math.max(cappedLimit * 2, cappedLimit), 120)
   const lexicalResults = await searchProfilesWithScores(query, lexicalLimit)

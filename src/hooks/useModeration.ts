@@ -164,7 +164,6 @@ export function useModerationDocuments(
     // content, so reference-only changes (same array content, new object) do not
     // re-trigger a relay fetch. Including `documents` caused a Tagr relay query
     // on every parent re-render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, signature])
 
   const allowedIds = useMemo(

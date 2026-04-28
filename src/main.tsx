@@ -11,12 +11,14 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { registerSW } from 'virtual:pwa-register'
+import { isLocalDevelopmentHost } from '@/lib/runtime/localhost'
 import App from './App'
 import './styles/global.css'
 import { beginBootSession, markBootStage, recordBootFailure } from '@/lib/runtime/startupDiagnostics'
 
-// Always disable SW in dev to avoid stale-cache reload loops during local testing.
-const shouldSkipServiceWorker = import.meta.env.DEV
+// Disable SW on local hosts (dev server and local preview) to avoid stale-cache
+// loops and hashed-asset mismatches while iterating.
+const shouldSkipServiceWorker = import.meta.env.DEV || isLocalDevelopmentHost(window.location.hostname)
 const shouldRegisterServiceWorker = !shouldSkipServiceWorker
 const LOCAL_CACHE_PREFIXES = ['nostr-paper-', 'workbox-'] as const
 

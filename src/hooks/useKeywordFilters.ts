@@ -150,7 +150,6 @@ export function useEventFilterCheck() {
       return checkEventText(fields, effectiveFilters)
     },
     // Intentionally depend on _filters reference — tick() forces a new one
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [_filters, _loading],
   )
 }
@@ -171,7 +170,6 @@ export function useProfileFilterCheck() {
       return checkProfileText(fields, effectiveFilters)
     },
     // Intentionally depend on _filters reference — tick() forces a new one
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [_filters, _loading],
   )
 }
@@ -218,7 +216,6 @@ export function useSemanticFiltering(events: NostrEvent[]): Map<string, FilterCh
     return getEffectiveKeywordFilters(_filters).filter(
       f => f.enabled && f.semantic && (f.expiresAt === null || f.expiresAt > now),
     )
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [_filters])
 
   useEffect(() => {
