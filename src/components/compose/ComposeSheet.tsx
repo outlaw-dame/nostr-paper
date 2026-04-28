@@ -19,6 +19,8 @@ import { buildComposeFallbackSuggestion } from '@/lib/ai/insights'
 import { generateAssistText, type AiAssistProvider, type AiAssistSource } from '@/lib/ai/gemmaAssist'
 import { AI_ASSIST_PROVIDER_UPDATED_EVENT, getAiAssistProvider, setAiAssistProvider } from '@/lib/ai/provider'
 import { applyHashtagSuggestion } from '@/lib/compose/hashtags'
+import { readDraft, writeDraft, clearDraft, type DraftContext } from '@/lib/compose/drafts'
+import { usePublishEvent } from '@/hooks/usePublishEvent'
 import {
   clearComposeSearch,
   getComposeQuoteReference,
@@ -307,8 +309,9 @@ export function ComposeSheet() {
   const [media,         setMedia]         = useState<BlossomBlob[]>([])
   const [selectedGifs,  setSelectedGifs]  = useState<TenorGif[]>([])
   const [showGifPicker, setShowGifPicker] = useState(false)
-  const [publishing,    setPublishing]    = useState(false)
-  const [error,         setError]         = useState<string | null>(null)
+  const { isPublishing: publishing, error: publishError, publish: publishEvent, reset: resetPublish } = usePublishEvent()
+  const [validationError, setValidationError] = useState<string | null>(null)
+  const error = publishError ?? validationError
   const [altTexts,      setAltTexts]      = useState<Record<string, string>>({})
   const [editingAltFor, setEditingAltFor] = useState<string | null>(null)
   const [composeAdvice, setComposeAdvice] = useState('')
@@ -366,6 +369,12 @@ export function ComposeSheet() {
     replies: threadReplies,
     loading: threadRepliesLoading,
   } = useConversationThread(replyTarget)
+
+  const draftContext = useMemo((): DraftContext => {
+    if (replyReference) return `reply:${replyReference}`
+    if (quoteReference) return `quote:${quoteReference}`
+    return 'note'
+  }, [replyReference, quoteReference])
 
   const draftTone = useMemo(() => analyzeTone(suggestionContext), [suggestionContext])
   const draftTokens = useMemo(() => new Set(tokenizeWords(suggestionContext)), [suggestionContext])
@@ -655,6 +664,8 @@ export function ComposeSheet() {
 
   useEffect(() => {
     if (!open) {
+      resetPublish()
+      setValidationError(null)
       setBody('')
       setThreadTitle('')
       setPublishMode('note')
@@ -662,21 +673,31 @@ export function ComposeSheet() {
       setMedia([])
       setSelectedGifs([])
       setShowGifPicker(false)
-      setError(null)
-      setPublishing(false)
       setAltTexts({})
       setEditingAltFor(null)
       return
     }
 
-    setBody('')
-    setThreadTitle('')
-    setPublishMode('note')
+    resetPublish()
+    setValidationError(null)
+
+    const savedDraft = readDraft(
+      replyReference ? `reply:${replyReference}` :
+      quoteReference ? `quote:${quoteReference}` :
+      'note'
+    )
+    setBody(savedDraft?.body ?? '')
+    if (savedDraft?.threadTitle) {
+      setThreadTitle(savedDraft.threadTitle)
+      setPublishMode('thread')
+    } else {
+      setThreadTitle('')
+      setPublishMode('note')
+    }
     setStoryMode(!quoteReference && !replyReference && storyIntent)
     setMedia([])
     setSelectedGifs([])
     setShowGifPicker(false)
-    setError(null)
     setAltTexts({})
     setEditingAltFor(null)
 
@@ -686,6 +707,19 @@ export function ComposeSheet() {
 
     return () => window.clearTimeout(timer)
   }, [open, quoteReference, replyReference, storyIntent])
+
+  // Auto-save draft as user types (debounced 500 ms).
+  useEffect(() => {
+    if (!open || publishing) return
+    const timer = window.setTimeout(() => {
+      if (body.trim().length > 0 || threadTitle.trim().length > 0) {
+        writeDraft(draftContext, { body, ...(threadTitle.trim() ? { threadTitle } : {}) })
+      } else {
+        clearDraft(draftContext)
+      }
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [open, body, threadTitle, draftContext, publishing])
 
   const closeComposer = () => {
     if (publishing) return
@@ -702,40 +736,40 @@ export function ComposeSheet() {
     if (publishing) return
 
     if (!currentUser) {
-      setError('No signer available — install and unlock a NIP-07 extension to publish.')
+      setValidationError('No signer available — install and unlock a NIP-07 extension to publish.')
       return
     }
 
     if (targetReference && !targetEvent) {
-      setError(targetInvalid
+      setValidationError(targetInvalid
         ? (replyReference ? 'Invalid reply target reference.' : 'Invalid quoted event reference.')
         : (replyReference ? 'Reply target is still loading.' : 'Quoted event is still loading.'))
       return
     }
 
-    setPublishing(true)
-    setError(null)
+    setValidationError(null)
 
-    try {
-      const published = replyTarget
-        ? await (replyingToKind1
-          ? publishTextReply({ target: replyTarget, body })
-          : publishComment({ target: replyTarget, body }))
+    const id = await publishEvent((signal) =>
+      replyTarget
+        ? (replyingToKind1
+          ? publishTextReply({ target: replyTarget, body, signal })
+          : publishComment({ target: replyTarget, body, signal }))
         : threadMode
-          ? await publishThread({ title: threadTitle, body })
-          : await publishNote({
+          ? publishThread({ title: threadTitle, body, signal })
+          : publishNote({
               body,
               quoteTarget,
               media,
               expiresAt: storyMode ? Math.floor(Date.now() / 1000) + STORY_EXPIRATION_SECONDS : null,
               gifUrls: selectedGifs.map((g) => g.gifUrl),
               mediaAlt: altTexts,
+              signal,
             })
+    )
 
-      navigate(`/note/${published.id}`, { replace: true })
-    } catch (publishError: unknown) {
-      setError(publishError instanceof Error ? publishError.message : 'Failed to publish note.')
-      setPublishing(false)
+    if (id) {
+      clearDraft(draftContext)
+      navigate(`/note/${id}`, { replace: true })
     }
   }
 

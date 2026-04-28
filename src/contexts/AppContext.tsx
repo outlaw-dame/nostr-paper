@@ -13,6 +13,7 @@ import React, {
 } from 'react'
 import { bootstrap } from '@/lib/bootstrap'
 import { runMaintenance } from '@/lib/db/nostr'
+import { pruneExpiredDrafts } from '@/lib/compose/drafts'
 import { AppContext, type AppAction, type AppState } from '@/contexts/app-context'
 import { syncCurrentUserContactList } from '@/lib/nostr/contacts'
 import { refreshNip05Verifications } from '@/lib/nostr/nip05'
@@ -80,6 +81,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     performLogout()
     dispatch({ type: 'SET_USER', payload: null })
   }
+
+  // Prune stale drafts once on mount — fire-and-forget, non-blocking.
+  useEffect(() => {
+    pruneExpiredDrafts()
+  }, [])
 
   // Online/offline tracking
   useEffect(() => {
