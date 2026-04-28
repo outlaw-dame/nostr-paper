@@ -14,7 +14,7 @@ vi.mock('@nostr-dev-kit/ndk', () => {
     content = ''
     tags: string[][] = []
 
-    constructor(_ndk: unknown) {
+    constructor() {
       eventInstances.push(this)
     }
 
@@ -135,14 +135,16 @@ describe('SettingsPage display name publishing', () => {
       .find((node) => (node as HTMLInputElement).placeholder === 'How your name appears') as HTMLInputElement | undefined
 
     expect(input).toBeTruthy()
-    await setInputValue(input!, 'Alice 🚀 Updated')
+    if (!input) throw new Error('Expected display name input to be present')
+    await setInputValue(input, 'Alice 🚀 Updated')
 
     const saveButton = Array
       .from(container.querySelectorAll('button'))
       .find((button) => button.textContent?.includes('Save Profile'))
 
     expect(saveButton).toBeTruthy()
-    await click(saveButton!)
+    if (!saveButton) throw new Error('Expected Save Profile button to be present')
+    await click(saveButton)
 
     await act(async () => {
       await Promise.resolve()
@@ -152,7 +154,8 @@ describe('SettingsPage display name publishing', () => {
     expect(publishMock).toHaveBeenCalledTimes(1)
     expect(eventInstances.length).toBeGreaterThan(0)
 
-    const published = eventInstances[eventInstances.length - 1]!
+    const published = eventInstances[eventInstances.length - 1]
+    if (!published) throw new Error('Expected published event instance')
     expect(published.kind).toBe(0)
 
     const payload = JSON.parse(published.content ?? '{}') as Record<string, string>

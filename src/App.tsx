@@ -127,13 +127,12 @@ function InnerApp() {
             onClick={async () => {
               try {
                 const root = await navigator.storage.getDirectory()
-                // @ts-expect-error — standard Web API
-                for await (const name of root.keys()) {
+                for await (const name of (root as unknown as { keys: () => AsyncIterable<string> }).keys()) {
                   await root.removeEntry(name, { recursive: true })
                 }
                 window.location.reload()
               } catch {
-                alert('Failed to clear data automatically. Please clear site data in DevTools > Application.')
+                window.alert('Failed to clear data automatically. Please clear site data in DevTools > Application.')
               }
             }}
             className="mt-8 rounded-full bg-[rgb(var(--color-label))] px-6 py-3 text-[15px] font-medium text-[rgb(var(--color-bg))] active:opacity-80"
@@ -214,9 +213,11 @@ export default function App() {
   return (
     <AppProvider>
       <KonstaApp theme="ios" dark={false} safeAreas>
-        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-          <InnerApp />
-        </BrowserRouter>
+        <AppErrorBoundary>
+          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+            <InnerApp />
+          </BrowserRouter>
+        </AppErrorBoundary>
       </KonstaApp>
     </AppProvider>
   )

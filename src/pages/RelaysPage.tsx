@@ -259,6 +259,19 @@ function StatusDot({ status }: { status: NDKRelayStatus }) {
   )
 }
 
+/* eslint-disable no-unused-vars */
+interface RelayRowProps {
+  entry: RelayEntry
+  isDefault: boolean
+  health: RelayHealthSnapshot | undefined
+  retryAvailable: boolean
+  retrying: boolean
+  onRetry(url: string): void
+  onToggleCapability(url: string, capability: 'read' | 'write'): void
+  onRemove(url: string): void
+}
+/* eslint-enable no-unused-vars */
+
 function RelayRow({
   entry,
   isDefault,
@@ -268,16 +281,7 @@ function RelayRow({
   onRetry,
   onToggleCapability,
   onRemove,
-}: {
-  entry: RelayEntry
-  isDefault: boolean
-  health: RelayHealthSnapshot | undefined
-  retryAvailable: boolean
-  retrying: boolean
-  onRetry: (url: string) => void
-  onToggleCapability: (url: string, capability: 'read' | 'write') => void
-  onRemove: (url: string) => void
-}) {
+}: RelayRowProps) {
   const { label } = statusMeta(entry.status)
   const hostname = hostnameOf(entry.url)
   const connected = isConnected(entry.status)
@@ -441,7 +445,7 @@ export default function RelaysPage() {
   const [adding, setAdding] = useState(false)
   const [relayError, setRelayError] = useState<string | null>(null)
   const [relayHealth, setRelayHealth] = useState<Record<string, RelayHealthSnapshot>>({})
-  const [relayHealthCheckedAt, setRelayHealthCheckedAt] = useState<Record<string, number>>({})
+  const [, setRelayHealthCheckedAt] = useState<Record<string, number>>({})
   const [importingRemote, setImportingRemote] = useState(false)
   const [importNotice, setImportNotice] = useState<string | null>(null)
   const [retryingRelayUrl, setRetryingRelayUrl] = useState<string | null>(null)
@@ -598,7 +602,7 @@ export default function RelaysPage() {
         refresh()
         setAdding(false)
       }, 300)
-    } catch (err) {
+    } catch {
       setAddError(tApp('relaysAddFailed'))
       setAdding(false)
     }

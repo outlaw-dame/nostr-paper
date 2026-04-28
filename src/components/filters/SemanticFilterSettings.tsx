@@ -179,15 +179,15 @@ function ThresholdSettings() {
           <p className="text-[12px] leading-relaxed text-[rgb(var(--color-label-secondary))]">
             {settings.threshold < 0.3 ? (
               <>
-                <span className="font-medium">Very Strict:</span> Only catches very similar terms. "violence" won't match "conflict".
+                <span className="font-medium">Very Strict:</span> Only catches very similar terms. &quot;violence&quot; won&apos;t match &quot;conflict&quot;.
               </>
             ) : settings.threshold < 0.45 ? (
               <>
-                <span className="font-medium">Recommended:</span> Catches strong synonyms. "violence" matches "assault", "brutality", etc.
+                <span className="font-medium">Recommended:</span> Catches strong synonyms. &quot;violence&quot; matches &quot;assault&quot;, &quot;brutality&quot;, etc.
               </>
             ) : settings.threshold < 0.7 ? (
               <>
-                <span className="font-medium">Moderate:</span> Broader matching. "violence" also matches related concepts like "danger".
+                <span className="font-medium">Moderate:</span> Broader matching. &quot;violence&quot; also matches related concepts like &quot;danger&quot;.
               </>
             ) : (
               <>
@@ -405,7 +405,7 @@ function QuickAddFilter() {
                   Use Semantic Matching
                 </p>
                 <p className="text-[11px] text-[rgb(var(--color-label-tertiary))]">
-                  Catch similar words like "violence" → "assault"
+                  Catch similar words like &quot;violence&quot; → &quot;assault&quot;
                 </p>
               </div>
             </label>
@@ -473,7 +473,7 @@ export function SemanticFilterSettings() {
           Semantic Filtering
         </p>
         <p className="text-[15px] leading-snug text-[rgb(var(--color-label-secondary))]">
-          Use AI to detect similar concepts. "violence" catches "assault", "brutality", etc. without manual enumeration.
+          Use AI to detect similar concepts. &quot;violence&quot; catches &quot;assault&quot;, &quot;brutality&quot;, etc. without manual enumeration.
         </p>
       </div>
 
