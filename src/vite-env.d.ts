@@ -50,6 +50,12 @@ interface ImportMetaEnv {
    * through the Vite WebSocket relay proxy instead of directly to the relay.
    */
   readonly VITE_TAGR_RELAY_URL?: string
+  /**
+   * Optional Nostr-compatible platform search relay URL. When set, thread
+   * views can hydrate root conversations through `thread_id` and
+   * `thread_address` filters before falling back to public relays.
+   */
+  readonly VITE_PLATFORM_SEARCH_RELAY_URL?: string
 }
 
 interface ImportMeta {

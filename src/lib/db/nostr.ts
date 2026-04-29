@@ -1762,6 +1762,9 @@ function rowToProfile(row: DBProfile): Profile {
   if (row.nip05_verified_at !== null) {
     profile.nip05VerifiedAt = row.nip05_verified_at
   }
+  if (row.nip05_last_checked_at !== null) {
+    profile.nip05LastCheckedAt = row.nip05_last_checked_at
+  }
   if (row.lud06        !== null) profile.lud06        = row.lud06
   if (row.lud16        !== null) profile.lud16        = row.lud16
   if (row.bot === 1) profile.bot = true

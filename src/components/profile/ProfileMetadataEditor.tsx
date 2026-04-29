@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
-import { NDKEvent } from '@nostr-dev-kit/ndk'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { BlossomUpload } from '@/components/blossom/BlossomUpload'
 import { useApp } from '@/contexts/app-context'
-import { getNDK } from '@/lib/nostr/ndk'
-import { withRetry } from '@/lib/retry'
+import { getProfile } from '@/lib/db/nostr'
+import { publishProfileMetadata } from '@/lib/nostr/metadata'
 import {
   isSafeMediaURL,
   isSafeURL,
@@ -11,11 +10,52 @@ import {
   sanitizeAbout,
   sanitizeName,
 } from '@/lib/security/sanitize'
-import type { Profile } from '@/types'
+import type { Profile, ProfileMetadata } from '@/types'
 
 interface ProfileMetadataEditorProps {
   pubkey: string
   profile: Profile | null
+}
+
+interface FieldErrors {
+  name?: string
+  picture?: string
+  banner?: string
+  website?: string
+  nip05?: string
+  lud16?: string
+}
+
+function validateFields(fields: {
+  name: string
+  picture: string
+  banner: string
+  website: string
+  nip05: string
+  lud16: string
+}): FieldErrors {
+  const errors: FieldErrors = {}
+
+  if (fields.name && !sanitizeName(fields.name)) {
+    errors.name = 'Name contains disallowed characters.'
+  }
+  if (fields.picture && !isSafeMediaURL(fields.picture)) {
+    errors.picture = 'Must be an HTTPS image URL.'
+  }
+  if (fields.banner && !isSafeMediaURL(fields.banner)) {
+    errors.banner = 'Must be an HTTPS image URL.'
+  }
+  if (fields.website && !isSafeURL(fields.website)) {
+    errors.website = 'Must start with https://.'
+  }
+  if (fields.nip05 && !isValidNip05Format(fields.nip05)) {
+    errors.nip05 = 'Must be in user@domain.com format.'
+  }
+  if (fields.lud16 && !/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(fields.lud16.trim())) {
+    errors.lud16 = 'Must be a valid Lightning address (user@domain.com).'
+  }
+
+  return errors
 }
 
 export function ProfileMetadataEditor({ pubkey, profile }: ProfileMetadataEditorProps) {
@@ -30,10 +70,12 @@ export function ProfileMetadataEditor({ pubkey, profile }: ProfileMetadataEditor
   const [lud16, setLud16] = useState(profile?.lud16 ?? '')
 
   const [saving, setSaving] = useState(false)
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  const saveInflightRef = useRef(false)
 
-  // Sync state with profile when it loads, if the user hasn't started editing
+  // Sync state with profile when it loads, if the user hasn't started editing.
   useEffect(() => {
     if (profile) {
       setName((prev) => (prev === '' ? profile.name ?? '' : prev))
@@ -52,54 +94,63 @@ export function ProfileMetadataEditor({ pubkey, profile }: ProfileMetadataEditor
       setError('You can only edit your own profile.')
       return
     }
+    if (saveInflightRef.current) return
 
-    setSaving(true)
+    setFieldErrors({})
     setError(null)
     setSuccess(false)
 
-    try {
-      const sanitizedName = sanitizeName(name)
-      const sanitizedDisplayName = sanitizeName(displayName)
-      const sanitizedAbout = sanitizeAbout(about)
-      
-      // Validation
-      if (picture && !isSafeMediaURL(picture)) throw new Error('Invalid picture URL (must be HTTPS and an image type).')
-      if (banner && !isSafeMediaURL(banner)) throw new Error('Invalid banner URL (must be HTTPS and an image type).')
-      if (website && !isSafeURL(website)) throw new Error('Invalid website URL (must start with https://).')
-      if (nip05 && !isValidNip05Format(nip05)) throw new Error('Invalid NIP-05 identifier format.')
+    const errors = validateFields({ name, picture, banner, website, nip05, lud16 })
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      return
+    }
 
-      const content = {
-        name: sanitizedName,
-        display_name: sanitizedDisplayName,
-        about: sanitizedAbout,
+    saveInflightRef.current = true
+    setSaving(true)
+
+    try {
+      // Conflict guard: refuse to overwrite a profile event that is newer than
+      // what we loaded. This protects against concurrent edits from other clients.
+      const persisted = await getProfile(pubkey)
+      if (persisted?.updatedAt !== undefined && profile?.updatedAt !== undefined) {
+        if (persisted.updatedAt > profile.updatedAt) {
+          setError(
+            'Your profile was updated from another client. Reload the page to get the latest version before saving.',
+          )
+          return
+        }
+      }
+
+      const sanitizedFields = {
+        name: sanitizeName(name),
+        display_name: sanitizeName(displayName),
+        about: sanitizeAbout(about),
         website: website.trim(),
         picture: picture.trim(),
         banner: banner.trim(),
         nip05: nip05.trim(),
         lud16: lud16.trim(),
       }
-
-      const ndk = getNDK()
-      const event = new NDKEvent(ndk)
-      event.kind = 0
-      event.content = JSON.stringify(content)
-      
-      await withRetry(() => event.publish(), {
-        maxAttempts: 3,
-        baseDelayMs: 1000,
-      })
+      await publishProfileMetadata(
+        Object.fromEntries(
+          Object.entries(sanitizedFields).filter(([, v]) => Boolean(v)),
+        ) as ProfileMetadata,
+        {},
+      )
 
       setSuccess(true)
     } catch (err) {
-      console.error('Failed to publish profile metadata', err)
       setError(err instanceof Error ? err.message : 'Failed to publish profile updates.')
     } finally {
       setSaving(false)
+      saveInflightRef.current = false
     }
-  }, [currentUser, pubkey, name, displayName, about, website, picture, banner, nip05, lud16])
+  }, [currentUser, pubkey, profile, name, displayName, about, website, picture, banner, nip05, lud16])
 
-  const inputClass = "mt-2 w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[15px] text-[rgb(var(--color-label))] placeholder:text-[rgb(var(--color-label-tertiary))] outline-none transition-colors focus:border-[rgb(var(--color-accent))]"
-  const labelClass = "block text-[13px] font-medium text-[rgb(var(--color-label-secondary))]"
+  const inputClass = 'mt-2 w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[15px] text-[rgb(var(--color-label))] placeholder:text-[rgb(var(--color-label-tertiary))] outline-none transition-colors focus:border-[rgb(var(--color-accent))]'
+  const labelClass = 'block text-[13px] font-medium text-[rgb(var(--color-label-secondary))]'
+  const fieldErrorClass = 'mt-1 text-[12px] text-[rgb(var(--color-system-red))]'
 
   return (
     <div className="space-y-4">
@@ -113,6 +164,7 @@ export function ProfileMetadataEditor({ pubkey, profile }: ProfileMetadataEditor
             className={inputClass}
             placeholder="username"
           />
+          {fieldErrors.name && <p className={fieldErrorClass}>{fieldErrors.name}</p>}
         </div>
         <div>
           <label className={labelClass}>Display Name</label>
@@ -146,6 +198,7 @@ export function ProfileMetadataEditor({ pubkey, profile }: ProfileMetadataEditor
             className={inputClass}
             placeholder="https://example.com/avatar.jpg"
           />
+          {fieldErrors.picture && <p className={fieldErrorClass}>{fieldErrors.picture}</p>}
           <div className="mt-3 overflow-hidden rounded-[14px] border border-[rgb(var(--color-fill)/0.12)]">
             <BlossomUpload
               accept="image/*"
@@ -164,6 +217,7 @@ export function ProfileMetadataEditor({ pubkey, profile }: ProfileMetadataEditor
             className={inputClass}
             placeholder="https://example.com/banner.jpg"
           />
+          {fieldErrors.banner && <p className={fieldErrorClass}>{fieldErrors.banner}</p>}
           <div className="mt-3 overflow-hidden rounded-[14px] border border-[rgb(var(--color-fill)/0.12)]">
             <BlossomUpload
               accept="image/*"
@@ -187,6 +241,7 @@ export function ProfileMetadataEditor({ pubkey, profile }: ProfileMetadataEditor
             autoCapitalize="none"
             autoCorrect="off"
           />
+          {fieldErrors.nip05 && <p className={fieldErrorClass}>{fieldErrors.nip05}</p>}
         </div>
         <div>
           <label className={labelClass}>Lightning Address (LUD16)</label>
@@ -199,6 +254,7 @@ export function ProfileMetadataEditor({ pubkey, profile }: ProfileMetadataEditor
             autoCapitalize="none"
             autoCorrect="off"
           />
+          {fieldErrors.lud16 && <p className={fieldErrorClass}>{fieldErrors.lud16}</p>}
         </div>
       </div>
 
@@ -211,14 +267,17 @@ export function ProfileMetadataEditor({ pubkey, profile }: ProfileMetadataEditor
           className={inputClass}
           placeholder="https://example.com"
         />
+        {fieldErrors.website && <p className={fieldErrorClass}>{fieldErrors.website}</p>}
       </div>
 
       {error && (
         <p className="text-[13px] text-[rgb(var(--color-system-red))]">{error}</p>
       )}
-      
+
       {success && (
-        <p className="text-[13px] text-[rgb(var(--color-system-green))]">Profile updated successfully. It may take a moment to propagate.</p>
+        <p className="text-[13px] text-[rgb(var(--color-system-green))]">
+          Profile updated successfully. It may take a moment to propagate.
+        </p>
       )}
 
       <button
@@ -227,7 +286,7 @@ export function ProfileMetadataEditor({ pubkey, profile }: ProfileMetadataEditor
         disabled={saving}
         className="w-full rounded-[14px] bg-[rgb(var(--color-label))] px-4 py-3 text-[15px] font-medium text-white transition-opacity active:opacity-75 disabled:opacity-40"
       >
-        {saving ? 'Publishing...' : 'Save Profile'}
+        {saving ? 'Publishing…' : 'Save Profile'}
       </button>
     </div>
   )

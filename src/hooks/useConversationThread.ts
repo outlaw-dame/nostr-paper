@@ -8,6 +8,7 @@ import {
   parseCommentEvent,
   parseTextNoteReply,
 } from '@/lib/nostr/thread'
+import { fetchPlatformThreadEvents } from '@/lib/nostr/platformThread'
 import { rankThreadReplies } from '@/lib/nostr/threadRelevance'
 import { withRetry } from '@/lib/retry'
 import { useAddressableEvent } from '@/hooks/useAddressableEvent'
@@ -375,6 +376,20 @@ export function useConversationThread(event: NostrEvent | null | undefined): Con
         if (!optimizer) return
         optimizer.recordOutcome(relay, { success, latency, hitRate: success ? 1.0 : 0.5 })
       }
+
+      await fetchPlatformThreadEvents(
+        {
+          ...(rootReference.eventId ? { eventId: rootReference.eventId } : {}),
+          ...(rootReference.address ? { address: rootReference.address } : {}),
+        },
+        {
+          limit: REPLY_QUERY_LIMIT,
+          signal,
+        },
+      ).catch((platformError: unknown) => {
+        if (signal.aborted) return
+        console.warn('[thread] Platform thread hydration degraded:', platformError)
+      })
 
 
       for (const filter of baseFilters) {

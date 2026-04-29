@@ -1,10 +1,75 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   buildProfileMetadataContent,
   normalizeProfileMetadata,
   parseProfileMetadataEvent,
+  publishProfileMetadata,
 } from './metadata'
+import { insertEvent } from '@/lib/db/nostr'
+import { getNDK } from '@/lib/nostr/ndk'
 import type { NostrEvent, ProfileMetadata } from '@/types'
 import { Kind } from '@/types'
+
+// ── Publish mocks ───────────────────────────────────────────────
+
+const publishSpy = vi.fn()
+
+vi.mock('@nostr-dev-kit/ndk', () => {
+  class MockNDKEvent {
+    kind = 0
+    content = ''
+    tags: string[][] = []
+
+    async sign() { return undefined }
+    async publish() { publishSpy() }
+
+    rawEvent() {
+      return {
+        id: 'meta-event-id',
+        pubkey: 'a'.repeat(64),
+        created_at: 1_700_100_000,
+        kind: this.kind,
+        tags: this.tags,
+        content: this.content,
+        sig: 'c'.repeat(128),
+      }
+    }
+  }
+
+  return { NDKEvent: MockNDKEvent }
+})
+
+vi.mock('@/lib/db/nostr', () => ({
+  insertEvent: vi.fn(),
+}))
+
+vi.mock('@/lib/nostr/ndk', () => ({
+  getNDK: vi.fn(),
+}))
+
+vi.mock('@/lib/nostr/appHandlers', () => ({
+  withOptionalClientTag: vi.fn(async (tags: string[][]) => tags),
+}))
+
+vi.mock('@/lib/nostr/nip39', () => ({
+  buildNip39Tags: vi.fn(() => []),
+}))
+
+const getNDKMock = vi.mocked(getNDK)
+const insertEventMock = vi.mocked(insertEvent)
+
+beforeEach(() => {
+  publishSpy.mockReset()
+  getNDKMock.mockReset()
+  insertEventMock.mockReset()
+
+  getNDKMock.mockReturnValue({ signer: {} } as never)
+  insertEventMock.mockResolvedValue(true)
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 function baseEvent(overrides: Partial<NostrEvent> = {}): NostrEvent {
   return {
@@ -134,5 +199,55 @@ describe('parseProfileMetadataEvent', () => {
     expect(parseProfileMetadataEvent(baseEvent({
       content: '"not-an-object"',
     }))).toBeNull()
+  })
+})
+
+// ── publishProfileMetadata ──────────────────────────────────────
+
+describe('publishProfileMetadata', () => {
+  it('signs, publishes, inserts, and dispatches the profile-updated event', async () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+
+    const result = await publishProfileMetadata({ name: 'alice' })
+
+    expect(publishSpy).toHaveBeenCalledTimes(1)
+    expect(insertEventMock).toHaveBeenCalledTimes(1)
+    expect(dispatchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'nostr-paper:profile-updated' }),
+    )
+    expect(result.kind).toBe(Kind.Metadata)
+  })
+
+  it('throws when no signer is available', async () => {
+    getNDKMock.mockReturnValue({ signer: null } as never)
+
+    await expect(
+      publishProfileMetadata({ name: 'alice' }),
+    ).rejects.toThrow('No signer available')
+    expect(publishSpy).not.toHaveBeenCalled()
+  })
+
+  it('aborts before signing when signal is already aborted', async () => {
+    const controller = new AbortController()
+    controller.abort()
+
+    const err = await publishProfileMetadata(
+      { name: 'alice' },
+      { signal: controller.signal },
+    ).catch((e: unknown) => e)
+
+    expect(err).toBeInstanceOf(DOMException)
+    expect((err as DOMException).name).toBe('AbortError')
+    expect(publishSpy).not.toHaveBeenCalled()
+  })
+
+  it('does not insert event when publish fails', async () => {
+    // publishSpy must propagate the rejection so NDKEvent.publish() actually throws.
+    publishSpy.mockImplementation(() => { throw new Error('relay refused') })
+
+    await expect(
+      publishProfileMetadata({ name: 'alice' }),
+    ).rejects.toThrow('relay refused')
+    expect(insertEventMock).not.toHaveBeenCalled()
   })
 })

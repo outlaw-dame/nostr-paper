@@ -46,6 +46,7 @@ export function ZapSheet({
   const [comment, setComment] = useState('')
   const [step, setStep] = useState<ZapStep>({ type: 'compose' })
   const [copied, setCopied] = useState(false)
+  const [walletError, setWalletError] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
 
@@ -62,6 +63,7 @@ export function ZapSheet({
     setComment('')
     setStep({ type: 'compose' })
     setCopied(false)
+    setWalletError(null)
   }, [open])
 
   useEffect(() => {
@@ -114,6 +116,9 @@ export function ZapSheet({
       if (amountMsats > payData.maxSendable) {
         throw new Error(`Maximum zap is ${formatZapAmount(payData.maxSendable)} sats.`)
       }
+      if (payData.commentAllowed !== undefined && comment.trim().length > payData.commentAllowed) {
+        throw new Error(`Zap message must be ${payData.commentAllowed} characters or fewer.`)
+      }
 
       if (controller.signal.aborted) return
       setStep({ type: 'loading', message: 'Signing zap request…' })
@@ -138,7 +143,7 @@ export function ZapSheet({
       if (controller.signal.aborted) return
       setStep({ type: 'loading', message: 'Requesting invoice…' })
 
-      const bolt11 = await fetchZapInvoice(payData, zapRequest, amountMsats)
+      const bolt11 = await fetchZapInvoice(payData, zapRequest, amountMsats, controller.signal)
 
       if (controller.signal.aborted) return
       setStep({ type: 'invoice', bolt11, amountMsats })
@@ -155,7 +160,16 @@ export function ZapSheet({
   }
 
   const handleOpenWallet = (bolt11: string) => {
-    window.open(`lightning:${bolt11}`, '_self')
+    try {
+      const opened = window.open(`lightning:${bolt11}`, '_self')
+      if (opened === null) {
+        setWalletError('Wallet could not be opened. Copy the invoice instead.')
+      } else {
+        setWalletError(null)
+      }
+    } catch {
+      setWalletError('Wallet could not be opened. Copy the invoice instead.')
+    }
   }
 
   const handleCopy = async (bolt11: string) => {
@@ -171,6 +185,7 @@ export function ZapSheet({
   const handleTryAgain = () => {
     setStep({ type: 'compose' })
     setCopied(false)
+    setWalletError(null)
   }
 
   const canZap = !!currentUser && !!lnAddress && step.type === 'compose'
@@ -334,6 +349,12 @@ export function ZapSheet({
               <p className="text-center text-[13px] text-[rgb(var(--color-label-secondary))]">
                 Open in your wallet or copy the invoice to pay.
               </p>
+
+              {walletError && (
+                <p className="rounded-[14px] bg-[rgb(var(--color-system-red)/0.08)] px-4 py-3 text-[13px] text-[rgb(var(--color-system-red))]">
+                  {walletError}
+                </p>
+              )}
 
               <div className="space-y-2">
                 <button

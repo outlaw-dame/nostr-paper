@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '@/contexts/app-context'
 import {
-  getArticleRoute,
-  getDraftRoute,
   parseLongFormEvent,
   publishLongForm,
 } from '@/lib/nostr/longForm'
@@ -84,11 +82,11 @@ export default function ArticleComposePage() {
       })
 
       const article = parseLongFormEvent(published)
-      const route = article
-        ? (isDraft ? getDraftRoute(published.pubkey, article.identifier) : getArticleRoute(published.pubkey, article.identifier))
-        : `/${isDraft ? 'draft' : 'article'}/${published.pubkey}/${encodeURIComponent(identifier.trim())}`
+      if (!article) {
+        throw new Error('Published event could not be parsed as a long-form article.')
+      }
 
-      navigate(route, { replace: true })
+      navigate(article.route, { replace: true })
     } catch (publishError: unknown) {
       setError(
         publishError instanceof Error

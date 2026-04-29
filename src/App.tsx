@@ -81,6 +81,9 @@ const ActivityPage = lazy(() => import('@/pages/ActivityPage'))
 const OnboardPage  = lazy(() => import('@/pages/OnboardPage'))
 const ExplorePage  = lazy(() => import('@/pages/ExplorePage'))
 const ArticleComposePage = lazy(() => import('@/pages/ArticleComposePage'))
+const DmInboxPage = lazy(() => import('@/pages/DmInboxPage'))
+const DmThreadPage = lazy(() => import('@/pages/DmThreadPage'))
+const DmComposePage = lazy(() => import('@/pages/DmComposePage'))
 
 const COMPOSE_SHEET_ROUTE = {
   pathname: '/',
@@ -184,6 +187,7 @@ function InnerApp() {
             <Route path="/compose/list"       element={<Navigate to="/list/new" replace />} />
             <Route path="/search"             element={<SearchPage />} />
             <Route path="/explore"            element={<ExplorePage />} />
+            <Route path="/draft/:pubkey/:identifier" element={<ArticlePage />} />
             <Route path="/article/:pubkey/:identifier" element={<ArticlePage />} />
             <Route path="/dvm/new"           element={<DvmComposePage />} />
             <Route path="/list/new"          element={<ListComposePage />} />
@@ -196,6 +200,9 @@ function InnerApp() {
             <Route path="/profile"             element={<ProfilePage />} />
             <Route path="/profile/:pubkey"     element={<ProfilePage />} />
             <Route path="/activity"            element={<ActivityPage />} />
+            <Route path="/dm"                  element={<DmInboxPage />} />
+            <Route path="/dm/compose"          element={<DmComposePage />} />
+            <Route path="/dm/:pubkey"          element={<DmThreadPage />} />
             <Route path="/settings"            element={<SettingsPage />} />
             <Route path="/settings/debug"      element={<DebugPage />} />
             <Route path="/settings/appearance" element={<AppearancePage />} />

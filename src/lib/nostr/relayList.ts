@@ -23,6 +23,19 @@ function getDefaultRelayPreferences(): RelayPreference[] {
   return getDefaultRelayUrls().map(url => ({ url, read: true, write: true }))
 }
 
+function serializeRelayPreference(p: RelayPreference): string {
+  return `${p.url}:${p.read ? 'r' : ''}${p.write ? 'w' : ''}`
+}
+
+export function relayListsAreEqual(
+  a: readonly RelayPreference[],
+  b: readonly RelayPreference[],
+): boolean {
+  if (a.length !== b.length) return false
+  const setA = new Set(a.map(serializeRelayPreference))
+  return b.every(p => setA.has(serializeRelayPreference(p)))
+}
+
 export function parseRelayListPreferences(event: Pick<NostrEvent, 'tags'> | null | undefined): RelayPreference[] {
   if (!event) return []
 
@@ -105,6 +118,16 @@ export async function publishCurrentUserRelayList(options: {
 
   if (relayPreferences.length === 0) {
     throw new Error('Relay list must contain at least one valid relay URL.')
+  }
+
+  // Skip publishing when explicit preferences are provided but are identical to the
+  // currently stored list. Prevents noisy relay traffic from no-op saves.
+  // When no explicit preferences are given, always publish (explicit republish intent).
+  if (options.relayPreferences ?? options.relayUrls) {
+    const currentPreferences = normalizeRelayPreferences(getEffectiveRelayListEntries())
+    if (relayListsAreEqual(relayPreferences, currentPreferences)) {
+      return null
+    }
   }
 
   const relayUrls = relayPreferences.map(({ url }) => url)

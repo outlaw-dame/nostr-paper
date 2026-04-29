@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState, useTransition, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ReportSheet } from '@/components/nostr/ReportSheet'
+import { ZapSheet } from '@/components/nostr/ZapSheet'
 import { UserStatusBody } from '@/components/nostr/UserStatusBody'
 import { NoteContent } from '@/components/cards/NoteContent'
 import { ProfileMetadataEditor } from '@/components/profile/ProfileMetadataEditor'
@@ -48,8 +49,9 @@ import {
 import { decodeProfileReference } from '@/lib/nostr/nip21'
 import { formatNip05Identifier, parseNip05Identifier, resolveNip05Identifier } from '@/lib/nostr/nip05'
 import { getIdentityUrl, getPlatformDisplayName } from '@/lib/nostr/nip39'
+import { useNip05Verification } from '@/hooks/useNip05Verification'
 import { tApp } from '@/lib/i18n/app'
-import type { ContactList, Profile, ProfileBirthday } from '@/types'
+import type { ContactList, ContactListEntry, Profile, ProfileBirthday } from '@/types'
 import { Kind } from '@/types'
 
 const PROFILE_INSIGHT_KINDS = [
@@ -483,7 +485,9 @@ export default function ProfilePage() {
   const [petname, setPetname] = useState('')
   const [relayUrl, setRelayUrl] = useState('')
   const [saving, setSaving] = useState(false)
+  const followInflightRef = useRef(false)
   const [reportSheetOpen, setReportSheetOpen] = useState(false)
+  const [zapSheetOpen, setZapSheetOpen] = useState(false)
   const [reported, setReported] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -584,6 +588,7 @@ export default function ProfilePage() {
   }, [logout, navigate])
 
   const isSelf = pubkey !== null && currentUser?.pubkey === pubkey
+  const { state: nip05State, verify: verifyNip05 } = useNip05Verification(pubkey, displayProfile)
   const currentEntry = useMemo(
     () => viewerContacts?.entries.find(entry => entry.pubkey === pubkey) ?? null,
     [viewerContacts, pubkey],
@@ -955,10 +960,33 @@ export default function ProfilePage() {
 
   const handleSave = async () => {
     if (!pubkey) return
+    if (followInflightRef.current) return
 
+    followInflightRef.current = true
     setSaving(true)
     setError(null)
     setMessage(null)
+
+    const previousContacts = viewerContacts
+
+    // Optimistic update: add/update entry immediately so the UI is responsive.
+    if (pubkey && currentUser) {
+      const optimisticEntries = viewerContacts?.entries ?? []
+      const existingIndex = optimisticEntries.findIndex(e => e.pubkey === pubkey)
+      const optimisticEntry: ContactListEntry = {
+        pubkey,
+        position: existingIndex >= 0 ? optimisticEntries[existingIndex]!.position : optimisticEntries.length,
+        ...(petname ? { petname } : {}),
+        ...(relayUrl ? { relayUrl } : {}),
+      }
+      const nextEntries = existingIndex >= 0
+        ? optimisticEntries.map((e, i) => (i === existingIndex ? optimisticEntry : e))
+        : [...optimisticEntries, optimisticEntry]
+      setViewerContacts({
+        pubkey: currentUser.pubkey,
+        entries: nextEntries,
+      })
+    }
 
     try {
       const next = await saveCurrentUserContactEntry(pubkey, {
@@ -968,18 +996,33 @@ export default function ProfilePage() {
       setViewerContacts(next)
       setMessage(currentEntry ? 'Kind-3 contact entry updated and published.' : 'Follow published to relays.')
     } catch (saveError) {
+      // Rollback optimistic update on failure.
+      setViewerContacts(previousContacts)
       setError(saveError instanceof Error ? saveError.message : 'Failed to publish kind-3 contact list.')
     } finally {
       setSaving(false)
+      followInflightRef.current = false
     }
   }
 
   const handleUnfollow = async () => {
     if (!pubkey) return
+    if (followInflightRef.current) return
 
+    followInflightRef.current = true
     setSaving(true)
     setError(null)
     setMessage(null)
+
+    const previousContacts = viewerContacts
+
+    // Optimistic update: remove entry immediately so the UI is responsive.
+    if (viewerContacts) {
+      setViewerContacts({
+        ...viewerContacts,
+        entries: viewerContacts.entries.filter(e => e.pubkey !== pubkey),
+      })
+    }
 
     try {
       const next = await unfollowCurrentUserContact(pubkey)
@@ -988,9 +1031,12 @@ export default function ProfilePage() {
       setRelayUrl('')
       setMessage('Unfollow published to relays.')
     } catch (unfollowError) {
+      // Rollback optimistic update on failure.
+      setViewerContacts(previousContacts)
       setError(unfollowError instanceof Error ? unfollowError.message : 'Failed to publish kind-3 contact list.')
     } finally {
       setSaving(false)
+      followInflightRef.current = false
     }
   }
 
@@ -1077,12 +1123,46 @@ export default function ProfilePage() {
               />
 
               <div className="mt-4 flex flex-wrap gap-2 text-[12px]">
-                {displayProfile?.nip05 && displayProfile.nip05Verified && (
+                {displayProfile?.nip05 && nip05State === 'verified' && (
                   <span className="flex items-center gap-1 rounded-full bg-[rgb(var(--color-system-green)/0.12)] px-2.5 py-1 text-[12px] text-[rgb(var(--color-system-green))]">
                     <svg width="11" height="11" viewBox="0 0 12 12" fill="none" strokeWidth="2.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M2 6l3 3 5-5" />
                     </svg>
                     {formatNip05Identifier(displayProfile.nip05)}
+                  </span>
+                )}
+                {displayProfile?.nip05 && nip05State === 'stale' && (
+                  <button
+                    type="button"
+                    onClick={verifyNip05}
+                    className="flex items-center gap-1 rounded-full bg-[rgb(var(--color-system-orange)/0.12)] px-2.5 py-1 text-[12px] text-[rgb(var(--color-system-orange))] active:opacity-70"
+                    title="Verification is stale — tap to refresh"
+                  >
+                    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" strokeWidth="2.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M2 6l3 3 5-5" />
+                    </svg>
+                    {formatNip05Identifier(displayProfile.nip05)}
+                  </button>
+                )}
+                {displayProfile?.nip05 && (nip05State === 'invalid' || nip05State === 'lookup_error') && (
+                  <button
+                    type="button"
+                    onClick={verifyNip05}
+                    className="flex items-center gap-1.5 rounded-full bg-[rgb(var(--color-system-red)/0.10)] px-2.5 py-1 text-[12px] text-[rgb(var(--color-system-red))] active:opacity-70"
+                    title={nip05State === 'invalid' ? 'NIP-05 verification failed — tap to retry' : 'Lookup failed — tap to retry'}
+                  >
+                    <svg width="10" height="10" viewBox="0 0 12 12" fill="none" strokeWidth="2.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M6 2v3.5l2 2" /><circle cx="6" cy="6" r="5" />
+                    </svg>
+                    {nip05State === 'invalid' ? 'Unverified' : 'Retry'}
+                  </button>
+                )}
+                {displayProfile?.nip05 && nip05State === 'verifying' && (
+                  <span className="flex items-center gap-1 rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1 text-[12px] text-[rgb(var(--color-label-secondary))]">
+                    <svg className="animate-spin" width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <path d="M6 1v3M6 8v3M1 6h3M8 6h3" />
+                    </svg>
+                    Verifying…
                   </span>
                 )}
                 {displayProfile?.bot && (
@@ -1176,11 +1256,43 @@ export default function ProfilePage() {
                       {muting ? tApp('profileUpdating') : isMutedProfile ? tApp('profileUnmute') : tApp('profileMute')}
                     </button>
 
+                    <Link
+                      to={`/dm/${pubkey}`}
+                      className="
+                        rounded-[14px] border border-[rgb(var(--color-fill)/0.2)]
+                        bg-[rgb(var(--color-bg))] px-4 py-2.5
+                        text-[14px] font-medium text-[rgb(var(--color-label))]
+                        transition-opacity active:opacity-75
+                      "
+                    >
+                      Message
+                    </Link>
+
                     <button
                       type="button"
                       onClick={() => {
                         setError(null)
                         setMessage(null)
+                        setReportSheetOpen(false)
+                        setZapSheetOpen(true)
+                      }}
+                      disabled={!currentUser}
+                      className="
+                        rounded-[14px] border border-[#F7931A]/25
+                        bg-[#F7931A]/10 px-4 py-2.5
+                        text-[14px] font-medium text-[#B85F00]
+                        transition-opacity active:opacity-75 disabled:opacity-40
+                      "
+                    >
+                      Zap Profile
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setError(null)
+                        setMessage(null)
+                        setZapSheetOpen(false)
                         setReportSheetOpen(true)
                       }}
                       disabled={!currentUser || reported}
@@ -1737,6 +1849,19 @@ export default function ProfilePage() {
           setError(null)
         }}
       />
+
+      {pubkey && (
+        <ZapSheet
+          open={zapSheetOpen}
+          recipientPubkey={pubkey}
+          targetEvent={null}
+          onClose={() => setZapSheetOpen(false)}
+          onZapped={() => {
+            setMessage('Profile zap invoice created.')
+            setError(null)
+          }}
+        />
+      )}
 
       <ImageLightbox
         open={expandedImage !== null}

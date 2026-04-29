@@ -199,6 +199,7 @@ export interface Profile extends ProfileMetadata {
   updatedAt: number
   nip05Verified?: boolean
   nip05VerifiedAt?: number
+  nip05LastCheckedAt?: number
   followerCount?: number
   followingCount?: number
   externalIdentities?: Nip39ExternalIdentity[]

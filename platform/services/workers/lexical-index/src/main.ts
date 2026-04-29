@@ -124,11 +124,15 @@ async function sendToDlq(id: string, payload: string, err: unknown) {
 
 // Kinds the lexical index ingests:
 //   1     = NIP-01 short note
+//   6     = NIP-18 repost
+//   7     = NIP-25 reaction
 //   11    = NIP-7D thread root
 //   1111  = NIP-22 comment
+//   9735  = NIP-57 zap receipt
 //   30023 = NIP-23 long-form article
 //   30024 = NIP-23 long-form draft
-const SUPPORTED_KINDS = new Set([1, 11, 1111, 30023, 30024]);
+const SUPPORTED_KINDS = new Set([1, 6, 7, 11, 1111, 9735, 30023, 30024]);
+const SOCIAL_KINDS = new Set([6, 7, 9735]);
 
 interface ThreadRefs {
   rootId: string | null;
@@ -196,6 +200,80 @@ function extractTitle(tags: string[][]): string | null {
   return tag?.[1] ?? null;
 }
 
+function firstTagValue(tags: string[][], tagName: string): string | null {
+  const tag = tags.find(t => t[0] === tagName && t[1]);
+  return tag?.[1] ?? null;
+}
+
+function parseZapAmountMsats(tags: string[][]): number {
+  const description = firstTagValue(tags, 'description');
+  if (!description) return 0;
+
+  try {
+    const parsed = JSON.parse(description);
+    const requestTags = Array.isArray(parsed?.tags) ? parsed.tags as unknown[] : [];
+    const amountTag = requestTags.find((tag): tag is string[] => (
+      Array.isArray(tag) && tag[0] === 'amount' && typeof tag[1] === 'string'
+    ));
+    const amount = amountTag ? Number.parseInt(amountTag[1], 10) : 0;
+    return Number.isFinite(amount) && amount > 0 ? amount : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function socialTargetEventId(event: { kind: number; tags?: string[][] }): string | null {
+  const tags = event.tags || [];
+  if (event.kind === 6 || event.kind === 7 || event.kind === 9735) {
+    return firstTagValue(tags, 'e');
+  }
+  return null;
+}
+
+async function upsertSocialMetrics(event: { kind: number; content?: string; created_at: number; tags?: string[][] }) {
+  const targetEventId = socialTargetEventId(event);
+  if (!targetEventId) return;
+
+  const isLike = event.kind === 7 && (!event.content || event.content === '+');
+  const isDislike = event.kind === 7 && event.content === '-';
+  const zapAmountMsats = event.kind === 9735 ? parseZapAmountMsats(event.tags || []) : 0;
+
+  await pg.query(
+    `
+    INSERT INTO event_social_metrics (
+      event_id,
+      reaction_count,
+      like_count,
+      dislike_count,
+      repost_count,
+      zap_count,
+      zap_total_msats,
+      last_activity_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, to_timestamp($8))
+    ON CONFLICT (event_id) DO UPDATE
+    SET
+      reaction_count   = event_social_metrics.reaction_count + EXCLUDED.reaction_count,
+      like_count       = event_social_metrics.like_count + EXCLUDED.like_count,
+      dislike_count    = event_social_metrics.dislike_count + EXCLUDED.dislike_count,
+      repost_count     = event_social_metrics.repost_count + EXCLUDED.repost_count,
+      zap_count        = event_social_metrics.zap_count + EXCLUDED.zap_count,
+      zap_total_msats  = event_social_metrics.zap_total_msats + EXCLUDED.zap_total_msats,
+      last_activity_at = GREATEST(event_social_metrics.last_activity_at, EXCLUDED.last_activity_at)
+    `,
+    [
+      targetEventId,
+      event.kind === 7 ? 1 : 0,
+      isLike ? 1 : 0,
+      isDislike ? 1 : 0,
+      event.kind === 6 ? 1 : 0,
+      event.kind === 9735 ? 1 : 0,
+      zapAmountMsats,
+      event.created_at,
+    ],
+  );
+}
+
 async function processMessage(payload: string) {
   const event = JSON.parse(payload);
 
@@ -221,7 +299,7 @@ async function processMessage(payload: string) {
   await pg.query('BEGIN');
 
   try {
-    await pg.query(
+    const inserted = await pg.query(
       `
       INSERT INTO events_raw (
         id, pubkey, kind, created_at, content, tags, raw, source_relay, source_type,
@@ -248,77 +326,83 @@ async function processMessage(payload: string) {
       ]
     );
 
-    await pg.query(
-      `
-      INSERT INTO search_docs (
-        event_id,
-        search_text,
-        fts,
-        title_text,
-        author_pubkey,
-        kind,
-        created_at,
-        hashtags,
-        mentions,
-        urls,
-        moderation_state,
-        is_searchable,
-        reply_to_id,
-        root_id,
-        root_address,
-        root_kind,
-        is_reply
-      )
-      VALUES (
-        $1,
-        $2,
-        to_tsvector('simple', $2),
-        $3,
-        $4,
-        $5,
-        to_timestamp($6),
-        $7,
-        $8,
-        $9,
-        'allowed',
-        true,
-        $10,
-        $11,
-        $12,
-        $13,
-        $14
-      )
-      ON CONFLICT (event_id) DO UPDATE
-      SET
-        search_text  = EXCLUDED.search_text,
-        fts          = EXCLUDED.fts,
-        title_text   = EXCLUDED.title_text,
-        hashtags     = EXCLUDED.hashtags,
-        mentions     = EXCLUDED.mentions,
-        urls         = EXCLUDED.urls,
-        reply_to_id  = EXCLUDED.reply_to_id,
-        root_id      = EXCLUDED.root_id,
-        root_address = EXCLUDED.root_address,
-        root_kind    = EXCLUDED.root_kind,
-        is_reply     = EXCLUDED.is_reply
-      `,
-      [
-        event.event_id,
-        searchText,
-        title,
-        event.pubkey,
-        event.kind,
-        event.created_at,
-        hashtags,
-        mentions,
-        urls,
-        refs.replyToId,
-        refs.rootId,
-        refs.rootAddress,
-        refs.rootKind,
-        refs.isReply,
-      ]
-    );
+    if (inserted.rowCount && SOCIAL_KINDS.has(event.kind)) {
+      await upsertSocialMetrics(event);
+    }
+
+    if (!SOCIAL_KINDS.has(event.kind)) {
+      await pg.query(
+        `
+        INSERT INTO search_docs (
+          event_id,
+          search_text,
+          fts,
+          title_text,
+          author_pubkey,
+          kind,
+          created_at,
+          hashtags,
+          mentions,
+          urls,
+          moderation_state,
+          is_searchable,
+          reply_to_id,
+          root_id,
+          root_address,
+          root_kind,
+          is_reply
+        )
+        VALUES (
+          $1,
+          $2,
+          to_tsvector('simple', $2),
+          $3,
+          $4,
+          $5,
+          to_timestamp($6),
+          $7,
+          $8,
+          $9,
+          'allowed',
+          true,
+          $10,
+          $11,
+          $12,
+          $13,
+          $14
+        )
+        ON CONFLICT (event_id) DO UPDATE
+        SET
+          search_text  = EXCLUDED.search_text,
+          fts          = EXCLUDED.fts,
+          title_text   = EXCLUDED.title_text,
+          hashtags     = EXCLUDED.hashtags,
+          mentions     = EXCLUDED.mentions,
+          urls         = EXCLUDED.urls,
+          reply_to_id  = EXCLUDED.reply_to_id,
+          root_id      = EXCLUDED.root_id,
+          root_address = EXCLUDED.root_address,
+          root_kind    = EXCLUDED.root_kind,
+          is_reply     = EXCLUDED.is_reply
+        `,
+        [
+          event.event_id,
+          searchText,
+          title,
+          event.pubkey,
+          event.kind,
+          event.created_at,
+          hashtags,
+          mentions,
+          urls,
+          refs.replyToId,
+          refs.rootId,
+          refs.rootAddress,
+          refs.rootKind,
+          refs.isReply,
+        ]
+      );
+    }
 
     await pg.query(
       `
@@ -329,16 +413,17 @@ async function processMessage(payload: string) {
         approx_storage_bytes,
         last_active_at
       )
-      VALUES ($1, 1, 1, $2, to_timestamp($3))
+      VALUES ($1, 1, $2, $3, to_timestamp($4))
       ON CONFLICT (pubkey) DO UPDATE
       SET
         event_count            = pubkey_usage.event_count + 1,
-        searchable_event_count = pubkey_usage.searchable_event_count + 1,
+        searchable_event_count = pubkey_usage.searchable_event_count + EXCLUDED.searchable_event_count,
         approx_storage_bytes   = pubkey_usage.approx_storage_bytes + EXCLUDED.approx_storage_bytes,
         last_active_at         = GREATEST(pubkey_usage.last_active_at, EXCLUDED.last_active_at)
       `,
       [
         event.pubkey,
+        SOCIAL_KINDS.has(event.kind) ? 0 : 1,
         Buffer.byteLength(JSON.stringify(event.raw ?? event), 'utf8'),
         event.created_at,
       ]
@@ -346,7 +431,7 @@ async function processMessage(payload: string) {
 
     await pg.query('COMMIT');
 
-    if (searchText.trim()) {
+    if (!SOCIAL_KINDS.has(event.kind) && searchText.trim()) {
       await enqueueEmbeddingJob(event.event_id, searchText);
     }
   } catch (err) {

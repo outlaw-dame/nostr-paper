@@ -503,7 +503,7 @@ export async function publishLongForm({
     ...(title   ? [['title',        sanitizeText(title).trim().slice(0, MAX_TITLE_CHARS)]]   : []),
     ...(summary ? [['summary',      sanitizeText(summary).trim().slice(0, MAX_SUMMARY_CHARS)]] : []),
     ...(safeImage ? [['image', safeImage]] : []),
-    ['published_at', String(publishedAtValue)],
+    ...(isDraft ? [] : [['published_at', String(publishedAtValue)]]),
     ...normalizedHashtags.map((h) => ['t', h]),
   ]
 
