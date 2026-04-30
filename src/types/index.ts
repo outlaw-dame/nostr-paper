@@ -438,6 +438,8 @@ export interface BlossomBlob {
   uploaded?: number        // Unix timestamp (seconds)
   nip94?:    Nip94Tags     // Extended NIP-94 metadata if provided
   metadataEventId?: string // Published kind-1063 event id, if available
+  ipfsCid?:  string        // Filebase/IPFS archive CID, when returned by the server
+  ipfsUrl?:  string        // HTTPS gateway URL for archived IPFS content
 }
 
 /** NIP-94 file metadata tags (from kind 1063 event body) */

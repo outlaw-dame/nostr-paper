@@ -84,6 +84,7 @@ const ArticleComposePage = lazy(() => import('@/pages/ArticleComposePage'))
 const DmInboxPage = lazy(() => import('@/pages/DmInboxPage'))
 const DmThreadPage = lazy(() => import('@/pages/DmThreadPage'))
 const DmComposePage = lazy(() => import('@/pages/DmComposePage'))
+const LinkTimelinePage = lazy(() => import('@/pages/LinkTimelinePage'))
 
 const COMPOSE_SHEET_ROUTE = {
   pathname: '/',
@@ -187,6 +188,7 @@ function InnerApp() {
             <Route path="/compose/list"       element={<Navigate to="/list/new" replace />} />
             <Route path="/search"             element={<SearchPage />} />
             <Route path="/explore"            element={<ExplorePage />} />
+            <Route path="/link"               element={<LinkTimelinePage />} />
             <Route path="/draft/:pubkey/:identifier" element={<ArticlePage />} />
             <Route path="/article/:pubkey/:identifier" element={<ArticlePage />} />
             <Route path="/dvm/new"           element={<DvmComposePage />} />

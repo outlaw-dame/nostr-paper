@@ -34,6 +34,24 @@ But this scaffold lives here first so the service boundaries, contracts, infra, 
 - `services/` — deployable services
 - `packages/` — shared runtime libraries used by services
 
+## Relay Rate Limiting
+
+`services/relay-policy/` is a strfry write-policy plugin. It applies lightweight intelligent rate limiting before events are stored: pubkey/source/global token buckets, weighted event cost, duplicate-body rejection, hellthread fanout limits, and temporary penalty multipliers. Local compose builds a custom strfry image that includes this plugin and enables it through `infra/strfry.conf/strfry.conf`.
+
+Useful knobs:
+
+- `RELAY_POLICY_MODE=observe|enforce`
+- `RELAY_POLICY_PUBKEY_POINTS_PER_MINUTE`
+- `RELAY_POLICY_SOURCE_POINTS_PER_MINUTE`
+- `RELAY_POLICY_GLOBAL_POINTS_PER_SECOND`
+- `RELAY_POLICY_HELLTHREAD_TAG_LIMIT`
+- `RELAY_POLICY_ALLOWLIST_PUBKEYS`
+- `RELAY_POLICY_ALLOWLIST_SOURCES`
+
+## Blossom Media Edge
+
+`services/blossom-edge/` is a Cloudflare Worker Blossom server. It stores blobs by SHA-256 in Cloudflare R2 for low-latency media retrieval and can archive the same bytes to a Filebase IPFS bucket. The app publishes BUD-03 `kind:10063` server lists so clients and relays can discover the preferred media edge.
+
 ## Tagr Moderation Source (Relay Stack)
 
 The platform relay stack can ingest Nos Social Tagr moderation events directly:

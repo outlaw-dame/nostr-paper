@@ -399,6 +399,40 @@ CREATE INDEX IF NOT EXISTS idx_relay_list_pubkey_url
   ON relay_list(pubkey, url);
 `
 
+// ── Migration v12: Link Mentions For Trending News Discovery ────────────
+
+const MIGRATION_V12_SQL = `
+-- Tracks which normalized URLs appear in which events.
+-- One row per (url, event) pair — enforced by the composite PRIMARY KEY.
+-- Used by listRecentLinkStats (trending aggregation) and listLinkTimeline
+-- (conversation view).  Cascade delete keeps this table self-healing when
+-- events are removed.
+CREATE TABLE IF NOT EXISTS link_mentions (
+  url        TEXT    NOT NULL,
+  domain     TEXT    NOT NULL,
+  event_id   TEXT    NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  pubkey     TEXT    NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (url, event_id)
+);
+
+-- Supports time-windowed trending queries (GROUP BY url WHERE created_at >= ?)
+CREATE INDEX IF NOT EXISTS idx_link_mentions_url_created
+  ON link_mentions(url, created_at DESC);
+
+-- Supports domain-level grouping / filtering
+CREATE INDEX IF NOT EXISTS idx_link_mentions_domain_created
+  ON link_mentions(domain, created_at DESC);
+
+-- Supports range scans for cleanup and backfill
+CREATE INDEX IF NOT EXISTS idx_link_mentions_created
+  ON link_mentions(created_at DESC);
+
+-- Supports the ON DELETE CASCADE lookup from events
+CREATE INDEX IF NOT EXISTS idx_link_mentions_event_id
+  ON link_mentions(event_id);
+`
+
 // ── Worker State ─────────────────────────────────────────────
 
 type SqliteDB = {
@@ -763,6 +797,21 @@ async function initializeDB(): Promise<void> {
     _db.exec({ sql: 'INSERT OR IGNORE INTO schema_migrations (version) VALUES (11)' })
   } else {
     _db.exec(MIGRATION_V11_SQL)
+  }
+
+  // Migration v12: link_mentions table for trending news/link discovery
+  const v12Applied: number[] = []
+  _db.exec({
+    sql: 'SELECT 1 FROM schema_migrations WHERE version = 12',
+    rowMode: 'object',
+    callback: () => { v12Applied.push(1) },
+  })
+  if (v12Applied.length === 0) {
+    _db.exec(MIGRATION_V12_SQL)
+    _db.exec({ sql: 'INSERT OR IGNORE INTO schema_migrations (version) VALUES (12)' })
+  } else {
+    // Idempotent — all CREATE IF NOT EXISTS; safe to re-run for index repairs.
+    _db.exec(MIGRATION_V12_SQL)
   }
 
   // Bound analysis rows per index before running optimize.

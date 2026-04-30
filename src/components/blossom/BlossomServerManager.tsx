@@ -9,9 +9,10 @@
  */
 
 import React, { useEffect, useState, useCallback } from 'react'
-import { getBlossomServers, addBlossomServer, removeBlossomServer } from '@/lib/db/blossom'
-import { getNDK } from '@/lib/nostr/ndk'
-import { createNIP98Auth } from '@/lib/blossom/auth'
+import { getBlossomServers, removeBlossomServer } from '@/lib/db/blossom'
+import { blossomProbe } from '@/lib/blossom/client'
+import { addAndPublishServer } from '@/lib/blossom/serverList'
+import { normaliseBlossomUrl } from '@/lib/blossom/validate'
 import type { BlossomServer } from '@/types'
 
 export function BlossomServerManager() {
@@ -48,18 +49,20 @@ export function BlossomServerManager() {
       setAdding(true)
       setError(null)
 
-      // Validate URL format
       let url = newUrl.trim()
       if (!url.startsWith('http://') && !url.startsWith('https://')) {
         url = `https://${url}`
       }
-      new URL(url) // Validate URL throws if invalid
+      const normalizedUrl = normaliseBlossomUrl(url)
+      if (!normalizedUrl) {
+        throw new Error('Enter a valid https:// Blossom server URL.')
+      }
 
       // Verify server is accessible
-      await testServerConnectivity(url)
+      await testServerConnectivity(normalizedUrl)
 
-      // Add to database
-      await addBlossomServer(url)
+      // Add to local storage and publish BUD-03/NIP-96 server lists.
+      await addAndPublishServer(normalizedUrl)
       setNewUrl('')
       await loadServers()
     } catch (err) {
@@ -86,50 +89,11 @@ export function BlossomServerManager() {
   const testServerConnectivity = async (url: string): Promise<boolean> => {
     try {
       setServerStatuses((prev) => ({ ...prev, [url]: 'checking' }))
-
-      const serverUrl = url.replace(/\/+$/, '')
-      
-      let ndk: ReturnType<typeof getNDK> | null = null
-      try {
-        ndk = getNDK()
-      } catch {
-        // NDK might not be initialized, continue with unauthenticated requests
-      }
-
-      // Try to create an auth token and make a test HEAD request
-      if (ndk) {
-        try {
-          const auth = await createNIP98Auth(ndk, {
-            url: `${serverUrl}/info`,
-            method: 'GET',
-          })
-
-          const response = await fetch(`${serverUrl}/info`, {
-            method: 'GET',
-            headers: {
-              Authorization: auth,
-            },
-          })
-
-          if (response.ok) {
-            setServerStatuses((prev) => ({ ...prev, [url]: 'ok' }))
-            return true
-          } else {
-            throw new Error(`HTTP ${response.status}`)
-          }
-        } catch (authErr) {
-          // If auth fails, try without auth as a fallback
-          console.debug('[BlossomServerManager] Auth failed, trying unauthenticated:', authErr)
-        }
-      }
-
-      // Try without authentication
-      const infoResponse = await fetch(`${serverUrl}/info`)
-      if (infoResponse.ok) {
+      if (await blossomProbe(url)) {
         setServerStatuses((prev) => ({ ...prev, [url]: 'ok' }))
         return true
       }
-      throw new Error(`Server replied with HTTP ${infoResponse.status}`)
+      throw new Error('Server did not expose a Blossom /upload endpoint.')
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Connection failed'
       setServerStatuses((prev) => ({ ...prev, [url]: 'error' }))
@@ -139,11 +103,14 @@ export function BlossomServerManager() {
 
   const handleTestServer = async (url: string) => {
     try {
+      setTestingServer(url)
       setError(null)
       await testServerConnectivity(url)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Test failed'
       setError(message)
+    } finally {
+      setTestingServer(null)
     }
   }
 
@@ -291,9 +258,9 @@ export function BlossomServerManager() {
             rel="noopener noreferrer"
             className="text-[#007AFF] underline"
           >
-            Blossom (NIP-B7)
+            Blossom
           </a>
-          , the standard media protocol for Nostr.
+          , the content-addressed media protocol for Nostr.
         </p>
       </div>
     </div>

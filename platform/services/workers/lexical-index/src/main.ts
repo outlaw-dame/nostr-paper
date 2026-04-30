@@ -148,11 +148,12 @@ async function sendToDlq(id: string, payload: string, err: unknown) {
 //   1063  = NIP-94 file metadata
 //   1111  = NIP-22 comment
 //   9735  = NIP-57 zap receipt
+//   10063 = Blossom BUD-03 media server list
 //   30023 = NIP-23 long-form article
 //   30024 = NIP-23 long-form draft
 //   34235 = addressable video
 //   34236 = addressable short video
-const SUPPORTED_KINDS = new Set([1, 6, 7, 11, 21, 22, 1063, 1111, 9735, 30023, 30024, 34235, 34236]);
+const SUPPORTED_KINDS = new Set([1, 6, 7, 11, 21, 22, 1063, 1111, 9735, 10063, 30023, 30024, 34235, 34236]);
 const SOCIAL_KINDS = new Set([6, 7, 9735]);
 const TAGR_KINDS = new Set([1984, 1985]);
 

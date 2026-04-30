@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  BLOSSOM_RELAY_KINDS,
+  BLOSSOM_SERVER_LIST_KIND,
   buildEventSearchText,
   extractMediaText,
   extractTaggedUrls,
@@ -26,6 +28,8 @@ test('extractTaggedUrls reads url/r tags and imeta urls and deduplicates', () =>
   const tags = [
     ['url', 'https://cdn.example.com/video.mp4'],
     ['r', 'https://relay.example.com/ref'],
+    ['server', 'https://blossom.example.com'],
+    ['fallback', 'https://archive.example.com/ipfs/bafyblob'],
     ['imeta', 'url https://cdn.example.com/video.mp4', 'thumb https://cdn.example.com/thumb.jpg', 'image https://cdn.example.com/poster.jpg'],
     ['imeta', 'url ftp://invalid.example.com/file'],
   ];
@@ -33,6 +37,8 @@ test('extractTaggedUrls reads url/r tags and imeta urls and deduplicates', () =>
   const urls = extractTaggedUrls(tags);
 
   assert.deepEqual(urls.sort(), [
+    'https://archive.example.com/ipfs/bafyblob',
+    'https://blossom.example.com',
     'https://cdn.example.com/poster.jpg',
     'https://cdn.example.com/thumb.jpg',
     'https://cdn.example.com/video.mp4',
@@ -45,6 +51,8 @@ test('extractMediaText pulls title/alt/summary and imeta values', () => {
     ['title', '  Main   clip  '],
     ['alt', 'A short description'],
     ['summary', '  summary with\nspaces '],
+    ['m', 'image/png'],
+    ['x', 'A'.repeat(64)],
     ['imeta', 'alt camera pan', 'summary quick overview', 'm video/mp4'],
   ];
 
@@ -53,11 +61,17 @@ test('extractMediaText pulls title/alt/summary and imeta values', () => {
   assert.deepEqual(text.sort(), [
     'A short description',
     'Main clip',
+    'a'.repeat(64),
     'camera pan',
+    'image/png',
     'quick overview',
     'summary with spaces',
     'video/mp4',
   ]);
+});
+
+test('BLOSSOM_RELAY_KINDS includes BUD-03 server list events', () => {
+  assert.equal(BLOSSOM_RELAY_KINDS.has(BLOSSOM_SERVER_LIST_KIND), true);
 });
 
 test('mergeEventUrls merges content URLs with tagged URLs and deduplicates', () => {

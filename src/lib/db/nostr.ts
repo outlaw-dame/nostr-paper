@@ -20,7 +20,13 @@ import {
   isValidHex32,
   isValidRelayURL,
   normalizeHashtag,
+  extractURLs,
 } from '@/lib/security/sanitize'
+import {
+  normalizeLinkUrl,
+  isLinkIndexable,
+  extractLinkDomain,
+} from '@/lib/url/normalize'
 import {
   getEventAddressCoordinate,
   isAddressableKind,
@@ -61,6 +67,18 @@ import { Kind } from '@/types'
 
 type SQLOperation = { sql: string; bind?: unknown[] }
 const MAX_TAG_INSERT_ROWS_PER_STATEMENT = 100
+
+// Kinds whose content is likely to contain article / news links worth indexing.
+// Excludes pure-media kinds (video, audio) whose URLs are the content itself.
+const LINK_INDEXABLE_KINDS = new Set<number>([
+  Kind.ShortNote,      // 1
+  Kind.Thread,         // 11
+  Kind.LongFormContent, // 30023
+])
+
+// Cap per-event URL extraction to prevent spam events with many links from
+// dominating the trending table.
+const MAX_LINKS_PER_EVENT = 3
 const SEEN_EVENT_RETENTION_SECONDS = 30 * 24 * 60 * 60
 
 function getEventDeletionHiddenCondition(eventAlias = 'e'): string {
@@ -281,6 +299,61 @@ function buildTagInsertOps(event: NostrEvent): SQLOperation[] {
   }
 
   return ops
+}
+
+/**
+ * Build INSERT ops for the link_mentions table.
+ *
+ * Sources (in priority order):
+ *   1. `r` tags — explicitly tagged URL references (NIP-12)
+ *   2. Inline URLs extracted from event content
+ *
+ * Each URL is normalized (tracking params stripped, https enforced) then
+ * filtered through isLinkIndexable to exclude media assets and root pages.
+ * At most MAX_LINKS_PER_EVENT unique URLs are indexed per event so that
+ * link-spamming events cannot dominate the trending table.
+ *
+ * INSERT OR IGNORE on the composite PK (url, event_id) makes this fully
+ * idempotent — re-processing the same event is harmless.
+ */
+function buildLinkMentionInsertOps(event: NostrEvent): SQLOperation[] {
+  if (!LINK_INDEXABLE_KINDS.has(event.kind)) return []
+
+  const seen = new Set<string>()
+
+  function tryAdd(raw: string): void {
+    if (seen.size >= MAX_LINKS_PER_EVENT) return
+    const norm = normalizeLinkUrl(raw)
+    if (norm === null || seen.has(norm)) return
+    if (isLinkIndexable(norm)) seen.add(norm)
+  }
+
+  // 1. r-tagged URL references take precedence (explicit intent)
+  for (const tag of event.tags) {
+    if (seen.size >= MAX_LINKS_PER_EVENT) break
+    if (tag[0] === 'r' && typeof tag[1] === 'string') {
+      tryAdd(tag[1])
+    }
+  }
+
+  // 2. Inline content URLs (fills remaining slots up to the cap)
+  if (seen.size < MAX_LINKS_PER_EVENT) {
+    for (const raw of extractURLs(event.content)) {
+      if (seen.size >= MAX_LINKS_PER_EVENT) break
+      tryAdd(raw)
+    }
+  }
+
+  if (seen.size === 0) return []
+
+  return [...seen].map((url) => ({
+    sql: `
+      INSERT OR IGNORE INTO link_mentions
+        (url, domain, event_id, pubkey, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `,
+    bind: [url, extractLinkDomain(url), event.id, event.pubkey, event.created_at],
+  }))
 }
 
 async function getLatestVisibleAuthorEventMeta(
@@ -519,6 +592,9 @@ export async function insertEvent(event: NostrEvent): Promise<boolean> {
 
   // ── Tag index (single-letter tags only, per NIP-01) ───────
   ops.push(...buildTagInsertOps(event))
+
+  // ── Link mention index (trending news discovery) ──────────
+  ops.push(...buildLinkMentionInsertOps(event))
 
   // ── Kind-specific side effects ────────────────────────────
 
@@ -1376,6 +1452,142 @@ export async function listRecentHashtagStats(
     uniqueAuthorCount: Number(row.unique_author_count) || 0,
     latestCreatedAt: Number(row.latest_created_at) || 0,
   }))
+}
+
+// ── Link Mention Queries ─────────────────────────────────────
+
+export interface RecentLinkStat {
+  url: string
+  domain: string
+  usageCount: number
+  uniqueAuthorCount: number
+  latestCreatedAt: number
+}
+
+/**
+ * Return aggregated link statistics for trending-news discovery.
+ *
+ * Mirrors listRecentHashtagStats — same time-window and visibility
+ * filtering, same pool-size strategy (caller fetches N×4 and re-ranks).
+ *
+ * Only events whose kind appears in LINK_INDEXABLE_KINDS are counted
+ * (already enforced at insert time, but the JOIN with events lets us
+ * apply the visibility condition which cannot be enforced at insert).
+ */
+export async function listRecentLinkStats(
+  opts: { since?: number; limit?: number } = {},
+): Promise<RecentLinkStat[]> {
+  const conditions: string[] = [getVisibleEventCondition('e')]
+  const bind: unknown[] = []
+
+  if (opts.since !== undefined) {
+    conditions.push('lm.created_at >= ?')
+    bind.push(opts.since)
+  }
+
+  const limit = Math.min(Math.max(opts.limit ?? 80, 1), 300)
+
+  type LinkStatRow = {
+    url: string
+    domain: string
+    usage_count: number
+    unique_author_count: number
+    latest_created_at: number
+  }
+
+  const rows = await dbQuery<LinkStatRow>(`
+    SELECT   lm.url,
+             lm.domain,
+             COUNT(DISTINCT lm.event_id) AS usage_count,
+             COUNT(DISTINCT lm.pubkey)   AS unique_author_count,
+             MAX(lm.created_at)          AS latest_created_at
+    FROM     link_mentions lm
+    JOIN     events e ON e.id = lm.event_id
+    WHERE    ${conditions.join('\n      AND ')}
+    GROUP BY lm.url, lm.domain
+    ORDER BY usage_count        DESC,
+             latest_created_at  DESC,
+             unique_author_count DESC
+    LIMIT    ?
+  `, [...bind, limit]).catch((): LinkStatRow[] => [])
+
+  return rows.map((row) => ({
+    url:               row.url,
+    domain:            row.domain,
+    usageCount:        Number(row.usage_count)        || 0,
+    uniqueAuthorCount: Number(row.unique_author_count) || 0,
+    latestCreatedAt:   Number(row.latest_created_at)   || 0,
+  }))
+}
+
+/**
+ * Return events (newest-first) that mention a specific normalized URL.
+ *
+ * Supports cursor-based pagination via `until` (exclusive — returns events
+ * with created_at strictly less than the cursor value).  Callers should
+ * pass the `created_at` of the last-seen event as the next `until`.
+ */
+export async function listLinkTimeline(
+  url: string,
+  opts: { limit?: number; until?: number } = {},
+): Promise<NostrEvent[]> {
+  if (!url) return []
+
+  const conditions: string[] = [
+    'lm.url = ?',
+    getVisibleEventCondition('e'),
+  ]
+  const bind: unknown[] = [url]
+
+  if (opts.until !== undefined) {
+    conditions.push('e.created_at < ?')
+    bind.push(opts.until)
+  }
+
+  const limit = Math.min(Math.max(opts.limit ?? 40, 1), 100)
+
+  const rows = await dbQuery<{ raw: string }>(`
+    SELECT   DISTINCT e.raw
+    FROM     link_mentions lm
+    JOIN     events e ON e.id = lm.event_id
+    WHERE    ${conditions.join('\n      AND ')}
+    ORDER BY e.created_at DESC, e.id DESC
+    LIMIT    ?
+  `, [...bind, limit]).catch(() => [] as Array<{ raw: string }>)
+
+  return _parseRaw(rows)
+}
+
+export interface LinkMentionCount {
+  postCount: number
+  authorCount: number
+}
+
+/**
+ * Return the total visible-post count and unique author count for a
+ * normalized URL.  Used by useLinkDiscussionCount to surface "N discussing"
+ * on inline link preview cards without loading full events.
+ */
+export async function getLinkMentionCount(url: string): Promise<LinkMentionCount> {
+  if (!url) return { postCount: 0, authorCount: 0 }
+
+  type CountRow = { post_count: number; author_count: number }
+
+  const rows = await dbQuery<CountRow>(`
+    SELECT COUNT(DISTINCT lm.event_id) AS post_count,
+           COUNT(DISTINCT lm.pubkey)   AS author_count
+    FROM   link_mentions lm
+    JOIN   events e ON e.id = lm.event_id
+    WHERE  lm.url = ?
+      AND  ${getVisibleEventCondition('e')}
+  `, [url]).catch((): CountRow[] => [])
+
+  const row = rows[0]
+  if (!row) return { postCount: 0, authorCount: 0 }
+  return {
+    postCount:   Number(row.post_count)   || 0,
+    authorCount: Number(row.author_count) || 0,
+  }
 }
 
 export async function listRecentTaggedEvents(

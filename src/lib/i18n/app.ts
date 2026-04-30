@@ -128,6 +128,17 @@ const APP_MESSAGES: Record<AppLocale, AppMessageDictionary> = {
     explorePopularInGraph: 'Popular in your local graph',
     exploreNoProfilesCached: 'No profiles cached yet.',
 
+    exploreNewsSection: 'News',
+    exploreNewsSectionHint: 'Links trending in your local cache — ranked by diversity, freshness, and engagement',
+    exploreNoNews: 'No trending links yet — sync more content to see what links people are sharing.',
+    exploreNewsDiscussing: '{count} discussing',
+
+    linkTimelineTitle: 'Discussing',
+    linkTimelineBack: 'Back',
+    linkTimelineNoPosts: 'No posts found for this link.',
+    linkTimelineLoadMore: 'Load more',
+    linkTimelineLoading: 'Loading…',
+
     explorePackNotePrefix: 'Pack note: {petname}',
     explorePackFollowCount: 'Follow {count}',
     explorePackAlreadyFollowing: 'Already Following',
@@ -746,6 +757,17 @@ const APP_MESSAGES: Record<AppLocale, AppMessageDictionary> = {
     explorePopularAccountsHint: 'Cuentas seguidas de forma consistente en tu grafo local',
     explorePopularInGraph: 'Popular en tu grafo local',
     exploreNoProfilesCached: 'Aun no hay perfiles en cache.',
+
+    exploreNewsSection: 'Noticias',
+    exploreNewsSectionHint: 'Enlaces en tendencia en tu cache local — clasificados por diversidad, frescura y participacion',
+    exploreNoNews: 'Aun no hay enlaces en tendencia — sincroniza mas contenido para ver que enlaces comparte la gente.',
+    exploreNewsDiscussing: '{count} hablando',
+
+    linkTimelineTitle: 'Discutiendo',
+    linkTimelineBack: 'Atras',
+    linkTimelineNoPosts: 'No se encontraron publicaciones para este enlace.',
+    linkTimelineLoadMore: 'Cargar mas',
+    linkTimelineLoading: 'Cargando…',
 
     explorePackNotePrefix: 'Nota del paquete: {petname}',
     explorePackFollowCount: 'Seguir {count}',

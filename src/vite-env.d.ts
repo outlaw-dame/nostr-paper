@@ -61,6 +61,11 @@ interface ImportMetaEnv {
    * `thread_address` filters before falling back to public relays.
    */
   readonly VITE_PLATFORM_SEARCH_RELAY_URL?: string
+  /**
+   * Optional comma-separated Blossom server defaults. Useful for deployments
+   * that provide a first-party Cloudflare/R2 + Filebase media edge.
+   */
+  readonly VITE_DEFAULT_BLOSSOM_SERVERS?: string
 }
 
 interface ImportMeta {

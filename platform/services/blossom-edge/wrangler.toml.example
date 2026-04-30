@@ -1,0 +1,25 @@
+name = "nostr-paper-blossom-edge"
+main = "src/index.ts"
+compatibility_date = "2026-04-29"
+
+[[r2_buckets]]
+binding = "BLOSSOM_BUCKET"
+bucket_name = "nostr-paper-blossom"
+
+[vars]
+# Public HTTPS origin for descriptors. Defaults to the request origin.
+# PUBLIC_BASE_URL = "https://media.example.com"
+
+# Browser uploads should stay modest; larger archival imports can use /mirror.
+MAX_UPLOAD_BYTES = "104857600"
+
+# Comma-separated exact MIME types or prefixes ending in /*.
+ALLOWED_MIME_TYPES = "image/*,video/*,audio/*,application/pdf,text/plain,application/octet-stream"
+
+# Filebase/IPFS archive is optional. Set the secrets with wrangler secret:
+#   wrangler secret put FILEBASE_ACCESS_KEY_ID
+#   wrangler secret put FILEBASE_SECRET_ACCESS_KEY
+# Then set FILEBASE_BUCKET below.
+# FILEBASE_BUCKET = "your-filebase-ipfs-bucket"
+# FILEBASE_GATEWAY_BASE_URL = "https://ipfs.filebase.io/ipfs"
+# FILEBASE_ARCHIVE_MODE = "sync" # "sync" includes CID in upload response; "background" archives after response.

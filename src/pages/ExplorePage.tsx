@@ -32,9 +32,12 @@ import { mergeResults, useEventFilterCheck, useProfileFilterCheck, useSemanticFi
 import { useMuteList } from '@/hooks/useMuteList'
 import { useHideNsfwTaggedPosts } from '@/hooks/useHideNsfwTaggedPosts'
 import { useTrendingTopics } from '@/hooks/useTrendingTopics'
+import { useTrendingLinks } from '@/hooks/useTrendingLinks'
 import { usePopularProfiles } from '@/hooks/usePopularProfiles'
 import { useSuggestedProfiles } from '@/hooks/useSuggestedProfiles'
 import { useSemanticFollowPacks } from '@/hooks/useSemanticFollowPacks'
+import { TrendingLinkCard } from '@/components/links/TrendingLinkCard'
+import type { TrendingLinkStat } from '@/lib/explore/trendingLinks'
 import {
   getExploreFollowPackLabel,
   getExploreFollowPackSummary,
@@ -109,7 +112,9 @@ export default function ExplorePage() {
   } = useMuteList()
   const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
   const [topicsWindow, setTopicsWindow] = useState<'today' | 'week'>('week')
+  const [linksWindow,  setLinksWindow]  = useState<'today' | 'week'>('week')
   const { topics, loading: topicsLoading } = useTrendingTopics(24, topicsWindow)
+  const { links,  loading: linksLoading  } = useTrendingLinks(8,  linksWindow)
   const { packs: followPackCandidates, loading: followPackLoading } = useExploreFollowPacks(18)
   const { profiles: suggestedProfiles, loading: suggestedLoading } = useSuggestedProfiles(currentUser?.pubkey, 8)
   const { profiles: popularProfiles, loading: popularLoading } = usePopularProfiles(8)
@@ -237,6 +242,10 @@ export default function ExplorePage() {
     semanticApplied: followPackSemanticApplied,
   } = useSemanticFollowPacks(visibleFollowPacks, currentUser?.pubkey)
 
+  const handleLinkPress = useCallback((url: string) => {
+    navigate(`/link?url=${encodeURIComponent(url)}`)
+  }, [navigate])
+
   const handleFollowPack = useCallback(async (pack: RankedExploreFollowPack) => {
     if (!currentUser) {
       throw new Error(tApp('explorePackReasonConnectSigner'))
@@ -347,6 +356,11 @@ export default function ExplorePage() {
             topicsLoading={topicsLoading}
             topicsWindow={topicsWindow}
             onTopicsWindowChange={setTopicsWindow}
+            links={links}
+            linksLoading={linksLoading}
+            linksWindow={linksWindow}
+            onLinksWindowChange={setLinksWindow}
+            onLinkPress={handleLinkPress}
             followPacks={semanticFollowPacks}
             followPackSemanticApplied={followPackSemanticApplied}
             followPacksLoading={followPackLoading || followPackModerationLoading}
@@ -412,6 +426,11 @@ function ExploreContent({
   topicsLoading,
   topicsWindow,
   onTopicsWindowChange,
+  links,
+  linksLoading,
+  linksWindow,
+  onLinksWindowChange,
+  onLinkPress,
   followPacks,
   followPackSemanticApplied,
   followPacksLoading,
@@ -426,6 +445,11 @@ function ExploreContent({
   topicsLoading: boolean
   topicsWindow: 'today' | 'week'
   onTopicsWindowChange: (w: 'today' | 'week') => void
+  links: TrendingLinkStat[]
+  linksLoading: boolean
+  linksWindow: 'today' | 'week'
+  onLinksWindowChange: (w: 'today' | 'week') => void
+  onLinkPress: (url: string) => void
   followPacks: RankedExploreFollowPack[]
   followPackSemanticApplied: boolean
   followPacksLoading: boolean
@@ -506,6 +530,59 @@ function ExploreContent({
         ) : (
           <p className="px-1 text-[14px] text-[rgb(var(--color-label-tertiary))]">
             {tApp('exploreNoTrendingTopics')}
+          </p>
+        )}
+      </section>
+
+      {/* News — trending external links */}
+      <section>
+        <div className="flex items-center justify-between px-1 mb-3">
+          <div>
+            <h2 className="section-kicker">{tApp('exploreNewsSection')}</h2>
+            <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">
+              {tApp('exploreNewsSectionHint')}
+            </p>
+          </div>
+          <div className="flex items-center gap-1 rounded-full bg-[rgb(var(--color-fill)/0.10)] p-0.5">
+            {(['today', 'week'] as const).map((w) => (
+              <button
+                key={w}
+                onClick={() => onLinksWindowChange(w)}
+                className={`
+                  px-3 py-1 rounded-full text-[12px] font-medium transition-all
+                  ${linksWindow === w
+                    ? 'bg-[rgb(var(--color-bg))] text-[rgb(var(--color-label))] shadow-sm'
+                    : 'text-[rgb(var(--color-label-secondary))]'
+                  }
+                `}
+              >
+                {w === 'today' ? tApp('exploreWindowToday') : tApp('exploreWindowWeek')}
+              </button>
+            ))}
+          </div>
+        </div>
+        {linksLoading ? (
+          <div className="space-y-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-[76px] rounded-[14px] bg-[rgb(var(--color-fill)/0.08)] animate-pulse" />
+            ))}
+          </div>
+        ) : links.length > 0 ? (
+          <div className="space-y-2">
+            {links.map((stat, i) => (
+              <motion.div
+                key={stat.url}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.16, delay: i * 0.03 }}
+              >
+                <TrendingLinkCard stat={stat} onClick={onLinkPress} />
+              </motion.div>
+            ))}
+          </div>
+        ) : (
+          <p className="px-1 text-[14px] text-[rgb(var(--color-label-tertiary))]">
+            {tApp('exploreNoNews')}
           </p>
         )}
       </section>

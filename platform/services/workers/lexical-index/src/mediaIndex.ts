@@ -1,6 +1,8 @@
 export type NostrTag = string[];
 
 export const MEDIA_KINDS = new Set([21, 22, 1063, 34235, 34236]);
+export const BLOSSOM_SERVER_LIST_KIND = 10063;
+export const BLOSSOM_RELAY_KINDS = new Set([...MEDIA_KINDS, BLOSSOM_SERVER_LIST_KIND]);
 
 function isHttpUrl(value: string): boolean {
   return /^https?:\/\//i.test(value);
@@ -33,9 +35,14 @@ export function extractMediaText(tags: NostrTag[]): string[] {
     const [name, firstValue] = tag;
     if (typeof firstValue !== 'string' || firstValue.trim().length === 0) continue;
 
-    if (name === 'title' || name === 'alt' || name === 'summary') {
+    if (name === 'title' || name === 'alt' || name === 'summary' || name === 'm') {
       const normalized = normalizeIndexText(firstValue);
       if (normalized) values.add(normalized);
+      continue;
+    }
+
+    if (name === 'x' && /^[0-9a-f]{64}$/i.test(firstValue)) {
+      values.add(firstValue.toLowerCase());
       continue;
     }
 
@@ -61,7 +68,7 @@ export function extractTaggedUrls(tags: NostrTag[]): string[] {
     const [name, firstValue] = tag;
     if (typeof firstValue !== 'string') continue;
 
-    if ((name === 'url' || name === 'r') && isHttpUrl(firstValue)) {
+    if ((name === 'url' || name === 'r' || name === 'fallback' || name === 'server') && isHttpUrl(firstValue)) {
       urls.add(firstValue);
       continue;
     }
@@ -94,7 +101,7 @@ export function buildEventSearchText(input: {
   const textParts: string[] = [];
   if (input.title) textParts.push(input.title);
   if (input.content) textParts.push(input.content);
-  if (MEDIA_KINDS.has(input.kind)) {
+  if (BLOSSOM_RELAY_KINDS.has(input.kind)) {
     textParts.push(...extractMediaText(input.tags));
   }
   input.hashtags.forEach((hashtag) => textParts.push(`#${hashtag}`));

@@ -1,0 +1,12 @@
+{
+  "name": "@nostr-paper/relay-policy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test src/rateLimiter.test.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

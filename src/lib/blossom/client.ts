@@ -1,20 +1,25 @@
 /**
  * Blossom HTTP Client
  *
- * Implements BUD-01 (basic blob operations) and BUD-04 (mirroring).
+ * Implements BUD-01/02/04/05/06/12 client operations.
  *
  * BUD-01:
- *   PUT /upload          — upload a blob (auth required)
  *   GET /<sha256>        — retrieve a blob
  *   HEAD /<sha256>       — check blob existence
- *   DELETE /<sha256>     — delete a blob (auth required)
- *   GET /list/<pubkey>   — list blobs for a pubkey (BUD-02)
- *
+ * BUD-02:
+ *   PUT /upload          — upload a blob (auth usually required)
  * BUD-04:
  *   PUT /mirror          — mirror a blob from a URL (auth required)
+ * BUD-05:
+ *   PUT /media           — trusted media processing endpoint
+ * BUD-06:
+ *   HEAD /upload|/media  — upload requirement preflight
+ * BUD-12:
+ *   GET /list/<pubkey>   — list blobs for a pubkey
+ *   DELETE /<sha256>     — delete a blob (auth required)
  *
- * All mutating operations require a NIP-98 Authorization header.
- * Use createNIP98Auth() from @/lib/blossom/auth to generate it.
+ * Native Blossom mutating operations use BUD-11 Authorization headers.
+ * NIP-98 remains supported elsewhere for NIP-96 fallback servers.
  */
 
 import { fetchWithRetry } from '@/lib/retry'
@@ -51,6 +56,10 @@ function normalizeUploadedAt(value: unknown): number | undefined {
   return value
 }
 
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
+}
+
 function normalizeBlobDescriptor(payload: unknown): BlossomBlob {
   if (!isRecord(payload)) {
     throw new Error('Invalid Blossom blob descriptor')
@@ -79,6 +88,10 @@ function normalizeBlobDescriptor(payload: unknown): BlossomBlob {
     fileHash: sha256,
   })
   const uploaded = normalizeUploadedAt(payload.uploaded)
+  const ipfsCid = normalizeOptionalString(payload.ipfs ?? payload.cid)
+  const ipfsUrl = typeof payload.ipfs_url === 'string' && isSafeURL(payload.ipfs_url)
+    ? payload.ipfs_url
+    : undefined
 
   return {
     url,
@@ -87,11 +100,16 @@ function normalizeBlobDescriptor(payload: unknown): BlossomBlob {
     type,
     ...(uploaded !== undefined ? { uploaded } : {}),
     ...(nip94 ? { nip94 } : {}),
+    ...(ipfsCid ? { ipfsCid } : {}),
+    ...(ipfsUrl ? { ipfsUrl } : {}),
   }
 }
 
 /** Parse server error response into a human-readable string */
 async function parseError(res: Response): Promise<string> {
+  const reason = res.headers.get('X-Reason')
+  if (reason?.trim()) return reason.trim()
+
   const ct = res.headers.get('Content-Type') ?? ''
   if (ct.includes('application/json')) {
     try {
@@ -103,10 +121,101 @@ async function parseError(res: Response): Promise<string> {
   return text.trim() || res.statusText
 }
 
-// ── BUD-01: Core Blob Operations ─────────────────────────────
+function extensionForMimeType(mimeType: string | undefined): string {
+  const normalized = mimeType?.split(';', 1)[0]?.trim().toLowerCase()
+  switch (normalized) {
+    case 'image/jpeg':
+      return '.jpg'
+    case 'image/png':
+      return '.png'
+    case 'image/gif':
+      return '.gif'
+    case 'image/webp':
+      return '.webp'
+    case 'image/avif':
+      return '.avif'
+    case 'video/mp4':
+      return '.mp4'
+    case 'video/webm':
+      return '.webm'
+    case 'video/quicktime':
+      return '.mov'
+    case 'audio/mpeg':
+      return '.mp3'
+    case 'audio/mp4':
+      return '.m4a'
+    case 'audio/ogg':
+      return '.ogg'
+    case 'audio/flac':
+      return '.flac'
+    case 'audio/wav':
+      return '.wav'
+    case 'application/pdf':
+      return '.pdf'
+    default:
+      return ''
+  }
+}
+
+// ── BUD-01/02/05/06: Core Blob Operations ────────────────────
+
+export interface BlossomUploadRequirements {
+  sha256: string
+  size: number
+  type: string
+}
+
+export interface BlossomUploadRequirementResult {
+  supported: boolean
+  ok: boolean
+  httpStatus: number
+  reason?: string
+}
 
 /**
- * Upload a blob to a Blossom server (BUD-01 PUT /upload).
+ * Check upload/media requirements before sending a large request body.
+ *
+ * BUD-06 and BUD-05 HEAD are optional. A 404 or 405 means "no preflight
+ * support"; callers can still proceed to PUT.
+ */
+export async function blossomUploadRequirements(
+  serverUrl: string,
+  metadata: BlossomUploadRequirements,
+  authHeader?: string,
+  endpoint: 'upload' | 'media' = 'upload',
+): Promise<BlossomUploadRequirementResult> {
+  const url = `${base(serverUrl)}/${endpoint}`
+  const headers: Record<string, string> = {
+    'X-SHA-256': metadata.sha256,
+    'X-Content-Type': metadata.type || 'application/octet-stream',
+    'X-Content-Length': String(metadata.size),
+  }
+  if (authHeader) headers.Authorization = authHeader
+
+  const res = await fetch(url, {
+    method: 'HEAD',
+    headers,
+  })
+
+  if (res.status === 404 || res.status === 405) {
+    return { supported: false, ok: true, httpStatus: res.status }
+  }
+
+  if (!res.ok) {
+    const reason = await parseError(res)
+    return {
+      supported: true,
+      ok: false,
+      httpStatus: res.status,
+      ...(reason ? { reason } : {}),
+    }
+  }
+
+  return { supported: true, ok: true, httpStatus: res.status }
+}
+
+/**
+ * Upload a blob to a Blossom server (BUD-02 PUT /upload).
  *
  * Returns the server's blob descriptor on success.
  * Throws BlossomError on HTTP errors.
@@ -132,6 +241,42 @@ export async function blossomUpload(
     const msg = await parseError(res)
     throw new BlossomError(
       `Upload to ${serverUrl} failed (${res.status}): ${msg}`,
+      res.status,
+      serverUrl,
+    )
+  }
+
+  return normalizeBlobDescriptor(await res.json())
+}
+
+/**
+ * Send a blob to a trusted Blossom media endpoint (BUD-05 PUT /media).
+ *
+ * Some servers will optimize or transcode the blob before returning the final
+ * descriptor. Servers that simply store the blob unchanged are still normalized
+ * through the same descriptor path.
+ */
+export async function blossomMediaUpload(
+  serverUrl: string,
+  file: File | Blob,
+  sha256: string,
+  authHeader: string,
+): Promise<BlossomBlob> {
+  const url = `${base(serverUrl)}/media`
+  const res = await fetch(url, {
+    method:  'PUT',
+    headers: {
+      'Authorization': authHeader,
+      'Content-Type':  file.type || 'application/octet-stream',
+      'X-SHA-256':     sha256,
+    },
+    body: file,
+  })
+
+  if (!res.ok) {
+    const msg = await parseError(res)
+    throw new BlossomError(
+      `Media upload to ${serverUrl} failed (${res.status}): ${msg}`,
       res.status,
       serverUrl,
     )
@@ -167,12 +312,12 @@ export async function blossomHas(
  * Return the canonical direct URL for a blob on a given server (BUD-01 GET).
  * Does not perform a network request — use blossomHas() to verify existence.
  */
-export function blossomBlobUrl(serverUrl: string, sha256: string): string {
-  return `${base(serverUrl)}/${sha256}`
+export function blossomBlobUrl(serverUrl: string, sha256: string, mimeType?: string): string {
+  return `${base(serverUrl)}/${sha256}${extensionForMimeType(mimeType)}`
 }
 
 /**
- * Delete a blob from a server (BUD-01 DELETE).
+ * Delete a blob from a server (BUD-12 DELETE).
  *
  * 404 is treated as success (already gone).
  * Throws BlossomError on other HTTP errors.
@@ -197,15 +342,18 @@ export async function blossomDelete(
   }
 }
 
-// ── BUD-02: Blob List ────────────────────────────────────────
+// ── BUD-12: Blob List ────────────────────────────────────────
 
 export interface BlossomListOptions {
-  since?: number  // Unix timestamp (seconds)
-  until?: number  // Unix timestamp (seconds)
+  cursor?: string
+  limit?: number
+  since?: number
+  until?: number
+  authHeader?: string
 }
 
 /**
- * List all blobs uploaded by a pubkey on a given server (BUD-02).
+ * List all blobs uploaded by a pubkey on a given server (BUD-12).
  *
  * Returns an array of blob descriptors sorted by upload time (newest first).
  * Retries once on transient 5xx errors.
@@ -216,10 +364,15 @@ export async function blossomList(
   opts?:     BlossomListOptions,
 ): Promise<BlossomBlob[]> {
   const url = new URL(`${base(serverUrl)}/list/${pubkey}`)
+  if (opts?.cursor !== undefined) url.searchParams.set('cursor', opts.cursor)
+  if (opts?.limit !== undefined) url.searchParams.set('limit', String(opts.limit))
   if (opts?.since !== undefined) url.searchParams.set('since', String(opts.since))
   if (opts?.until !== undefined) url.searchParams.set('until', String(opts.until))
 
-  const res = await fetchWithRetry(url.toString(), {}, { maxAttempts: 2, baseDelayMs: 500 })
+  const init: RequestInit = opts?.authHeader
+    ? { headers: { Authorization: opts.authHeader } }
+    : {}
+  const res = await fetchWithRetry(url.toString(), init, { maxAttempts: 2, baseDelayMs: 500 })
   if (!res.ok) {
     const msg = await parseError(res)
     throw new BlossomError(
@@ -292,9 +445,9 @@ export async function blossomProbe(serverUrl: string): Promise<boolean> {
       method: 'HEAD',
       signal: AbortSignal.timeout(8_000),
     })
-    // 401 = auth required (expected), 405 = method not allowed (still a server),
-    // 200/204 = unusually permissive, but present
-    return res.status !== 0 && res.status < 500
+    // 400/401/411/413 can all be normal BUD-06 policy responses when probing
+    // without metadata. 404 means the root /upload endpoint is not present.
+    return res.status !== 404 && res.status < 500
   } catch {
     return false
   }
