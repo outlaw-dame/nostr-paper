@@ -21,6 +21,7 @@ const APP_MESSAGES: Record<AppLocale, AppMessageDictionary> = {
     feedPullToCompose: 'Pull to compose',
     feedOpenSearch: 'Open search',
     feedSearchPrompt: 'Search notes, articles, videos, and people',
+    feedShowNewPosts: 'Show {count} new posts',
 
     profileUpdating: 'Updating...',
     profileUnmute: 'Unmute',
@@ -639,6 +640,7 @@ const APP_MESSAGES: Record<AppLocale, AppMessageDictionary> = {
     feedPullToCompose: 'Desliza para redactar',
     feedOpenSearch: 'Abrir busqueda',
     feedSearchPrompt: 'Buscar notas, articulos, videos y personas',
+    feedShowNewPosts: 'Mostrar {count} publicaciones nuevas',
 
     profileUpdating: 'Actualizando...',
     profileUnmute: 'Quitar silencio',

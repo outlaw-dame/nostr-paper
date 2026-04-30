@@ -7,7 +7,7 @@ import { parseContentWarning } from '@/lib/nostr/contentWarning'
 import { normalizeNip94Tags } from '@/lib/nostr/fileMetadata'
 import { parseImetaMediaAttachment } from '@/lib/nostr/imeta'
 import { getNDK } from '@/lib/nostr/ndk'
-import { withRetry } from '@/lib/retry'
+import { publishEventWithNip65Outbox } from '@/lib/nostr/outbox'
 import {
   isSafeMediaURL,
   isSafeURL,
@@ -831,18 +831,7 @@ export async function publishVideoEvent(options: PublishVideoOptions): Promise<N
   await event.sign()
   if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-  await withRetry(
-    async () => {
-      if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-      await event.publish()
-    },
-    {
-      maxAttempts: 2,
-      baseDelayMs: 750,
-      maxDelayMs: 2_500,
-      ...(options.signal ? { signal: options.signal } : {}),
-    },
-  )
+  await publishEventWithNip65Outbox(event, options.signal)
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent
   await insertEvent(rawEvent)

@@ -44,7 +44,6 @@ export function useNip05Verification(
     if (state !== 'verifying') {
       setState(deriveNip05UiState(profile))
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     profile?.nip05,
     profile?.nip05Verified,

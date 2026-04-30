@@ -7,6 +7,7 @@ import { buildExpirationTag, normalizeExpiration } from '@/lib/nostr/expiration'
 import { buildNip92ImetaTags } from '@/lib/nostr/imeta'
 import { buildEventReferenceUri, decodeProfileReference } from '@/lib/nostr/nip21'
 import { buildQuoteTagsFromContent } from '@/lib/nostr/repost'
+import { publishEventWithNip65Outbox } from '@/lib/nostr/outbox'
 import { getNDK } from '@/lib/nostr/ndk'
 import { withRetry } from '@/lib/retry'
 import {
@@ -384,18 +385,7 @@ export async function publishNote({
   await event.sign()
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-  await withRetry(
-    async () => {
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-      await event.publish()
-    },
-    {
-      maxAttempts: 2,
-      baseDelayMs: 750,
-      maxDelayMs: 2_500,
-      ...(signal ? { signal } : {}),
-    },
-  )
+  await publishEventWithNip65Outbox(event, signal)
 
   await syncPublishedMediaAltMetadata(media, mediaAlt, signal)
 

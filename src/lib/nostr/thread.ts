@@ -5,7 +5,7 @@ import { withOptionalClientTag } from '@/lib/nostr/appHandlers'
 import { getEventAddressCoordinate, parseAddressCoordinate } from '@/lib/nostr/addressable'
 import { buildQuoteTagsFromContent, parseQuoteTags } from '@/lib/nostr/repost'
 import { decodeProfileReference } from '@/lib/nostr/nip21'
-import { withRetry } from '@/lib/retry'
+import { publishEventWithNip65Outbox } from '@/lib/nostr/outbox'
 import {
   LIMITS,
   extractHashtags,
@@ -332,18 +332,7 @@ async function publishConversationEvent(
   await event.sign()
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-  await withRetry(
-    async () => {
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-      await event.publish()
-    },
-    {
-      maxAttempts: 2,
-      baseDelayMs: 750,
-      maxDelayMs: 2_500,
-      ...(signal ? { signal } : {}),
-    },
-  )
+  await publishEventWithNip65Outbox(event, signal)
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent
   await insertEvent(rawEvent)

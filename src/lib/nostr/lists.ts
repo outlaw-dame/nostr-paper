@@ -6,6 +6,7 @@ import { getEventAddressCoordinate, normalizeAddressIdentifier, parseAddressCoor
 import { compareReplaceableEvents } from '@/lib/nostr/contactList'
 import { parseLongFormEvent } from '@/lib/nostr/longForm'
 import { getCurrentUser, getNDK } from '@/lib/nostr/ndk'
+import { publishEventWithNip65Outbox } from '@/lib/nostr/outbox'
 import { decryptNip04, hasNip04Support } from '@/lib/nostr/nip04'
 import { decryptNip44, encryptNip44, hasNip44Support } from '@/lib/nostr/nip44'
 import { withRetry } from '@/lib/retry'
@@ -824,18 +825,7 @@ export async function publishNip51List(options: PublishNip51ListOptions): Promis
   await event.sign()
   throwIfAborted(options.signal)
 
-  await withRetry(
-    async () => {
-      throwIfAborted(options.signal)
-      await event.publish()
-    },
-    {
-      maxAttempts: 2,
-      baseDelayMs: 750,
-      maxDelayMs: 2_500,
-      ...(options.signal ? { signal: options.signal } : {}),
-    },
-  )
+  await publishEventWithNip65Outbox(event, options.signal)
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent
   await insertEvent(rawEvent)

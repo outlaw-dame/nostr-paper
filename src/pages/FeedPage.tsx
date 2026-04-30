@@ -74,6 +74,7 @@ import { buildEventModerationDocument } from '@/lib/moderation/content'
 import { parseRepostEvent } from '@/lib/nostr/repost'
 import { warmSelfThreadIndexCache } from '@/lib/nostr/threadIndex'
 import { parseCommentEvent } from '@/lib/nostr/thread'
+import { extractEventLanguageTag } from '@/lib/nostr/language'
 import { getPeerTubeEmbedUrl, getVimeoVideoId, getYouTubeVideoId } from '@/lib/nostr/imeta'
 import { tApp } from '@/lib/i18n/app'
 import type { ParsedVideoEvent } from '@/lib/nostr/video'
@@ -230,6 +231,7 @@ const COMPOSE_TRIGGER_OFFSET = 85  // px downward pull to open compose sheet
 const FEED_VIEW_STATE_KEY = 'nostr-paper:feed:view-state:v1'
 const FEED_STATE_TTL_MS = 1000 * 60 * 60 * 24 * 7
 const MIN_PRIMARY_FEED_ITEMS = 6
+const LIVE_FEED_AUTO_INSERT_THRESHOLD_PX = 120
 
 interface FeedViewSnapshot {
   anchorEventId: string | null
@@ -660,7 +662,26 @@ export default function FeedPage() {
     }
   }, [activeArticleFeedId, articleFeedSections])
 
-  const { events, loading, eose } = useNostrFeed({ section: effectiveFeedSection })
+  const shouldBufferNewFeedEvents = useCallback(() => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return true
+    if (!restoreCompletedRef.current) return false
+
+    const container = scrollContainerRef.current
+    if (!container) return false
+
+    return container.scrollTop > LIVE_FEED_AUTO_INSERT_THRESHOLD_PX
+  }, [])
+
+  const {
+    events,
+    loading,
+    eose,
+    pendingEventCount,
+    applyPendingEvents,
+  } = useNostrFeed({
+    section: effectiveFeedSection,
+    shouldBufferNewEvents: shouldBufferNewFeedEvents,
+  })
   const {
     events: semanticTimelineEvents,
     scores: semanticTimelineScores,
@@ -1005,6 +1026,16 @@ export default function FeedPage() {
     [handleCompose, pullY],
   )
 
+  const handleShowPendingFeedEvents = useCallback(() => {
+    const container = scrollContainerRef.current
+    applyPendingEvents()
+
+    if (!container) return
+    window.requestAnimationFrame(() => {
+      container.scrollTo({ top: 0, behavior: 'smooth' })
+    })
+  }, [applyPendingEvents])
+
   const handleSectionChange = useCallback((id: string) => {
     const section = railSections.find((candidate) => candidate.id === id)
     if (!section) return
@@ -1163,6 +1194,27 @@ export default function FeedPage() {
           </span>
         </div>
       </motion.div>
+
+      {pendingEventCount > 0 && (
+        <div className="pointer-events-none fixed inset-x-0 top-[calc(env(safe-area-inset-top)+12px)] z-30 flex justify-center px-4">
+          <button
+            type="button"
+            onClick={handleShowPendingFeedEvents}
+            className="
+              pointer-events-auto flex min-h-10 max-w-full items-center gap-2 rounded-full
+              border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg)/0.88)]
+              px-4 py-2 text-[14px] font-semibold text-[#007AFF] shadow-lg
+              backdrop-blur-xl transition-transform active:scale-[0.98]
+            "
+            aria-label={tApp('feedShowNewPosts', { count: pendingEventCount })}
+          >
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
+              <path d="M8 12.5V3.5M8 3.5L4.5 7M8 3.5L11.5 7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="truncate">{tApp('feedShowNewPosts', { count: pendingEventCount })}</span>
+          </button>
+        </div>
+      )}
 
       {/* Main draggable container — pull-down triggers compose */}
       <motion.div
@@ -1457,6 +1509,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
     storySummary,
     storyTitle,
   } = useStoryCardPreview(event, { ogEnabled: storyPreviewVisible })
+  const eventLanguage = extractEventLanguageTag(event)
   const href = article?.route ?? video?.route ?? `/note/${event.id}`
   return (
     <FilteredGate result={filterResult}>
@@ -1560,7 +1613,11 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
               <TwemojiText text={storySummary} />
             </p>
             {!isStoryCard && (
-              <TranslateTextPanel text={thread?.content ?? ''} />
+              <TranslateTextPanel
+                text={thread?.content ?? ''}
+                autoStart={false}
+                {...(eventLanguage !== null ? { sourceLanguage: eventLanguage } : {})}
+              />
             )}
           </>
         ) : !poll && repost ? (
@@ -1574,6 +1631,8 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
                 className="mt-2"
                 hiddenUrls={hiddenUrls}
                 allowTranslation
+                autoStartTranslation={false}
+                {...(eventLanguage !== null ? { sourceLanguage: eventLanguage } : {})}
               />
             )}
             {attachments.length > 0 && (

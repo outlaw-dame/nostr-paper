@@ -1,13 +1,30 @@
 import { NDKRelaySet, type NDKEvent } from '@nostr-dev-kit/ndk'
 import { dbQuery, initDB } from '@/lib/db/client'
 import { insertEvent } from '@/lib/db/nostr'
-import { getNDK } from '@/lib/nostr/ndk'
+import { getDefaultRelayUrls, getNDK } from '@/lib/nostr/ndk'
 import { isValidEvent } from '@/lib/security/sanitize'
 import type { ModerationDecision, ModerationDocument, NostrEvent, NostrFilter } from '@/types'
 import { Kind } from '@/types'
 
-const TAGR_BOT_PUBKEY_HEX = '56d4b3d6310fadb7294b7f041aab469c5ffc8991b1b1b331981b96a246f6ae65'
-const TAGR_RELAY_URL = import.meta.env.VITE_TAGR_RELAY_URL ?? 'wss://relay.nos.social'
+const DEFAULT_TAGR_BOT_PUBKEY_HEX = '56d4b3d6310fadb7294b7f041aab469c5ffc8991b1b1b331981b96a246f6ae65'
+
+function resolveTagrBotPubkey(): string {
+  const fromEnv = import.meta.env.VITE_TAGR_BOT_PUBKEY?.trim().toLowerCase()
+  if (fromEnv && /^[0-9a-f]{64}$/.test(fromEnv)) return fromEnv
+  return DEFAULT_TAGR_BOT_PUBKEY_HEX
+}
+
+function resolveTagrRelayUrl(): string {
+  const fromEnv = import.meta.env.VITE_TAGR_RELAY_URL?.trim()
+  if (fromEnv) return fromEnv
+
+  const defaultRelay = getDefaultRelayUrls()[0]
+  if (defaultRelay) return defaultRelay
+  return 'wss://relay.nos.social'
+}
+
+const TAGR_BOT_PUBKEY_HEX = resolveTagrBotPubkey()
+const TAGR_RELAY_URL = resolveTagrRelayUrl()
 
 const KNOWN_MODERATION_NAMESPACES = new Set([
   'social.nos.ontology',

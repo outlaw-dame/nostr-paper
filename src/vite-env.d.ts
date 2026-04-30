@@ -51,6 +51,11 @@ interface ImportMetaEnv {
    */
   readonly VITE_TAGR_RELAY_URL?: string
   /**
+   * Optional override for the trusted Tagr bot pubkey (hex).
+   * Defaults to the canonical Nos Social Tagr bot pubkey.
+   */
+  readonly VITE_TAGR_BOT_PUBKEY?: string
+  /**
    * Optional Nostr-compatible platform search relay URL. When set, thread
    * views can hydrate root conversations through `thread_id` and
    * `thread_address` filters before falling back to public relays.

@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS seen_events (
   seen_at    INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
--- Clean up old seen entries (>24h) via periodic maintenance
+-- Clean up older seen entries via periodic maintenance.
 CREATE INDEX IF NOT EXISTS idx_seen_events_seen_at
   ON seen_events(seen_at);
 

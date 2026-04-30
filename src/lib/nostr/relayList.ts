@@ -102,6 +102,8 @@ export async function importCurrentUserRelayListPreferences(
 export async function publishCurrentUserRelayList(options: {
   relayPreferences?: readonly RelayPreference[]
   relayUrls?: readonly string[]
+  publishRelayUrls?: readonly string[]
+  force?: boolean
   signal?: AbortSignal
 } = {}): Promise<NostrEvent | null> {
   const ndk = getNDK()
@@ -123,7 +125,7 @@ export async function publishCurrentUserRelayList(options: {
   // Skip publishing when explicit preferences are provided but are identical to the
   // currently stored list. Prevents noisy relay traffic from no-op saves.
   // When no explicit preferences are given, always publish (explicit republish intent).
-  if (options.relayPreferences ?? options.relayUrls) {
+  if (!options.force && (options.relayPreferences ?? options.relayUrls)) {
     const currentPreferences = normalizeRelayPreferences(getEffectiveRelayListEntries())
     if (relayListsAreEqual(relayPreferences, currentPreferences)) {
       return null
@@ -131,7 +133,11 @@ export async function publishCurrentUserRelayList(options: {
   }
 
   const relayUrls = relayPreferences.map(({ url }) => url)
-  const publishRelayUrls = normalizeRelayUrls([...relayUrls, ...getOutboxRelayUrls()])
+  const publishRelayUrls = normalizeRelayUrls([
+    ...relayUrls,
+    ...getOutboxRelayUrls(),
+    ...(options.publishRelayUrls ?? []),
+  ])
   const event = new NDKEvent(ndk)
   event.kind = Kind.RelayList
   event.content = ''

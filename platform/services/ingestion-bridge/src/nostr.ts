@@ -15,6 +15,53 @@ export const NostrEventSchema = z.object({
 
 export type NostrEvent = z.infer<typeof NostrEventSchema>;
 
+export interface NostrRelayListSnapshot {
+  read_relays: string[];
+  write_relays: string[];
+}
+
+function isValidRelayUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'wss:' || url.protocol === 'ws:';
+  } catch {
+    return false;
+  }
+}
+
+function dedupeRelayUrls(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    if (!isValidRelayUrl(value) || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+export function parseKind10002RelayList(tags: string[][]): NostrRelayListSnapshot {
+  const readRelays: string[] = [];
+  const writeRelays: string[] = [];
+
+  for (const tag of tags) {
+    const [name, relayUrl, marker] = tag;
+    if (name !== 'r' || !relayUrl || !isValidRelayUrl(relayUrl)) continue;
+
+    if (!marker || marker === 'read') {
+      readRelays.push(relayUrl);
+    }
+    if (!marker || marker === 'write') {
+      writeRelays.push(relayUrl);
+    }
+  }
+
+  return {
+    read_relays: dedupeRelayUrls(readRelays),
+    write_relays: dedupeRelayUrls(writeRelays),
+  };
+}
+
 export function validateAndVerifyEvent(event: unknown, limits: { maxBytes: number; maxTags: number }) {
   const parsed = NostrEventSchema.safeParse(event);
   if (!parsed.success) {

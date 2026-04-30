@@ -2,6 +2,7 @@ import type NDK from '@nostr-dev-kit/ndk';
 import { NDKEvent } from '@nostr-dev-kit/ndk'
 import { insertEvent } from '@/lib/db/nostr'
 import { withOptionalClientTag } from '@/lib/nostr/appHandlers'
+import { publishEventWithNip65Outbox } from '@/lib/nostr/outbox'
 import { buildQuoteTagsFromContent } from '@/lib/nostr/repost'
 import {
   isSafeMediaURL,
@@ -289,6 +290,7 @@ export async function deriveMediaDimensions(file: File | Blob): Promise<string |
 
 export interface PublishFileMetadataOptions extends Partial<NormalizeNip94Input> {
   caption?: string
+  signal?: AbortSignal
 }
 
 export async function publishFileMetadata(
@@ -331,10 +333,12 @@ export async function publishFileMetadata(
   event.tags = await withOptionalClientTag([
     ...buildFileMetadataTags(metadata),
     ...buildQuoteTagsFromContent(caption),
-  ])
+  ], options.signal)
 
+  if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError')
   await event.sign()
-  await event.publish()
+  if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+  await publishEventWithNip65Outbox(event, options.signal)
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent
   await insertEvent(rawEvent)

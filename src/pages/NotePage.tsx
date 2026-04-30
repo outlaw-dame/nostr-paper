@@ -48,6 +48,7 @@ import {
   getMediaAttachmentPreviewUrl,
 } from '@/lib/nostr/imeta'
 import { parseNip51ListEvent } from '@/lib/nostr/lists'
+import { extractEventLanguageTag } from '@/lib/nostr/language'
 import { parseLongFormEvent } from '@/lib/nostr/longForm'
 import { buildNoteMetaTags, buildNoteTitle } from '@/lib/nostr/meta'
 import { decodeEventReference } from '@/lib/nostr/nip21'
@@ -321,6 +322,7 @@ export default function NotePage() {
     || (event.kind === Kind.Poll && !poll)
     || (event.kind === Kind.PollVote && !pollVote)
   const quoteBody = getQuotePostBody(event)
+  const eventLanguage = extractEventLanguageTag(event)
   const attachments = getEventMediaAttachments(event)
   const hiddenUrls = getImetaHiddenUrls(event)
 
@@ -399,7 +401,13 @@ export default function NotePage() {
             ) : comment ? (
               <>
                 {comment.content.trim().length > 0 && (
-                  <NoteContent content={comment.content} className="mt-4" allowTranslation enableMarkdown />
+                  <NoteContent
+                    content={comment.content}
+                    className="mt-4"
+                    allowTranslation
+                    enableMarkdown
+                    {...(eventLanguage !== null ? { sourceLanguage: eventLanguage } : {})}
+                  />
                 )}
                 <QuotePreviewList event={event} showHeader={false} className="mt-5" compact />
               </>
@@ -414,7 +422,14 @@ export default function NotePage() {
             ) : (
               <>
                 {quoteBody.trim().length > 0 && (
-                  <NoteContent content={quoteBody} className="mt-4" hiddenUrls={hiddenUrls} allowTranslation enableMarkdown />
+                  <NoteContent
+                    content={quoteBody}
+                    className="mt-4"
+                    hiddenUrls={hiddenUrls}
+                    allowTranslation
+                    enableMarkdown
+                    {...(eventLanguage !== null ? { sourceLanguage: eventLanguage } : {})}
+                  />
                 )}
                 {attachments.length > 0 && (
                   <NoteMediaAttachments attachments={attachments} className="mt-5" />

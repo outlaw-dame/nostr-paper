@@ -41,6 +41,7 @@
     "note": "Each app must use a unique port. Always open the matching URL for the script you run."
   },
   "dependencies": {
+    "@nostr-paper/content-policy": "file:platform/packages/content-policy",
     "@google/generative-ai": "^0.24.1",
     "@huggingface/transformers": "^3.8.1",
     "@mediapipe/tasks-genai": "^0.10.27",

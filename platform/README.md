@@ -34,6 +34,15 @@ But this scaffold lives here first so the service boundaries, contracts, infra, 
 - `services/` — deployable services
 - `packages/` — shared runtime libraries used by services
 
+## Tagr Moderation Source (Relay Stack)
+
+The platform relay stack can ingest Nos Social Tagr moderation events directly:
+
+- `TAGR_RELAY_URL` (default: `wss://relay.nos.social`)
+- `TAGR_BOT_PUBKEY` (default: canonical Tagr bot pubkey)
+
+The ingestion bridge filters to Tagr moderation kinds (`1984`, `1985`) for the trusted pubkey and forwards them into the Redis pipeline. The lexical worker persists moderation outcomes and marks affected search rows as blocked.
+
 ## Transition note
 
 Once the backend platform hardens, this subtree can be split into its own repository with minimal churn because service/package seams are defined here first.

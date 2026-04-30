@@ -2,7 +2,7 @@ import { NDKEvent } from '@nostr-dev-kit/ndk'
 import { insertEvent } from '@/lib/db/nostr'
 import { withOptionalClientTag } from '@/lib/nostr/appHandlers'
 import { getNDK } from '@/lib/nostr/ndk'
-import { withRetry } from '@/lib/retry'
+import { publishEventWithNip65Outbox } from '@/lib/nostr/outbox'
 import {
   isSafeMediaURL,
   isSafeURL,
@@ -241,18 +241,7 @@ export async function publishProfileMetadata(
   await event.sign()
   if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-  await withRetry(
-    async () => {
-      if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-      await event.publish()
-    },
-    {
-      maxAttempts: 2,
-      baseDelayMs: 750,
-      maxDelayMs: 2_500,
-      ...(options.signal ? { signal: options.signal } : {}),
-    },
-  )
+    await publishEventWithNip65Outbox(event, options.signal)
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent
   await insertEvent(rawEvent)

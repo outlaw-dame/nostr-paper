@@ -11,8 +11,8 @@ import {
   parseNip21Reference,
 } from '@/lib/nostr/nip21'
 import { getDefaultRelayUrls, getNDK } from '@/lib/nostr/ndk'
+import { publishEventWithNip65Outbox } from '@/lib/nostr/outbox'
 import { parseVideoEvent } from '@/lib/nostr/video'
-import { withRetry } from '@/lib/retry'
 import {
   LIMITS,
   extractNostrURIs,
@@ -333,18 +333,7 @@ export async function publishRepost(
   await event.sign()
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-  await withRetry(
-    async () => {
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-      await event.publish()
-    },
-    {
-      maxAttempts: 2,
-      baseDelayMs: 750,
-      maxDelayMs: 2_500,
-      ...(signal ? { signal } : {}),
-    },
-  )
+  await publishEventWithNip65Outbox(event, signal)
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent
   await insertEvent(rawEvent)

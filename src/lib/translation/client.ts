@@ -25,6 +25,7 @@ import {
 import { listLingvaLanguages, translateWithLingva } from '@/lib/translation/engines/lingva'
 import { getGemmaTransportSummary, listGemmaLanguages, translateWithGemma } from '@/lib/translation/engines/gemma'
 import { getGeminiTransportSummary, listGeminiLanguages, translateWithGemini } from '@/lib/translation/engines/gemini'
+import { isGemmaAvailable } from '@/lib/gemma/client'
 import { decideTranslationProvider } from '@/lib/ai/taskPolicy'
 import { recordTaskPolicyOutcome } from '@/lib/ai/taskPolicyTelemetry'
 import { isRecord } from '@/lib/translation/utils'
@@ -47,6 +48,10 @@ export interface TranslationPreflight {
   likelySourceLanguage: string | null
   sameLanguage: boolean
   canAutoTranslate: boolean
+}
+
+export interface TranslationInspectionOptions {
+  sourceLanguageHint?: string | null
 }
 
 type LanguageDirection = 'source' | 'target'
@@ -185,16 +190,42 @@ function shouldFallbackToOpusMt(
   return error.code === 'config' || error.code === 'unavailable'
 }
 
+function providerCanAutoTranslate(
+  configuration: TranslationConfiguration,
+  likelySourceLanguage: string | null,
+): boolean {
+  switch (configuration.provider) {
+    case 'deepl':
+      return Boolean(configuration.deeplAuthKey && getDeepLProxyUrl())
+    case 'libretranslate':
+      return Boolean(configuration.libreBaseUrl)
+    case 'translang':
+      return Boolean(configuration.translangBaseUrl)
+    case 'lingva':
+      return Boolean(configuration.lingvaBaseUrl)
+    case 'small100':
+      return Boolean(configuration.small100BaseUrl)
+    case 'opusmt':
+      return configuration.opusMtSourceLanguage !== 'auto' || likelySourceLanguage !== null
+    case 'gemma':
+      return isGemmaAvailable()
+    case 'gemini':
+      return Boolean(configuration.geminiApiKey)
+  }
+}
+
 export function inspectTranslationWithConfiguration(
   configuration: TranslationConfiguration,
   text: string,
+  options?: TranslationInspectionOptions,
 ): TranslationPreflight {
   const normalizedText = normalizeTranslationSourceText(text)
   const targetLanguage = getConfiguredTargetLanguage(configuration)
   const meaningfulText = hasMeaningfulTranslationText(normalizedText)
   const configuredSourceLanguage = getConfiguredSourceLanguage(configuration)
+  const hintedSourceLanguage = normalizeLanguageCode(options?.sourceLanguageHint)
   const likelySourceLanguage = configuredSourceLanguage === 'auto'
-    ? detectLikelyLanguage(normalizedText)
+    ? (hintedSourceLanguage ?? detectLikelyLanguage(normalizedText))
     : configuredSourceLanguage
   const sameLanguage = !meaningfulText ||
     languagesProbablyMatch(likelySourceLanguage, targetLanguage) ||
@@ -207,7 +238,7 @@ export function inspectTranslationWithConfiguration(
     configuration.provider === 'opusmt' &&
     configuredSourceLanguage === 'auto' &&
     likelySourceLanguage === null
-  )
+  ) && providerCanAutoTranslate(configuration, likelySourceLanguage)
 
   return {
     targetLanguage,
@@ -220,6 +251,14 @@ export function inspectTranslationWithConfiguration(
 export async function inspectConfiguredTranslation(text: string): Promise<TranslationPreflight> {
   const configuration = await loadTranslationConfiguration()
   return inspectTranslationWithConfiguration(configuration, text)
+}
+
+export async function inspectConfiguredTranslationWithOptions(
+  text: string,
+  options?: TranslationInspectionOptions,
+): Promise<TranslationPreflight> {
+  const configuration = await loadTranslationConfiguration()
+  return inspectTranslationWithConfiguration(configuration, text, options)
 }
 
 async function readResponsePayload(response: Response): Promise<unknown> {

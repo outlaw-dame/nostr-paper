@@ -21,7 +21,6 @@ import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'motion/react'
 import { tApp } from '@/lib/i18n/app'
 import { useKeywordFilters } from '@/hooks/useKeywordFilters'
-import { SYSTEM_FILTER_GROUPS, SYSTEM_KEYWORD_FILTERS, type SystemFilterGroup } from '@/lib/filters/systemFilters'
 import type { CreateFilterInput, FilterAction, FilterScope, KeywordFilter } from '@/lib/filters/types'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -231,34 +230,6 @@ function FilterRow({ filter, onToggle, onEdit, onDelete }: FilterRowProps) {
         </svg>
       </button>
     </motion.div>
-  )
-}
-
-function SystemRuleGroupCard({ group }: { group: SystemFilterGroup }) {
-  return (
-    <div className="rounded-ios-xl border border-[rgb(var(--color-fill)/0.08)] bg-[rgb(var(--color-bg))] p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-[14px] font-semibold text-[rgb(var(--color-label))]">
-              {group.title}
-            </h3>
-            <span className="rounded-full bg-[rgb(var(--color-system-red)/0.12)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[rgb(var(--color-system-red))]">
-              {tApp('filtersSystemBlockBadge')}
-            </span>
-            <span className="rounded-full bg-[rgb(var(--color-system-purple)/0.10)] px-2 py-0.5 text-[11px] font-medium text-[rgb(var(--color-system-purple))]">
-              {tApp('filtersSemanticBadge')}
-            </span>
-          </div>
-          <p className="mt-1 text-[12px] leading-relaxed text-[rgb(var(--color-label-secondary))]">
-            {group.description}
-          </p>
-        </div>
-        <span className="shrink-0 rounded-full bg-[rgb(var(--color-fill)/0.10)] px-2 py-1 text-[11px] font-medium text-[rgb(var(--color-label-secondary))]">
-          {group.filters.length}
-        </span>
-      </div>
-    </div>
   )
 }
 
@@ -591,7 +562,6 @@ export default function FiltersPage() {
   const [saving, setSaving]           = useState(false)
   const [saveError, setSaveError]     = useState<string | null>(null)
   const [flashMessage, setFlashMessage] = useState<string | null>(null)
-  const systemRuleCount = SYSTEM_KEYWORD_FILTERS.length
 
   const handleSave = useCallback(async (
     data: CreateFilterInput,
@@ -708,7 +678,6 @@ export default function FiltersPage() {
                 ? tApp('filtersActiveCustomFilters', { count: activeCount })
                 : tApp('filtersActiveCustomFilter', { count: activeCount })}
               {expiredCount > 0 && ` ${tApp('filtersExpiredCount', { count: expiredCount })}`}
-              {systemRuleCount > 0 && ` ${tApp('filtersSystemRulesAlwaysOn', { count: systemRuleCount })}`}
             </p>
           </div>
         )}
@@ -804,31 +773,6 @@ export default function FiltersPage() {
               </AnimatePresence>
             </div>
           </>
-        )}
-
-        {/* System rules */}
-        {!loading && systemRuleCount > 0 && (
-          <div className="px-4 pt-6">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[rgb(var(--color-label-tertiary))]">
-                  {tApp('filtersSystemSection')}
-                </p>
-                <p className="mt-1 max-w-[38rem] text-[13px] leading-relaxed text-[rgb(var(--color-label-secondary))]">
-                  {tApp('filtersSystemHint')}
-                </p>
-              </div>
-              <span className="shrink-0 rounded-full bg-[rgb(var(--color-fill)/0.10)] px-2.5 py-1 text-[11px] font-medium text-[rgb(var(--color-label-secondary))]">
-                {systemRuleCount}
-              </span>
-            </div>
-
-            <div className="mt-3 space-y-3">
-              {SYSTEM_FILTER_GROUPS.map((group) => (
-                <SystemRuleGroupCard key={group.id} group={group} />
-              ))}
-            </div>
-          </div>
         )}
 
         {/* How it works */}

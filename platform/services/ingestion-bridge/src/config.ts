@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 const ConfigSchema = z.object({
   STRFRY_URL: z.string().url(),
+  TAGR_RELAY_URL: z.string().url().optional(),
+  TAGR_BOT_PUBKEY: z.string().regex(/^[0-9a-fA-F]{64}$/).default('56d4b3d6310fadb7294b7f041aab469c5ffc8991b1b1b331981b96a246f6ae65'),
   REDIS_URL: z.string().url(),
   REDIS_STREAM: z.string().default('events.ingest'),
   REDIS_DEDUPE_TTL_SEC: z.coerce.number().int().positive().default(604800),

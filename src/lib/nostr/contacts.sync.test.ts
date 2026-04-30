@@ -52,6 +52,12 @@ vi.mock('@/lib/nostr/appHandlers', () => ({
   withOptionalClientTag: vi.fn(async (tags: string[][]) => tags),
 }))
 
+vi.mock('@/lib/nostr/outbox', () => ({
+  publishEventWithNip65Outbox: vi.fn(async (event: { publish?: () => Promise<void> | void }) => {
+    await event.publish?.()
+  }),
+}))
+
 vi.mock('@/lib/security/sanitize', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/security/sanitize')>()
   return {

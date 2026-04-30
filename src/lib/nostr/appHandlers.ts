@@ -12,6 +12,7 @@ import { compareReplaceableEvents } from '@/lib/nostr/contactList'
 import { isDvmEventKind } from '@/lib/nostr/dvm'
 import { parseNip21Reference } from '@/lib/nostr/nip21'
 import { getCurrentUser, getNDK } from '@/lib/nostr/ndk'
+import { publishEventWithNip65Outbox } from '@/lib/nostr/outbox'
 import { withRetry } from '@/lib/retry'
 import { resolveAppBaseUrl } from '@/lib/runtime/baseUrl'
 import {
@@ -821,18 +822,7 @@ export async function publishHandlerInformation(
   await event.sign()
   throwIfAborted(signal)
 
-  await withRetry(
-    async () => {
-      throwIfAborted(signal)
-      await event.publish()
-    },
-    {
-      maxAttempts: 2,
-      baseDelayMs: 750,
-      maxDelayMs: 2_500,
-      ...(signal ? { signal } : {}),
-    },
-  )
+  await publishEventWithNip65Outbox(event, signal)
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent
   await insertEvent(rawEvent)
@@ -923,18 +913,7 @@ export async function publishHandlerRecommendation(
   await event.sign()
   throwIfAborted(signal)
 
-  await withRetry(
-    async () => {
-      throwIfAborted(signal)
-      await event.publish()
-    },
-    {
-      maxAttempts: 2,
-      baseDelayMs: 750,
-      maxDelayMs: 2_500,
-      ...(signal ? { signal } : {}),
-    },
-  )
+  await publishEventWithNip65Outbox(event, signal)
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent
   await insertEvent(rawEvent)

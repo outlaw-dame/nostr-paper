@@ -1,6 +1,8 @@
 import Redis from 'ioredis';
 import { Pool } from 'pg';
 import pino from 'pino';
+import { matchesInternalSystemKeywordPolicy } from '@nostr-paper/content-policy';
+import { buildEventSearchText, mergeEventUrls } from './mediaIndex.js';
 
 const log = pino({ level: process.env.LOG_LEVEL || 'info' });
 
@@ -14,6 +16,7 @@ const GROUP = 'lexical-index';
 const CONSUMER = `worker-${Math.random().toString(36).slice(2)}`;
 const MAX_RETRIES = Number(process.env.LEXICAL_MAX_RETRIES || 5);
 const METRICS_LOG_INTERVAL_MS = Number(process.env.METRICS_LOG_INTERVAL_MS || 60000);
+const TAGR_BOT_PUBKEY = (process.env.TAGR_BOT_PUBKEY || '56d4b3d6310fadb7294b7f041aab469c5ffc8991b1b1b331981b96a246f6ae65').toLowerCase();
 
 let processedMessages = 0;
 let failedMessages = 0;
@@ -76,21 +79,34 @@ function extractMentions(tags: string[][]): string[] {
   return tags.filter((t) => t[0] === 'p' && t[1]).map((t) => t[1]!);
 }
 
-function extractUrls(content: string): string[] {
-  const matches = content.match(/https?:\/\/[^\s]+/g);
-  return matches ?? [];
-}
-
-function buildSearchText(content: string, hashtags: string[]): string {
-  return [content, ...hashtags.map((h) => `#${h}`)].join(' ').trim();
-}
-
 async function ensureGroup() {
   try {
     await redis.xgroup('CREATE', INGEST_STREAM, GROUP, '0', 'MKSTREAM');
   } catch (err: any) {
     if (!String(err?.message).includes('BUSYGROUP')) throw err;
   }
+}
+
+async function ensureTagrSchema() {
+  await pg.query(
+    `
+    CREATE TABLE IF NOT EXISTS tagr_blocks (
+      event_id        text PRIMARY KEY,
+      reason          text NOT NULL,
+      source_event_id text NOT NULL,
+      source_pubkey   text NOT NULL,
+      blocked_at      timestamptz NOT NULL,
+      updated_at      timestamptz NOT NULL DEFAULT now()
+    )
+    `,
+  );
+
+  await pg.query(
+    `
+    CREATE INDEX IF NOT EXISTS idx_tagr_blocks_blocked_at
+      ON tagr_blocks (blocked_at DESC)
+    `,
+  );
 }
 
 async function enqueueEmbeddingJob(eventId: string, text: string) {
@@ -118,7 +134,7 @@ async function sendToDlq(id: string, payload: string, err: unknown) {
     'error',
     err instanceof Error ? err.message : String(err),
     'payload',
-    payload
+    payload,
   ));
 }
 
@@ -127,12 +143,101 @@ async function sendToDlq(id: string, payload: string, err: unknown) {
 //   6     = NIP-18 repost
 //   7     = NIP-25 reaction
 //   11    = NIP-7D thread root
+//   21    = video event
+//   22    = short video event
+//   1063  = NIP-94 file metadata
 //   1111  = NIP-22 comment
 //   9735  = NIP-57 zap receipt
 //   30023 = NIP-23 long-form article
 //   30024 = NIP-23 long-form draft
-const SUPPORTED_KINDS = new Set([1, 6, 7, 11, 1111, 9735, 30023, 30024]);
+//   34235 = addressable video
+//   34236 = addressable short video
+const SUPPORTED_KINDS = new Set([1, 6, 7, 11, 21, 22, 1063, 1111, 9735, 30023, 30024, 34235, 34236]);
 const SOCIAL_KINDS = new Set([6, 7, 9735]);
+const TAGR_KINDS = new Set([1984, 1985]);
+
+function isValidHex64(value: string | undefined): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value);
+}
+
+function isTagrModerationEvent(event: { pubkey: string; kind: number; tags?: string[][] }): boolean {
+  if ((event.pubkey || '').toLowerCase() !== TAGR_BOT_PUBKEY) return false;
+  if (!TAGR_KINDS.has(event.kind)) return false;
+  const tags = event.tags || [];
+  return tags.some((tag) => tag[0] === 'e' && isValidHex64(tag[1]));
+}
+
+function parseTagrReason(event: { kind: number; tags?: string[][] }): string {
+  const tags = event.tags || [];
+  for (const tag of tags) {
+    if (tag[0] !== 'l' || !tag[1]) continue;
+    if (tag[1].startsWith('MOD>')) {
+      const code = tag[1].slice(4).trim();
+      if (code) return code;
+    }
+  }
+
+  const typedReason = tags
+    .filter((tag) => tag[0] === 'e' || tag[0] === 'p' || tag[0] === 'x')
+    .map((tag) => (tag[2] || '').trim().toLowerCase())
+    .find((value) => value.length > 0);
+
+  if (typedReason) return typedReason;
+  return event.kind === 1984 ? 'report' : 'label';
+}
+
+function extractTagrTargetEventIds(tags: string[][]): string[] {
+  const out = new Set<string>();
+  for (const tag of tags) {
+    if (tag[0] !== 'e' || !isValidHex64(tag[1])) continue;
+    out.add(tag[1].toLowerCase());
+  }
+  return [...out];
+}
+
+async function applyTagrBlocks(event: {
+  event_id: string;
+  pubkey: string;
+  created_at: number;
+  kind: number;
+  tags?: string[][];
+}) {
+  const targetEventIds = extractTagrTargetEventIds(event.tags || []);
+  if (targetEventIds.length === 0) return;
+
+  const reason = parseTagrReason(event);
+  const blockedAtIso = new Date(event.created_at * 1000).toISOString();
+
+  await pg.query(
+    `
+    INSERT INTO tagr_blocks (event_id, reason, source_event_id, source_pubkey, blocked_at)
+    SELECT
+      target_id,
+      $2,
+      $3,
+      $4,
+      $5::timestamptz
+    FROM unnest($1::text[]) AS target_id
+    ON CONFLICT (event_id) DO UPDATE
+    SET
+      reason = EXCLUDED.reason,
+      source_event_id = EXCLUDED.source_event_id,
+      source_pubkey = EXCLUDED.source_pubkey,
+      blocked_at = GREATEST(tagr_blocks.blocked_at, EXCLUDED.blocked_at),
+      updated_at = now()
+    `,
+    [targetEventIds, reason, event.event_id, event.pubkey, blockedAtIso],
+  );
+
+  await pg.query(
+    `
+    UPDATE search_docs
+    SET moderation_state = 'blocked'
+    WHERE event_id = ANY($1::text[])
+    `,
+    [targetEventIds],
+  );
+}
 
 interface ThreadRefs {
   rootId: string | null;
@@ -276,25 +381,37 @@ async function upsertSocialMetrics(event: { kind: number; content?: string; crea
 
 async function processMessage(payload: string) {
   const event = JSON.parse(payload);
+  const tagrModerationEvent = isTagrModerationEvent(event);
 
-  if (!SUPPORTED_KINDS.has(event.kind)) {
+  if (!SUPPORTED_KINDS.has(event.kind) && !tagrModerationEvent) {
     return;
   }
 
   const tags: string[][] = event.tags || [];
   const hashtags = extractHashtags(tags);
   const mentions  = extractMentions(tags);
-  const urls      = extractUrls(event.content || '');
+  const urls      = mergeEventUrls(event.content || '', tags);
   const title     = extractTitle(tags);
+  const summary   = firstTagValue(tags, 'summary');
+  const alt       = firstTagValue(tags, 'alt');
   const refs: ThreadRefs =
     event.kind === 1111 ? extractNip22Refs(tags) : extractNip10Refs(tags);
 
   // Build search text: title first, then content, then hashtag tokens.
-  const textParts: string[] = [];
-  if (title) textParts.push(title);
-  if (event.content) textParts.push(event.content);
-  hashtags.forEach(h => textParts.push(`#${h}`));
-  const searchText = textParts.join(' ').trim();
+  const searchText = buildEventSearchText({
+    title,
+    content: event.content || '',
+    hashtags,
+    tags,
+    kind: event.kind,
+  });
+  const keywordBlocked = matchesInternalSystemKeywordPolicy({
+    content: event.content || '',
+    title,
+    summary,
+    alt,
+    hashtags,
+  });
 
   await pg.query('BEGIN');
 
@@ -330,7 +447,7 @@ async function processMessage(payload: string) {
       await upsertSocialMetrics(event);
     }
 
-    if (!SOCIAL_KINDS.has(event.kind)) {
+    if (!SOCIAL_KINDS.has(event.kind) && !tagrModerationEvent) {
       await pg.query(
         `
         INSERT INTO search_docs (
@@ -363,7 +480,13 @@ async function processMessage(payload: string) {
           $7,
           $8,
           $9,
-          'allowed',
+          CASE
+            WHEN $15::boolean
+              THEN 'blocked'
+            WHEN EXISTS (SELECT 1 FROM tagr_blocks tb WHERE tb.event_id = $1)
+              THEN 'blocked'
+            ELSE 'allowed'
+          END,
           true,
           $10,
           $11,
@@ -379,6 +502,13 @@ async function processMessage(payload: string) {
           hashtags     = EXCLUDED.hashtags,
           mentions     = EXCLUDED.mentions,
           urls         = EXCLUDED.urls,
+          moderation_state = CASE
+            WHEN $15::boolean
+              THEN 'blocked'
+            WHEN EXISTS (SELECT 1 FROM tagr_blocks tb WHERE tb.event_id = EXCLUDED.event_id)
+              THEN 'blocked'
+            ELSE EXCLUDED.moderation_state
+          END,
           reply_to_id  = EXCLUDED.reply_to_id,
           root_id      = EXCLUDED.root_id,
           root_address = EXCLUDED.root_address,
@@ -400,8 +530,13 @@ async function processMessage(payload: string) {
           refs.rootAddress,
           refs.rootKind,
           refs.isReply,
+          keywordBlocked,
         ]
       );
+    }
+
+    if (tagrModerationEvent) {
+      await applyTagrBlocks(event);
     }
 
     await pg.query(
@@ -431,7 +566,7 @@ async function processMessage(payload: string) {
 
     await pg.query('COMMIT');
 
-    if (!SOCIAL_KINDS.has(event.kind) && searchText.trim()) {
+    if (!SOCIAL_KINDS.has(event.kind) && !tagrModerationEvent && !keywordBlocked && searchText.trim()) {
       await enqueueEmbeddingJob(event.event_id, searchText);
     }
   } catch (err) {
@@ -442,6 +577,7 @@ async function processMessage(payload: string) {
 
 async function run() {
   await pg.query('SELECT 1');
+  await ensureTagrSchema();
   await ensureGroup();
 
   while (true) {

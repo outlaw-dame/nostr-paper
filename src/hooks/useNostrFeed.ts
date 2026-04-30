@@ -29,6 +29,7 @@ import type { NostrEvent, NostrFilter, FeedSection } from '@/types'
 
 export interface FeedState {
   events:  NostrEvent[]
+  pendingEvents: NostrEvent[]
   loading: boolean
   eose:    boolean   // End of stored events received from relays
   error:   string | null
@@ -39,6 +40,8 @@ type FeedAction =
   | { type: 'LOAD_CACHE'; payload: NostrEvent[] }
   | { type: 'NEW_EVENT';  payload: NostrEvent }
   | { type: 'NEW_EVENTS'; payload: NostrEvent[] }
+  | { type: 'QUEUE_EVENTS'; payload: NostrEvent[] }
+  | { type: 'APPLY_PENDING_EVENTS' }
   | { type: 'EOSE' }
   | { type: 'ERROR';  payload: string }
   | { type: 'RESET' }
@@ -64,13 +67,26 @@ function mergeFeedEvents(current: NostrEvent[], incoming: NostrEvent[]): NostrEv
     .slice(0, MAX_FEED_SIZE)
 }
 
+function queueFeedEvents(current: NostrEvent[], pending: NostrEvent[], incoming: NostrEvent[]): NostrEvent[] {
+  if (incoming.length === 0) return pending
+
+  const displayedIds = new Set(current.map(event => event.id))
+  const pendingIds = new Set(pending.map(event => event.id))
+  const nextEvents = incoming.filter((event) => (
+    !displayedIds.has(event.id) && !pendingIds.has(event.id)
+  ))
+
+  if (nextEvents.length === 0) return pending
+  return mergeFeedEvents(pending, nextEvents)
+}
+
 function feedReducer(state: FeedState, action: FeedAction): FeedState {
   switch (action.type) {
     case 'LOAD_START':
       return { ...state, loading: true, error: null }
 
     case 'LOAD_CACHE':
-      return { ...state, loading: false, events: action.payload }
+      return { ...state, loading: false, events: action.payload, pendingEvents: [] }
 
     case 'NEW_EVENT': {
       if (state.events.some(e => e.id === action.payload.id)) return state
@@ -83,6 +99,18 @@ function feedReducer(state: FeedState, action: FeedAction): FeedState {
       return { ...state, events }
     }
 
+    case 'QUEUE_EVENTS': {
+      const pendingEvents = queueFeedEvents(state.events, state.pendingEvents, action.payload)
+      if (pendingEvents === state.pendingEvents) return state
+      return { ...state, pendingEvents }
+    }
+
+    case 'APPLY_PENDING_EVENTS': {
+      if (state.pendingEvents.length === 0) return state
+      const events = mergeFeedEvents(state.events, state.pendingEvents)
+      return { ...state, events, pendingEvents: [] }
+    }
+
     case 'EOSE':
       return { ...state, eose: true }
 
@@ -90,7 +118,7 @@ function feedReducer(state: FeedState, action: FeedAction): FeedState {
       return { ...state, loading: false, error: action.payload }
 
     case 'RESET':
-      return { events: [], loading: true, eose: false, error: null }
+      return { events: [], pendingEvents: [], loading: true, eose: false, error: null }
 
     default:
       return state
@@ -99,6 +127,7 @@ function feedReducer(state: FeedState, action: FeedAction): FeedState {
 
 const initialState: FeedState = {
   events:  [],
+  pendingEvents: [],
   loading: true,
   eose:    false,
   error:   null,
@@ -109,14 +138,16 @@ const initialState: FeedState = {
 export interface UseNostrFeedOptions {
   section:  FeedSection
   enabled?: boolean
+  shouldBufferNewEvents?: () => boolean
 }
 
-export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
+export function useNostrFeed({ section, enabled = true, shouldBufferNewEvents }: UseNostrFeedOptions) {
   const [state, dispatch] = useReducer(feedReducer, initialState)
   const subRef   = useRef<NDKSubscription | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const pendingEventsRef = useRef<NostrEvent[]>([])
   const flushTimerRef = useRef<number | null>(null)
+  const shouldBufferNewEventsRef = useRef(shouldBufferNewEvents)
 
   /**
    * Stabilise the filter object so it does not trigger the effect on every render.
@@ -126,6 +157,10 @@ export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
    */
   const filterKey = JSON.stringify(section.filter)
   const stableFilter = useMemo<NostrFilter>(() => section.filter, [filterKey])
+
+  useEffect(() => {
+    shouldBufferNewEventsRef.current = shouldBufferNewEvents
+  }, [shouldBufferNewEvents])
 
   const stopActiveSubscription = useCallback(() => {
     abortRef.current?.abort()
@@ -185,11 +220,17 @@ export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
 
           if (signal.aborted) return
           if (persistedEvents.length > 0) {
-            dispatch({ type: 'NEW_EVENTS', payload: persistedEvents })
+            dispatch({
+              type: shouldBufferNewEventsRef.current?.() ? 'QUEUE_EVENTS' : 'NEW_EVENTS',
+              payload: persistedEvents,
+            })
           }
         } catch {
           if (signal.aborted) return
-          dispatch({ type: 'NEW_EVENTS', payload: pendingEvents })
+          dispatch({
+            type: shouldBufferNewEventsRef.current?.() ? 'QUEUE_EVENTS' : 'NEW_EVENTS',
+            payload: pendingEvents,
+          })
         } finally {
           if (!signal.aborted && pendingEventsRef.current.length > 0) {
             scheduleFlush()
@@ -287,5 +328,14 @@ export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
     }
   }, [stableFilter, stopActiveSubscription, subscribe])
 
-  return { ...state, refresh }
+  const applyPendingEvents = useCallback(() => {
+    dispatch({ type: 'APPLY_PENDING_EVENTS' })
+  }, [])
+
+  return {
+    ...state,
+    pendingEventCount: state.pendingEvents.length,
+    applyPendingEvents,
+    refresh,
+  }
 }

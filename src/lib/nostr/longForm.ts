@@ -21,8 +21,8 @@ import { insertEvent } from '@/lib/db/nostr'
 import { parseAddressCoordinate } from '@/lib/nostr/addressable'
 import { withOptionalClientTag } from '@/lib/nostr/appHandlers'
 import { getNDK } from '@/lib/nostr/ndk'
+import { publishEventWithNip65Outbox } from '@/lib/nostr/outbox'
 import { getNip21Route } from '@/lib/nostr/nip21'
-import { withRetry } from '@/lib/retry'
 import {
   extractURLs,
   isSafeMediaURL,
@@ -518,18 +518,7 @@ export async function publishLongForm({
   await event.sign()
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-  await withRetry(
-    async () => {
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-      await event.publish()
-    },
-    {
-      maxAttempts: 2,
-      baseDelayMs: 750,
-      maxDelayMs: 2_500,
-      ...(signal ? { signal } : {}),
-    },
-  )
+  await publishEventWithNip65Outbox(event, signal)
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent
   await insertEvent(rawEvent)

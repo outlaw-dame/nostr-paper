@@ -2,7 +2,7 @@ import WebSocket from 'ws';
 import { loadConfig } from './config.js';
 import { createLogger } from './logger.js';
 import { createRedis, publishEvent, setDedupe, getState, setState } from './redis.js';
-import { validateAndVerifyEvent } from './nostr.js';
+import { parseKind10002RelayList, validateAndVerifyEvent } from './nostr.js';
 import { nextDelay } from './backoff.js';
 
 const config = loadConfig();
@@ -10,11 +10,14 @@ const logger = createLogger(config);
 const redis = createRedis(config);
 
 const STATE_KEY = `ingestion-bridge:${config.BRIDGE_NAME}:last_ts`;
+const TAGR_STATE_KEY = `ingestion-bridge:${config.BRIDGE_NAME}:tagr:last_ts`;
 const DEDUPE_PREFIX = `ingestion-bridge:${config.BRIDGE_NAME}:dedupe:`;
+const TAGR_KINDS = [1984, 1985];
 
 let ws: WebSocket | null = null;
+const activeSockets = new Set<WebSocket>();
 let stopped = false;
-let lastPersistedTs: number | null = null;
+const lastPersistedTsByStateKey = new Map<string, number | null>();
 let droppedByBackpressure = 0;
 let acceptedEvents = 0;
 let validationRejected = 0;
@@ -56,15 +59,27 @@ function makeSubId() {
   return `bridge-${config.BRIDGE_NAME}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 }
 
-async function handleEvent(raw: any) {
+type RelaySource = {
+  name: string;
+  relayUrl: string;
+  sourceType: string;
+  stateKey: string;
+  buildReq: (subId: string, since: number) => unknown[];
+  acceptEvent?: (event: { pubkey: string; kind: number }) => boolean;
+};
+
+async function handleEvent(raw: any, source: RelaySource) {
   const v = validateAndVerifyEvent(raw, { maxBytes: config.MAX_EVENT_BYTES, maxTags: config.MAX_TAGS });
   if (!v.ok) {
     validationRejected += 1;
-    logger.warn({ reason: v.reason }, 'event rejected by validation');
+    logger.warn({ source: source.name, reason: v.reason }, 'event rejected by validation');
     return;
   }
 
   const e = v.event;
+  if (source.acceptEvent && !source.acceptEvent(e)) {
+    return;
+  }
 
   const dedupeKey = `${DEDUPE_PREFIX}${e.id}`;
   const first = await setDedupe(redis, dedupeKey, config.REDIS_DEDUPE_TTL_SEC);
@@ -81,45 +96,48 @@ async function handleEvent(raw: any) {
     tags: e.tags,
     raw: e,
     source: {
-      source_type: 'strfry_ws',
-      relay_url: config.STRFRY_URL,
+      source_type: source.sourceType,
+      relay_url: source.relayUrl,
       received_at: new Date().toISOString()
     },
     pipeline: {
       schema_version: 1,
       ingest_trace_id: `${Date.now()}-${Math.floor(Math.random() * 1e9)}`
-    }
+    },
+    ...(e.kind === 10002 ? { outbox: parseKind10002RelayList(e.tags) } : {}),
   };
 
   await publishEvent(redis, config.REDIS_STREAM, envelope);
   acceptedEvents += 1;
 
   // Keep redis state monotonic and avoid redundant writes under event bursts.
+  const lastPersistedTs = lastPersistedTsByStateKey.get(source.stateKey) ?? null;
   if (lastPersistedTs == null || e.created_at > lastPersistedTs) {
-    await setState(redis, STATE_KEY, e.created_at);
-    lastPersistedTs = e.created_at;
+    await setState(redis, source.stateKey, e.created_at);
+    lastPersistedTsByStateKey.set(source.stateKey, e.created_at);
   }
 }
 
-function connectLoop() {
+function connectLoop(source: RelaySource) {
   let attempt = 0;
 
   const run = async () => {
     while (!stopped) {
-      const lastTs = await getState(redis, STATE_KEY);
-      lastPersistedTs = lastTs;
+      const lastTs = await getState(redis, source.stateKey);
+      lastPersistedTsByStateKey.set(source.stateKey, lastTs);
       const nowSec = Math.floor(Date.now() / 1000);
       const since = buildSince(nowSec, lastTs);
 
       const subId = makeSubId();
 
-      logger.info({ since }, 'connecting to strfry');
+      logger.info({ source: source.name, relayUrl: source.relayUrl, since }, 'connecting relay source');
 
-      ws = new WebSocket(config.STRFRY_URL, {
+      ws = new WebSocket(source.relayUrl, {
         handshakeTimeout: 15000,
         maxPayload: config.MAX_EVENT_BYTES * 2,
         perMessageDeflate: false
       });
+      activeSockets.add(ws);
 
       try {
         await new Promise<void>((resolve, reject) => {
@@ -128,14 +146,15 @@ function connectLoop() {
         });
       } catch (err) {
         const delay = nextDelay(attempt++);
-        logger.error({ err, delay }, 'ws open failed, retrying');
+        logger.error({ err, source: source.name, delay }, 'ws open failed, retrying');
+        activeSockets.delete(ws);
         await new Promise(r => setTimeout(r, delay));
         continue;
       }
 
       attempt = 0;
 
-      const req = ['REQ', subId, { since }];
+      const req = source.buildReq(subId, since);
       ws.send(JSON.stringify(req));
 
       let messageQueue = Promise.resolve();
@@ -156,11 +175,11 @@ function connectLoop() {
               const [type, sid, payload] = msg;
 
               if (type === 'EVENT' && sid === subId) {
-                await handleEvent(payload);
+                await handleEvent(payload, source);
               }
 
               if (type === 'EOSE' && sid === subId) {
-                logger.info('initial backfill complete (EOSE)');
+                logger.info({ source: source.name }, 'initial backfill complete (EOSE)');
               }
 
               if (type === 'NOTICE') {
@@ -182,13 +201,14 @@ function connectLoop() {
         ws!.once('close', () => resolve());
         ws!.once('error', () => resolve());
       });
+      activeSockets.delete(ws);
 
       if (stopped) break;
 
       maybeLogMetrics();
 
       const delay = nextDelay(attempt++);
-      logger.warn({ delay }, 'ws closed, reconnecting');
+      logger.warn({ source: source.name, delay }, 'ws closed, reconnecting');
       await new Promise(r => setTimeout(r, delay));
     }
   };
@@ -202,11 +222,48 @@ function connectLoop() {
 async function main() {
   logger.info('starting ingestion bridge');
 
+  const sources: RelaySource[] = [
+    {
+      name: 'primary',
+      relayUrl: config.STRFRY_URL,
+      sourceType: 'strfry_ws',
+      stateKey: STATE_KEY,
+      buildReq: (_subId, since) => ['REQ', _subId, { since }],
+    },
+  ];
+
+  if (config.TAGR_RELAY_URL) {
+    const expectedTagrPubkey = config.TAGR_BOT_PUBKEY.toLowerCase();
+    sources.push({
+      name: 'tagr',
+      relayUrl: config.TAGR_RELAY_URL,
+      sourceType: 'tagr_ws',
+      stateKey: TAGR_STATE_KEY,
+      buildReq: (_subId, since) => [
+        'REQ',
+        _subId,
+        {
+          since,
+          authors: [expectedTagrPubkey],
+          kinds: TAGR_KINDS,
+          limit: 500,
+        },
+      ],
+      acceptEvent: (event) => (
+        event.pubkey.toLowerCase() === expectedTagrPubkey && TAGR_KINDS.includes(event.kind)
+      ),
+    });
+    logger.info({ relayUrl: config.TAGR_RELAY_URL, pubkey: expectedTagrPubkey }, 'tagr source enabled');
+  }
+
   const shutdown = async () => {
     if (stopped) return;
     stopped = true;
     maybeLogMetrics(true);
     logger.info('shutting down');
+    for (const socket of activeSockets) {
+      try { socket.close(); } catch {}
+    }
     try { ws?.close(); } catch {}
     try { await redis.quit(); } catch {}
     process.exit(0);
@@ -215,7 +272,9 @@ async function main() {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  connectLoop();
+  for (const source of sources) {
+    connectLoop(source);
+  }
 }
 
 main();

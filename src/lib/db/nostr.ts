@@ -61,6 +61,7 @@ import { Kind } from '@/types'
 
 type SQLOperation = { sql: string; bind?: unknown[] }
 const MAX_TAG_INSERT_ROWS_PER_STATEMENT = 100
+const SEEN_EVENT_RETENTION_SECONDS = 30 * 24 * 60 * 60
 
 function getEventDeletionHiddenCondition(eventAlias = 'e'): string {
   return `EXISTS (
@@ -507,7 +508,12 @@ export async function insertEvent(event: NostrEvent): Promise<boolean> {
 
   // ── Deduplication record ──────────────────────────────────
   ops.push({
-    sql: 'INSERT OR IGNORE INTO seen_events (event_id) VALUES (?)',
+    sql: `
+      INSERT INTO seen_events (event_id, seen_at)
+      VALUES (?, unixepoch())
+      ON CONFLICT(event_id) DO UPDATE SET
+        seen_at = excluded.seen_at
+    `,
     bind: [event.id],
   })
 
@@ -1852,6 +1858,21 @@ export async function getEventReadRelayHints(pubkey: string, limit = 3): Promise
   return rows.map(row => row.url).filter(Boolean)
 }
 
+export async function getEventWriteRelayHints(pubkey: string, limit = 3): Promise<string[]> {
+  const rows = await dbQuery<{ url: string }>(
+    `
+      SELECT url
+      FROM relay_list
+      WHERE pubkey = ? AND write = 1
+      ORDER BY read DESC, url ASC
+      LIMIT ?
+    `,
+    [pubkey, Math.min(Math.max(limit, 1), 12)],
+  )
+
+  return rows.map(row => row.url).filter(Boolean)
+}
+
 /** Get all pubkeys followed by `pubkey` */
 export async function getFollows(pubkey: string): Promise<string[]> {
   const rows = await dbQuery<{ followee: string }>(
@@ -2062,11 +2083,11 @@ export async function getEventEngagementSummary(
 // ── Maintenance ──────────────────────────────────────────────
 
 /**
- * Prune seen_events entries older than 24 hours and run an incremental
- * vacuum pass. Safe to call periodically in the background.
+ * Prune old seen_events entries and run an incremental vacuum pass.
+ * Safe to call periodically in the background.
  */
 export async function runMaintenance(): Promise<void> {
-  const cutoffSeconds = Math.floor(Date.now() / 1000) - 86_400
+  const cutoffSeconds = Math.floor(Date.now() / 1000) - SEEN_EVENT_RETENTION_SECONDS
 
   await dbRun(
     'DELETE FROM seen_events WHERE seen_at < ?',

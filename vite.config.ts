@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { resolve } from 'path'
 import { visualizer } from 'rollup-plugin-visualizer'
+import * as net from 'node:net'
+import * as tls from 'node:tls'
 
 const DEV_NIP05_PROXY_PATH = '/__dev/nip05'
 const DEV_NIP05_PROXY_TIMEOUT_MS = 8_000
@@ -1216,11 +1218,6 @@ function relayDevProxyPlugin() {
     name: 'relay-dev-proxy',
     configureServer(server: import('vite').ViteDevServer) {
       if (!server.httpServer) return
-
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const tls = require('tls') as typeof import('tls')
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const net = require('net') as typeof import('net')
 
       server.httpServer.on(
         'upgrade',

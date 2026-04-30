@@ -165,12 +165,41 @@ describe('translateTextWithConfiguration', () => {
     })
   })
 
+  it('does not auto-start unconfigured remote providers', () => {
+    expect(inspectTranslationWithConfiguration(buildConfiguration({
+      provider: 'deepl',
+      deeplAuthKey: '',
+      deeplTargetLanguage: 'EN-US',
+      deeplSourceLanguage: 'auto',
+    }), 'Este es un mensaje para lectores que prefieren seguir leyendo sin interrupciones.')).toMatchObject({
+      likelySourceLanguage: 'es',
+      sameLanguage: false,
+      canAutoTranslate: false,
+    })
+  })
+
   it('treats short ASCII snippets as same-language when the target is English', () => {
     expect(inspectTranslationWithConfiguration(buildConfiguration({
       provider: 'opusmt',
       opusMtTargetLanguage: 'en',
       opusMtSourceLanguage: 'auto',
     }), 'Breaking news')).toMatchObject({
+      sameLanguage: true,
+      canAutoTranslate: false,
+    })
+  })
+
+  it('uses a source-language hint to suppress same-language translation', () => {
+    expect(inspectTranslationWithConfiguration(buildConfiguration({
+      provider: 'translang',
+      translangBaseUrl: 'https://translang.example.com',
+      translangTargetLanguage: 'en',
+      translangSourceLanguage: 'auto',
+      lingvaBaseUrl: 'https://lingva.example.com',
+    }), 'Short note', {
+      sourceLanguageHint: 'en-US',
+    })).toMatchObject({
+      likelySourceLanguage: 'en',
       sameLanguage: true,
       canAutoTranslate: false,
     })
