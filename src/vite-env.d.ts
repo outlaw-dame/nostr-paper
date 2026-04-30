@@ -66,6 +66,18 @@ interface ImportMetaEnv {
    * that provide a first-party Cloudflare/R2 + Filebase media edge.
    */
   readonly VITE_DEFAULT_BLOSSOM_SERVERS?: string
+  /**
+   * Optional comma-separated relay defaults prepended to the built-in relay set.
+   */
+  readonly VITE_DEFAULT_RELAY_URLS?: string
+  /**
+   * When true, only VITE_DEFAULT_RELAY_URLS is used as the default relay set.
+   */
+  readonly VITE_DEFAULT_RELAYS_EXCLUSIVE?: string
+  /**
+   * When true, init ignores stored relay preferences and always uses defaults.
+   */
+  readonly VITE_FORCE_DEFAULT_RELAYS?: string
 }
 
 interface ImportMeta {
