@@ -47,8 +47,9 @@ type FeedAction =
   | { type: 'RESET' }
 
 const MAX_FEED_SIZE = 200  // cap in-memory feed to prevent unbounded growth
+const MAX_PENDING_FEED_SIZE = 40  // cap queued live events while user is reading
 
-function mergeFeedEvents(current: NostrEvent[], incoming: NostrEvent[]): NostrEvent[] {
+function mergeFeedEvents(current: NostrEvent[], incoming: NostrEvent[], maxSize = MAX_FEED_SIZE): NostrEvent[] {
   if (incoming.length === 0) return current
 
   const merged = new Map<string, NostrEvent>()
@@ -64,7 +65,7 @@ function mergeFeedEvents(current: NostrEvent[], incoming: NostrEvent[]): NostrEv
 
   return [...merged.values()]
     .sort((a, b) => b.created_at - a.created_at)
-    .slice(0, MAX_FEED_SIZE)
+    .slice(0, maxSize)
 }
 
 function queueFeedEvents(current: NostrEvent[], pending: NostrEvent[], incoming: NostrEvent[]): NostrEvent[] {
@@ -77,7 +78,7 @@ function queueFeedEvents(current: NostrEvent[], pending: NostrEvent[], incoming:
   ))
 
   if (nextEvents.length === 0) return pending
-  return mergeFeedEvents(pending, nextEvents)
+  return mergeFeedEvents(pending, nextEvents, MAX_PENDING_FEED_SIZE)
 }
 
 function feedReducer(state: FeedState, action: FeedAction): FeedState {

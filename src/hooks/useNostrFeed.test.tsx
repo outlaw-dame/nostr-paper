@@ -321,6 +321,69 @@ describe('useNostrFeed', () => {
     vi.useRealTimers()
   })
 
+  it('caps queued live events while buffering', async () => {
+    vi.useFakeTimers()
+    const subscription = createSubscription()
+    const cachedEvent = makeEvent('cached-event', 1)
+    const bufferedEvents = Array.from({ length: 55 }, (_, index) => (
+      makeEvent(`buffered-${index + 1}`, index + 2)
+    ))
+
+    queryEventsMock
+      .mockResolvedValueOnce([cachedEvent])
+      .mockResolvedValueOnce(bufferedEvents)
+
+    getNDKMock.mockReturnValue({
+      subscribe: vi.fn(() => subscription),
+    } as unknown as ReturnType<typeof getNDK>)
+
+    let latest: Snapshot = {
+      events: [],
+      loading: true,
+      eose: false,
+      error: null,
+      pendingEventCount: 0,
+      applyPendingEvents: () => {},
+      refresh: async () => {},
+    }
+
+    await act(async () => {
+      if (!root) throw new Error('Root not initialized')
+      root.render(
+        <Harness
+          section={makeSection()}
+          shouldBufferNewEvents={() => true}
+          onSnapshot={(snapshot) => { latest = snapshot }}
+        />,
+      )
+      await flush()
+    })
+
+    await act(async () => {
+      for (const event of bufferedEvents) {
+        subscription.handlers.event!({
+          rawEvent: () => event,
+        })
+      }
+      await vi.advanceTimersByTimeAsync(100)
+      await flush()
+    })
+
+    expect(latest.events.map((event) => event.id)).toEqual(['cached-event'])
+    expect(latest.pendingEventCount).toBe(40)
+
+    await act(async () => {
+      latest.applyPendingEvents()
+      await flush()
+    })
+
+    expect(latest.events).toHaveLength(41)
+    expect(latest.events[0]?.id).toBe('buffered-55')
+    expect(latest.events[39]?.id).toBe('buffered-16')
+    expect(latest.events[40]?.id).toBe('cached-event')
+    vi.useRealTimers()
+  })
+
   it('preserves the section limit when reading from cache', async () => {
     queryEventsMock.mockResolvedValueOnce([])
     getNDKMock.mockImplementation(() => {

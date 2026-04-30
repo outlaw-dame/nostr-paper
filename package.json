@@ -13,6 +13,7 @@
     "dev:auto": "vite --strictPort false",
     "dev:5175": "VITE_DEV_PORT=5175 vite",
     "dev:5176": "VITE_DEV_PORT=5176 vite",
+    "dev:tunnels:refresh": "bash scripts/refresh-dev-tunnels.sh",
     "dev:host": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "precompress": "node scripts/precompress.mjs",

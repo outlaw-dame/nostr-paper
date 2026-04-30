@@ -231,7 +231,7 @@ const COMPOSE_TRIGGER_OFFSET = 85  // px downward pull to open compose sheet
 const FEED_VIEW_STATE_KEY = 'nostr-paper:feed:view-state:v1'
 const FEED_STATE_TTL_MS = 1000 * 60 * 60 * 24 * 7
 const MIN_PRIMARY_FEED_ITEMS = 6
-const LIVE_FEED_AUTO_INSERT_THRESHOLD_PX = 120
+const LIVE_FEED_AUTO_INSERT_THRESHOLD_PX = 100
 
 interface FeedViewSnapshot {
   anchorEventId: string | null
