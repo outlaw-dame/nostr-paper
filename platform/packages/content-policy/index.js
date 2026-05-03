@@ -147,9 +147,13 @@ const DEFAULT_BAD_DOMAINS = Object.freeze([
   'yip.su',
 ]);
 
+const RUNTIME_ENV = typeof process !== 'undefined' && process && process.env
+  ? process.env
+  : {};
+
 const BAD_DOMAIN_SET = new Set([
   ...DEFAULT_BAD_DOMAINS,
-  ...String(process.env.INTERNAL_SYSTEM_BAD_DOMAINS || '')
+  ...String(RUNTIME_ENV.INTERNAL_SYSTEM_BAD_DOMAINS || '')
     .split(',')
     .map((entry) => entry.trim().toLowerCase())
     .filter(Boolean),

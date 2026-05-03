@@ -10,9 +10,8 @@
  */
 
 import React, { useEffect, useState, Suspense, lazy, Component, type ReactNode, type ErrorInfo } from 'react'
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { App as KonstaApp } from 'konsta/react'
-import { AnimatePresence } from 'motion/react'
 import { AppProvider } from '@/contexts/AppContext'
 import { useApp } from '@/contexts/app-context'
 import { ComposeSheet } from '@/components/compose/ComposeSheet'
@@ -95,7 +94,6 @@ const COMPOSE_SHEET_ROUTE = {
 
 function InnerApp() {
   const { status, errors, isOnline } = useApp()
-  const location = useLocation()
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [applyUpdate, setApplyUpdate] = useState<(() => Promise<void>) | null>(null)
 
@@ -172,54 +170,48 @@ function InnerApp() {
       )}
 
       <Suspense fallback={<BootSplash minimal />}>
-        {/*
-          key={location.pathname} tells AnimatePresence that the child has
-          changed on navigation, triggering exit/enter animations correctly.
-        */}
-        <AnimatePresence mode="wait">
-          <Routes location={location} key={location.pathname}>
-            <Route path="/"                   element={<FeedPage />} />
-            <Route path="/t/:tag"             element={<FeedPage />} />
-            <Route path="/compose"            element={<Navigate to={COMPOSE_SHEET_ROUTE} replace />} />
-            <Route path="/article/new"        element={<ArticleComposePage />} />
-            <Route path="/compose/article"    element={<Navigate to="/article/new" replace />} />
-            <Route path="/compose/video"      element={<Navigate to="/video/new" replace />} />
-            <Route path="/compose/poll"       element={<Navigate to="/poll/new" replace />} />
-            <Route path="/compose/list"       element={<Navigate to="/list/new" replace />} />
-            <Route path="/search"             element={<SearchPage />} />
-            <Route path="/explore"            element={<ExplorePage />} />
-            <Route path="/link"               element={<LinkTimelinePage />} />
-            <Route path="/draft/:pubkey/:identifier" element={<ArticlePage />} />
-            <Route path="/article/:pubkey/:identifier" element={<ArticlePage />} />
-            <Route path="/dvm/new"           element={<DvmComposePage />} />
-            <Route path="/list/new"          element={<ListComposePage />} />
-            <Route path="/poll/new"          element={<PollComposePage />} />
-            <Route path="/video/new"         element={<VideoComposePage />} />
-            <Route path="/video/:id"          element={<VideoPage />} />
-            <Route path="/video/:variant/:pubkey/:identifier" element={<VideoPage />} />
-            <Route path="/a/:naddr"            element={<AddressPage />} />
-            <Route path="/note/:id"            element={<NotePage />} />
-            <Route path="/profile"             element={<ProfilePage />} />
-            <Route path="/profile/:pubkey"     element={<ProfilePage />} />
-            <Route path="/activity"            element={<ActivityPage />} />
-            <Route path="/dm"                  element={<DmInboxPage />} />
-            <Route path="/dm/compose"          element={<DmComposePage />} />
-            <Route path="/dm/:pubkey"          element={<DmThreadPage />} />
-            <Route path="/settings"            element={<SettingsPage />} />
-            <Route path="/settings/debug"      element={<DebugPage />} />
-            <Route path="/settings/appearance" element={<AppearancePage />} />
-            <Route path="/settings/moderation" element={<ModerationPage />} />
-            <Route path="/settings/tag-feeds"  element={<TagFeedsPage />} />
-            <Route path="/settings/feed-controls" element={<FeedControlsPage />} />
-            <Route path="/settings/syndication" element={<SyndicationFeedsPage />} />
-            <Route path="/settings/translations" element={<TranslationsPage />} />
-            <Route path="/settings/moderation/filters" element={<FiltersPage />} />
-            <Route path="/settings/relays"     element={<RelaysPage />} />
-            <Route path="/filters"             element={<Navigate to="/settings/moderation/filters" replace />} />
-            <Route path="/onboard"             element={<OnboardPage />} />
-            <Route path="*"                    element={<Navigate to="/" replace />} />
-          </Routes>
-        </AnimatePresence>
+        <Routes>
+          <Route path="/"                   element={<FeedPage />} />
+          <Route path="/t/:tag"             element={<FeedPage />} />
+          <Route path="/compose"            element={<Navigate to={COMPOSE_SHEET_ROUTE} replace />} />
+          <Route path="/article/new"        element={<ArticleComposePage />} />
+          <Route path="/compose/article"    element={<Navigate to="/article/new" replace />} />
+          <Route path="/compose/video"      element={<Navigate to="/video/new" replace />} />
+          <Route path="/compose/poll"       element={<Navigate to="/poll/new" replace />} />
+          <Route path="/compose/list"       element={<Navigate to="/list/new" replace />} />
+          <Route path="/search"             element={<SearchPage />} />
+          <Route path="/explore"            element={<ExplorePage />} />
+          <Route path="/link"               element={<LinkTimelinePage />} />
+          <Route path="/draft/:pubkey/:identifier" element={<ArticlePage />} />
+          <Route path="/article/:pubkey/:identifier" element={<ArticlePage />} />
+          <Route path="/dvm/new"           element={<DvmComposePage />} />
+          <Route path="/list/new"          element={<ListComposePage />} />
+          <Route path="/poll/new"          element={<PollComposePage />} />
+          <Route path="/video/new"         element={<VideoComposePage />} />
+          <Route path="/video/:id"          element={<VideoPage />} />
+          <Route path="/video/:variant/:pubkey/:identifier" element={<VideoPage />} />
+          <Route path="/a/:naddr"            element={<AddressPage />} />
+          <Route path="/note/:id"            element={<NotePage />} />
+          <Route path="/profile"             element={<ProfilePage />} />
+          <Route path="/profile/:pubkey"     element={<ProfilePage />} />
+          <Route path="/activity"            element={<ActivityPage />} />
+          <Route path="/dm"                  element={<DmInboxPage />} />
+          <Route path="/dm/compose"          element={<DmComposePage />} />
+          <Route path="/dm/:pubkey"          element={<DmThreadPage />} />
+          <Route path="/settings"            element={<SettingsPage />} />
+          <Route path="/settings/debug"      element={<DebugPage />} />
+          <Route path="/settings/appearance" element={<AppearancePage />} />
+          <Route path="/settings/moderation" element={<ModerationPage />} />
+          <Route path="/settings/tag-feeds"  element={<TagFeedsPage />} />
+          <Route path="/settings/feed-controls" element={<FeedControlsPage />} />
+          <Route path="/settings/syndication" element={<SyndicationFeedsPage />} />
+          <Route path="/settings/translations" element={<TranslationsPage />} />
+          <Route path="/settings/moderation/filters" element={<FiltersPage />} />
+          <Route path="/settings/relays"     element={<RelaysPage />} />
+          <Route path="/filters"             element={<Navigate to="/settings/moderation/filters" replace />} />
+          <Route path="/onboard"             element={<OnboardPage />} />
+          <Route path="*"                    element={<Navigate to="/" replace />} />
+        </Routes>
       </Suspense>
 
       <ComposeSheet />
