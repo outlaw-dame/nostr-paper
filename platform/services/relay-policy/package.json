@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test src/rateLimiter.test.mjs",
-    "test:replay": "node --test src/abuseReplay.test.mjs"
+    "test": "node --test src/rateLimiter.test.mjs src/factCheckFilter.test.mjs",
+    "test:replay": "node --test src/abuseReplay.test.mjs",
+    "test:all": "node --test src/rateLimiter.test.mjs src/factCheckFilter.test.mjs src/abuseReplay.test.mjs"
   },
   "engines": {
     "node": ">=20.0.0"

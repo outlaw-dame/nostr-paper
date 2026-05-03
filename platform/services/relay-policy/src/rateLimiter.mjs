@@ -73,7 +73,12 @@ export function parsePolicyConfig(env = process.env) {
   };
 }
 
-export function createRelayRateLimiter(config = parsePolicyConfig()) {
+/**
+ * @param {ReturnType<typeof parsePolicyConfig>} config
+ * @param {{ factCheckFilter?: import('./factCheckFilter.mjs').ReturnType<typeof import('./factCheckFilter.mjs').createFactCheckFilter> }} [opts]
+ */
+export function createRelayRateLimiter(config = parsePolicyConfig(), opts = {}) {
+  const factCheck = opts.factCheckFilter ?? null;
   const state = {
     pubkeyBuckets: new Map(),
     sourceBuckets: new Map(),
@@ -116,7 +121,24 @@ export function createRelayRateLimiter(config = parsePolicyConfig()) {
         return blocked(config, event.id, 'reject', duplicate.reason);
       }
 
-      const eventCost = weightedEventCost(event) * penaltyMultiplier(state, config, event.pubkey, sourceKey, now);
+      let eventCost = weightedEventCost(event) * penaltyMultiplier(state, config, event.pubkey, sourceKey, now);
+
+      // Fact-check: extract hostnames, queue unknown ones for background
+      // lookup, and apply cost multiplier for any already-flagged ones.
+      if (factCheck) {
+        const hostnames = factCheck.extractHostnames(event.content);
+        let anyFlagged = false;
+        for (const hostname of hostnames) {
+          if (factCheck.isHostnameFlagged(hostname)) {
+            anyFlagged = true;
+          } else {
+            factCheck.queueForCheck(hostname);
+          }
+        }
+        if (anyFlagged) {
+          eventCost = eventCost * factCheck.flagCostMultiplier;
+        }
+      }
       const globalBucket = getGlobalBucket(state, config, now);
       const globalResult = globalBucket.tryTake(eventCost, now);
       if (!globalResult.ok) {

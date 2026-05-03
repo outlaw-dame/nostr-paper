@@ -5,8 +5,13 @@ import {
   parsePolicyConfig,
   strfryOutputForDecision,
 } from './rateLimiter.mjs';
+import {
+  createFactCheckFilter,
+  parseFactCheckConfig,
+} from './factCheckFilter.mjs';
 
-const limiter = createRelayRateLimiter(parsePolicyConfig(process.env));
+const factCheckFilter = createFactCheckFilter(parseFactCheckConfig(process.env));
+const limiter = createRelayRateLimiter(parsePolicyConfig(process.env), { factCheckFilter });
 const rl = readline.createInterface({
   input: process.stdin,
   crlfDelay: Infinity,
