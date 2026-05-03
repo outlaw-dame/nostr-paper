@@ -39,6 +39,7 @@ import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
 import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import { NostrCreatorAttribution } from '@/components/links/NostrCreatorAttribution'
 import { MediaRevealGate, getMediaRevealReason } from '@/components/media/MediaRevealGate'
+import { FactCheckBadge } from '@/components/security/FactCheckBadge'
 import { tApp } from '@/lib/i18n/app'
 import type { OGData } from '@/lib/og/types'
 
@@ -200,6 +201,13 @@ export function LinkPreviewCard({
               <span className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
                 {host}
               </span>
+            </div>
+          )}
+
+          {/* Google Fact Check Tools rating, if any */}
+          {data.title && (
+            <div className="pt-1">
+              <FactCheckBadge query={data.title} compact />
             </div>
           )}
         </div>

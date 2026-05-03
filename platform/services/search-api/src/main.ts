@@ -303,12 +303,133 @@ async function handleOpsRequest(req: IncomingMessage, res: ServerResponse): Prom
   }
 }
 
+const FACT_CHECK_API_KEY = (process.env.GOOGLE_FACT_CHECK_API_KEY ?? process.env.GOOGLE_API_KEY ?? '').trim();
+const FACT_CHECK_ENDPOINT = 'https://factchecktools.googleapis.com/v1alpha1/claims:search';
+const FACT_CHECK_MAX_QUERY = 500;
+const FACT_CHECK_TIMEOUT_MS = 8_000;
+const factCheckCache = new Map<string, { payload: unknown; expiresAt: number }>();
+const FACT_CHECK_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+
+function setCorsHeaders(res: ServerResponse, origin: string | undefined): void {
+  res.setHeader('Access-Control-Allow-Origin', origin ?? '*');
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+}
+
+async function readBody(req: IncomingMessage, maxBytes = 8 * 1024): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    let length = 0;
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => {
+      length += chunk.length;
+      if (length > maxBytes) {
+        reject(new Error('payload_too_large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+async function handleFactCheckRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
+  setCorsHeaders(res, origin);
+
+  if (req.method === 'OPTIONS') {
+    res.statusCode = 204;
+    res.end();
+    return;
+  }
+
+  if (!FACT_CHECK_API_KEY) {
+    sendJson(res, 503, { error: 'fact_check_disabled' });
+    return;
+  }
+
+  let body: unknown;
+  try {
+    const raw = await readBody(req);
+    body = raw ? JSON.parse(raw) : {};
+  } catch {
+    sendJson(res, 400, { error: 'invalid_json' });
+    return;
+  }
+
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    sendJson(res, 400, { error: 'invalid_payload' });
+    return;
+  }
+
+  const record = body as Record<string, unknown>;
+  const query = typeof record.query === 'string' ? record.query.trim() : '';
+  const languageCode = typeof record.languageCode === 'string' ? record.languageCode.trim() : '';
+
+  if (!query) {
+    sendJson(res, 400, { error: 'missing_query' });
+    return;
+  }
+  if (query.length > FACT_CHECK_MAX_QUERY) {
+    sendJson(res, 413, { error: 'query_too_long' });
+    return;
+  }
+
+  const cacheKey = `${languageCode}|${query.toLowerCase()}`;
+  const cached = factCheckCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    sendJson(res, 200, cached.payload);
+    return;
+  }
+
+  const params = new URLSearchParams({ key: FACT_CHECK_API_KEY, query, pageSize: '5' });
+  if (languageCode) params.set('languageCode', languageCode);
+
+  try {
+    const upstream = await fetch(`${FACT_CHECK_ENDPOINT}?${params.toString()}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      redirect: 'error',
+      signal: AbortSignal.timeout(FACT_CHECK_TIMEOUT_MS),
+    });
+
+    if (!upstream.ok) {
+      sendJson(res, 502, { error: 'fact_check_upstream_failed' });
+      return;
+    }
+
+    const payload = (await upstream.json().catch(() => ({}))) as Record<string, unknown>;
+    factCheckCache.set(cacheKey, { payload, expiresAt: Date.now() + FACT_CHECK_TTL_MS });
+    if (factCheckCache.size > 1000) {
+      const oldestKey = factCheckCache.keys().next().value;
+      if (oldestKey !== undefined) factCheckCache.delete(oldestKey);
+    }
+    sendJson(res, 200, payload);
+  } catch (error) {
+    const isTimeout = error instanceof DOMException && error.name === 'TimeoutError';
+    log.warn({ err: error }, 'fact check upstream error');
+    sendJson(res, isTimeout ? 504 : 502, {
+      error: isTimeout ? 'fact_check_timeout' : 'fact_check_failed',
+    });
+  }
+}
+
 function setupWebSocketServer() {
   const server = createServer((req, res) => {
     const url = parseUrl(req);
 
     if (url.pathname === '/healthz') {
       sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (
+      (url.pathname === '/fact-check/search' || url.pathname === '/v1/fact-check') &&
+      (req.method === 'POST' || req.method === 'OPTIONS')
+    ) {
+      void handleFactCheckRequest(req, res);
       return;
     }
 

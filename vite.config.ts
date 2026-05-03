@@ -51,6 +51,12 @@ const DEV_SAFE_BROWSING_PROXY_PATH = '/__dev/safe-browsing'
 const DEV_SAFE_BROWSING_TIMEOUT_MS = 8_000
 const GOOGLE_SAFE_BROWSING_ENDPOINT = 'https://safebrowsing.googleapis.com/v4/threatMatches:find'
 
+// ── Fact Check Tools Proxy ────────────────────────────────────
+const DEV_FACT_CHECK_PROXY_PATH = '/__dev/fact-check'
+const DEV_FACT_CHECK_TIMEOUT_MS = 8_000
+const DEV_FACT_CHECK_MAX_QUERY_LENGTH = 500
+const GOOGLE_FACT_CHECK_ENDPOINT = 'https://factchecktools.googleapis.com/v1alpha1/claims:search'
+
 // ── Media Fetch Proxy ────────────────────────────────────────
 const DEV_MEDIA_PROXY_PATH = '/__dev/media-fetch'
 const DEV_MEDIA_PROXY_TIMEOUT_MS = 12_000
@@ -65,6 +71,7 @@ const DEV_FEED_PROXY_MAX_REDIRECTS = 3
 const DEV_SERVER_PORT = Number.parseInt(process.env.VITE_DEV_PORT ?? '5173', 10) || 5173
 const ENABLE_LOCAL_CROSS_ORIGIN_ISOLATION = process.env.VITE_ENABLE_LOCAL_COI !== 'false'
 const SAFE_BROWSING_BACKEND_ORIGIN = (process.env.SAFE_BROWSING_BACKEND_ORIGIN ?? 'http://127.0.0.1:7080').trim()
+const FACT_CHECK_BACKEND_ORIGIN = (process.env.FACT_CHECK_BACKEND_ORIGIN ?? 'http://127.0.0.1:7080').trim()
 const LOCAL_CROSS_ORIGIN_ISOLATION_HEADERS = ENABLE_LOCAL_CROSS_ORIGIN_ISOLATION
   ? {
       'Cross-Origin-Opener-Policy': 'same-origin',
@@ -607,6 +614,103 @@ function safeBrowsingDevProxyPlugin() {
     },
   }
 }
+
+function factCheckDevProxyPlugin() {
+  return {
+    name: 'fact-check-dev-proxy',
+    configureServer(server: import('vite').ViteDevServer) {
+      server.middlewares.use(async (req, res, next) => {
+        if (!req.url?.startsWith(DEV_FACT_CHECK_PROXY_PATH)) {
+          next()
+          return
+        }
+
+        if (req.method === 'OPTIONS') {
+          res.statusCode = 204
+          res.setHeader('Access-Control-Allow-Origin', req.headers.origin ?? '*')
+          res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+          res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept')
+          res.end()
+          return
+        }
+
+        if (req.method !== 'POST') {
+          jsonResponse(res, 405, { error: 'Method Not Allowed' }, req.headers.origin)
+          return
+        }
+
+        const apiKey = (
+          process.env.GOOGLE_FACT_CHECK_API_KEY ??
+          process.env.GOOGLE_API_KEY ??
+          ''
+        ).trim()
+        if (!apiKey) {
+          jsonResponse(res, 503, { error: 'Fact Check API key not configured' }, req.headers.origin)
+          return
+        }
+
+        const body = await readJsonRequestBody(req).catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : 'Invalid JSON request body'
+          jsonResponse(res, 400, { error: message }, req.headers.origin)
+          return null
+        })
+
+        if (!body) return
+        if (typeof body !== 'object' || Array.isArray(body) || body === null) {
+          jsonResponse(res, 400, { error: 'Invalid Fact Check payload' }, req.headers.origin)
+          return
+        }
+
+        const rawQuery = typeof (body as Record<string, unknown>).query === 'string'
+          ? (body as Record<string, string>).query.trim()
+          : ''
+        const rawLanguage = typeof (body as Record<string, unknown>).languageCode === 'string'
+          ? (body as Record<string, string>).languageCode.trim()
+          : ''
+
+        if (!rawQuery) {
+          jsonResponse(res, 400, { error: 'Missing query parameter' }, req.headers.origin)
+          return
+        }
+        if (rawQuery.length > DEV_FACT_CHECK_MAX_QUERY_LENGTH) {
+          jsonResponse(res, 413, { error: 'Query too long' }, req.headers.origin)
+          return
+        }
+
+        const params = new URLSearchParams({
+          key: apiKey,
+          query: rawQuery,
+          pageSize: '5',
+        })
+        if (rawLanguage) params.set('languageCode', rawLanguage)
+
+        try {
+          const upstream = await fetch(`${GOOGLE_FACT_CHECK_ENDPOINT}?${params.toString()}`, {
+            method: 'GET',
+            headers: { Accept: 'application/json' },
+            redirect: 'error',
+            signal: AbortSignal.timeout(DEV_FACT_CHECK_TIMEOUT_MS),
+          })
+
+          if (!upstream.ok) {
+            jsonResponse(res, 502, { error: 'Fact Check upstream request failed' }, req.headers.origin)
+            return
+          }
+
+          const responseJson = await upstream.json().catch(() => ({})) as Record<string, unknown>
+          jsonResponse(res, 200, responseJson, req.headers.origin, 'no-store')
+        } catch (error) {
+          const isTimeout = error instanceof DOMException && error.name === 'TimeoutError'
+          jsonResponse(
+            res,
+            isTimeout ? 504 : 502,
+            { error: isTimeout ? 'Fact Check timeout' : 'Fact Check proxy request failed' },
+            req.headers.origin,
+          )
+        }
+      })
+    },
+  }
 
 function mediaFetchDevProxyPlugin() {
   function makeMiddleware(): Parameters<import('vite').ViteDevServer['middlewares']['use']>[0] {
@@ -1421,6 +1525,7 @@ export default defineConfig(({ mode }) => {
       lingvaDevProxyPlugin(),
       nip05DevProxyPlugin(),
       safeBrowsingDevProxyPlugin(),
+      factCheckDevProxyPlugin(),
       ogDevProxyPlugin(),
       mediaFetchDevProxyPlugin(),
       feedDevProxyPlugin(),
@@ -1504,6 +1609,11 @@ export default defineConfig(({ mode }) => {
           target: SAFE_BROWSING_BACKEND_ORIGIN,
           changeOrigin: true,
           rewrite: (path) => path.replace('/api/safe-browsing/check', '/safe-browsing/check'),
+        },
+        '/api/fact-check/search': {
+          target: FACT_CHECK_BACKEND_ORIGIN,
+          changeOrigin: true,
+          rewrite: (path) => path.replace('/api/fact-check/search', '/fact-check/search'),
         },
       },
       fs: {

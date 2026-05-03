@@ -4,6 +4,11 @@
 interface ImportMetaEnv {
   readonly VITE_SAFE_BROWSING_PROXY_URL?: string
   /**
+   * Optional override for the Google Fact Check Tools proxy endpoint.
+   * Defaults to /__dev/fact-check (dev) or /api/fact-check/search (prod).
+   */
+  readonly VITE_FACT_CHECK_PROXY_URL?: string
+  /**
    * Path or URL to the Gemma 4 E2B model file (.task).
    * Download from: https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm
    * Place in public/models/ and set to e.g. /models/gemma-4-E2B-it-web.task
