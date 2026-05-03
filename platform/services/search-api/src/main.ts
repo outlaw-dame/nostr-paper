@@ -303,7 +303,13 @@ async function handleOpsRequest(req: IncomingMessage, res: ServerResponse): Prom
   }
 }
 
-const FACT_CHECK_API_KEY = (process.env.GOOGLE_FACT_CHECK_API_KEY ?? process.env.GOOGLE_API_KEY ?? '').trim();
+const FACT_CHECK_API_KEY = (
+  process.env.GOOGLE_FACT_CHECK_API_KEY ??
+  process.env.GEMINI_API_KEY ??
+  process.env.VITE_GEMINI_API_KEY ??
+  process.env.GOOGLE_API_KEY ??
+  ''
+).trim();
 const FACT_CHECK_ENDPOINT = 'https://factchecktools.googleapis.com/v1alpha1/claims:search';
 const FACT_CHECK_MAX_QUERY = 500;
 const FACT_CHECK_TIMEOUT_MS = 8_000;

@@ -14,6 +14,7 @@ import { HandlerInformationBody } from '@/components/nostr/HandlerInformationBod
 import { HandlerRecommendationBody } from '@/components/nostr/HandlerRecommendationBody'
 import { ListBody } from '@/components/nostr/ListBody'
 import { NoteMediaAttachments } from '@/components/nostr/NoteMediaAttachments'
+import { CommunityContextNote } from '@/components/security/CommunityContextNote'
 import { PollBody } from '@/components/nostr/PollBody'
 import { PollVoteBody } from '@/components/nostr/PollVoteBody'
 import { QuotePreviewList } from '@/components/nostr/QuotePreviewList'
@@ -442,6 +443,12 @@ export default function NotePage() {
                     isSensitive={contentWarning !== null}
                     sensitiveReason={contentWarning?.reason ?? null}
                     isUnfollowed={followStatus === false}
+                  />
+                )}
+                {quoteBody.trim().length > 0 && (
+                  <CommunityContextNote
+                    content={quoteBody}
+                    className="mt-5"
                   />
                 )}
                 <QuotePreviewList event={event} showHeader={false} className="mt-5" compact />

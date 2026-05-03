@@ -641,6 +641,8 @@ function factCheckDevProxyPlugin() {
 
         const apiKey = (
           process.env.GOOGLE_FACT_CHECK_API_KEY ??
+          process.env.GEMINI_API_KEY ??
+          process.env.VITE_GEMINI_API_KEY ??
           process.env.GOOGLE_API_KEY ??
           ''
         ).trim()
