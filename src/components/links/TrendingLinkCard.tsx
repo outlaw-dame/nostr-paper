@@ -17,6 +17,8 @@ import React, { useMemo } from 'react'
 import { useLinkPreview } from '@/hooks/useLinkPreview'
 import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
 import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
+import { recordSourceExposure } from '@/lib/media/sourceExposure'
+import { SourceLensBadge } from '@/components/links/SourceLensBadge'
 import { tApp } from '@/lib/i18n/app'
 import type { TrendingLinkStat } from '@/lib/explore/trendingLinks'
 
@@ -60,10 +62,15 @@ export function TrendingLinkCard({ stat, onClick }: TrendingLinkCardProps) {
   const title  = og?.title ?? stat.domain
   const domain = stat.domain
 
+  const handlePress = () => {
+    recordSourceExposure(stat.domain || stat.url, 'trending-link')
+    onClick(stat.url)
+  }
+
   return (
     <button
       type="button"
-      onClick={() => onClick(stat.url)}
+      onClick={handlePress}
       className="
         flex w-full items-center gap-3 rounded-[14px] px-3 py-2.5
         app-panel-muted border border-[rgb(var(--color-fill)/0.10)]
@@ -116,6 +123,9 @@ export function TrendingLinkCard({ stat, onClick }: TrendingLinkCardProps) {
         <p className="text-[11px] text-[rgb(var(--color-label-tertiary))]">
           {tApp('exploreNewsDiscussing', { count: String(stat.uniqueAuthorCount) })}
         </p>
+        <div className="pt-0.5">
+          <SourceLensBadge domainOrUrl={domain} compact />
+        </div>
       </div>
 
       {/* Chevron */}

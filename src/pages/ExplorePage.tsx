@@ -38,6 +38,7 @@ import { useSuggestedProfiles } from '@/hooks/useSuggestedProfiles'
 import { useSemanticFollowPacks } from '@/hooks/useSemanticFollowPacks'
 import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { TrendingLinkCard } from '@/components/links/TrendingLinkCard'
+import { NewsBlindspotPanel } from '@/components/explore/NewsBlindspotPanel'
 import type { TrendingLinkStat } from '@/lib/explore/trendingLinks'
 import {
   getExploreFollowPackLabel,
@@ -570,6 +571,7 @@ function ExploreContent({
           </div>
         ) : links.length > 0 ? (
           <div className="space-y-2">
+            <NewsBlindspotPanel links={links} />
             {links.map((stat, i) => (
               <motion.div
                 key={stat.url}

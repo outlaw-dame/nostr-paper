@@ -20,17 +20,17 @@ interface FactCheckBadgeProps {
 
 const VERDICT_STYLES: Record<'true' | 'false' | 'mixed', { label: string; className: string }> = {
   true: {
-    label: 'Verified',
+    label: 'Reviewed',
     className:
       'bg-[rgb(var(--color-system-green)/0.16)] text-[rgb(var(--color-system-green))]',
   },
   false: {
-    label: 'Fact-check: false',
+    label: 'Reviewed',
     className:
       'bg-[rgb(var(--color-system-red)/0.16)] text-[rgb(var(--color-system-red))]',
   },
   mixed: {
-    label: 'Fact-check',
+    label: 'Reviewed',
     className:
       'bg-[rgb(var(--color-system-orange)/0.16)] text-[rgb(var(--color-system-orange))]',
   },

@@ -616,6 +616,48 @@ function safeBrowsingDevProxyPlugin() {
 }
 
 function factCheckDevProxyPlugin() {
+  const FACT_CHECK_ALLOWED_LANG = /^[a-z]{2,3}(-[a-z0-9]{2,8})?$/i
+  const FACT_CHECK_MAX_RETRIES = 2
+
+  const isRetryableStatus = (status: number): boolean =>
+    status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599)
+
+  const sleep = (ms: number): Promise<void> =>
+    new Promise((resolve) => setTimeout(resolve, ms))
+
+  const backoffDelay = (attempt: number): number => {
+    const exp = Math.min(2_000, 250 * (2 ** attempt))
+    const jitter = Math.floor(Math.random() * Math.max(1, Math.floor(exp / 3)))
+    return Math.min(2_000, exp + jitter)
+  }
+
+  const fetchFactCheck = async (params: URLSearchParams, attempt = 0): Promise<Response | null> => {
+    try {
+      const response = await fetch(`${GOOGLE_FACT_CHECK_ENDPOINT}?${params.toString()}`, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        redirect: 'error',
+        signal: AbortSignal.timeout(DEV_FACT_CHECK_TIMEOUT_MS),
+      })
+
+      if (!response.ok && attempt < FACT_CHECK_MAX_RETRIES && isRetryableStatus(response.status)) {
+        await sleep(backoffDelay(attempt))
+        return fetchFactCheck(params, attempt + 1)
+      }
+
+      return response
+    } catch (error) {
+      if (
+        attempt < FACT_CHECK_MAX_RETRIES &&
+        (error instanceof TypeError || (error instanceof DOMException && error.name === 'TimeoutError'))
+      ) {
+        await sleep(backoffDelay(attempt))
+        return fetchFactCheck(params, attempt + 1)
+      }
+      return null
+    }
+  }
+
   return {
     name: 'fact-check-dev-proxy',
     configureServer(server: import('vite').ViteDevServer) {
@@ -664,7 +706,7 @@ function factCheckDevProxyPlugin() {
         }
 
         const rawQuery = typeof (body as Record<string, unknown>).query === 'string'
-          ? (body as Record<string, string>).query.trim()
+          ? (body as Record<string, string>).query.replace(/\s+/g, ' ').trim()
           : ''
         const rawLanguage = typeof (body as Record<string, unknown>).languageCode === 'string'
           ? (body as Record<string, string>).languageCode.trim()
@@ -681,21 +723,27 @@ function factCheckDevProxyPlugin() {
 
         const params = new URLSearchParams({
           key: apiKey,
-          query: rawQuery,
+          query: rawQuery.slice(0, DEV_FACT_CHECK_MAX_QUERY_LENGTH),
           pageSize: '5',
         })
-        if (rawLanguage) params.set('languageCode', rawLanguage)
+        if (rawLanguage && FACT_CHECK_ALLOWED_LANG.test(rawLanguage)) {
+          params.set('languageCode', rawLanguage)
+        }
 
         try {
-          const upstream = await fetch(`${GOOGLE_FACT_CHECK_ENDPOINT}?${params.toString()}`, {
-            method: 'GET',
-            headers: { Accept: 'application/json' },
-            redirect: 'error',
-            signal: AbortSignal.timeout(DEV_FACT_CHECK_TIMEOUT_MS),
-          })
+          const upstream = await fetchFactCheck(params)
+          if (!upstream) {
+            jsonResponse(res, 502, { error: 'Fact Check upstream request failed' }, req.headers.origin)
+            return
+          }
 
           if (!upstream.ok) {
-            jsonResponse(res, 502, { error: 'Fact Check upstream request failed' }, req.headers.origin)
+            jsonResponse(
+              res,
+              isRetryableStatus(upstream.status) ? 502 : 400,
+              { error: 'Fact Check upstream request failed' },
+              req.headers.origin,
+            )
             return
           }
 
@@ -713,6 +761,7 @@ function factCheckDevProxyPlugin() {
       })
     },
   }
+}
 
 function mediaFetchDevProxyPlugin() {
   function makeMiddleware(): Parameters<import('vite').ViteDevServer['middlewares']['use']>[0] {

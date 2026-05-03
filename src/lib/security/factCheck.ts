@@ -19,6 +19,13 @@ const DEFAULT_PROXY_PATH = import.meta.env.DEV ? DEV_PROXY_PATH : PROD_PROXY_PAT
 const PROXY_BASE = PROD_PROXY_URL ?? DEFAULT_PROXY_PATH
 
 const MAX_CACHE = 500
+const MAX_QUERY_LENGTH = 500
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000
+const CACHE_STALE_MS = 24 * 60 * 60 * 1000
+const REQUEST_TIMEOUT_MS = 6_000
+const MAX_RETRIES = 2
+const RETRY_BASE_DELAY_MS = 250
+const RETRY_MAX_DELAY_MS = 2_000
 
 export interface FactCheckRating {
   claim: string
@@ -57,8 +64,58 @@ interface FactCheckProxyResponse {
   claims?: FactCheckProxyClaim[]
 }
 
-const cache = new Map<string, FactCheckResult>()
+interface CacheEntry {
+  value: FactCheckResult
+  expiresAt: number
+  staleUntil: number
+}
+
+const cache = new Map<string, CacheEntry>()
 const inflight = new Map<string, Promise<FactCheckResult>>()
+
+function isLikelyLanguageCode(value: string): boolean {
+  return /^[a-z]{2,3}(-[a-z0-9]{2,8})?$/i.test(value)
+}
+
+function sanitizeQuery(query: string): string {
+  const normalized = query.replace(/\s+/g, ' ').trim()
+  if (!normalized) return ''
+  return normalized.slice(0, MAX_QUERY_LENGTH)
+}
+
+function sanitizeReviewUrl(raw: string): string {
+  const url = raw.trim()
+  if (!url) return ''
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return ''
+    parsed.username = ''
+    parsed.password = ''
+    return parsed.toString()
+  } catch {
+    return ''
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function backoffDelay(attempt: number): number {
+  const exp = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * (2 ** attempt))
+  const jitter = Math.floor(Math.random() * Math.max(1, Math.floor(exp / 3)))
+  return Math.min(RETRY_MAX_DELAY_MS, exp + jitter)
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599)
+}
+
+function isRetryableError(error: unknown): boolean {
+  if (error instanceof DOMException) return error.name === 'TimeoutError' || error.name === 'AbortError'
+  if (error instanceof TypeError) return true
+  return false
+}
 
 function evictIfNeeded(): void {
   if (cache.size <= MAX_CACHE) return
@@ -67,7 +124,7 @@ function evictIfNeeded(): void {
 }
 
 function normalizeQuery(query: string): string {
-  return query.trim().toLowerCase()
+  return sanitizeQuery(query).toLowerCase()
 }
 
 function pickFirstRating(claim: FactCheckProxyClaim): FactCheckRating | null {
@@ -75,8 +132,11 @@ function pickFirstRating(claim: FactCheckProxyClaim): FactCheckRating | null {
   if (!review) return null
 
   const textualRating = (review.textualRating ?? '').trim()
-  const reviewUrl = (review.url ?? '').trim()
+  const reviewUrl = sanitizeReviewUrl(review.url ?? '')
   if (!textualRating || !reviewUrl) return null
+
+  const languageCode = (review.languageCode ?? '').trim()
+  const reviewDate = (review.reviewDate ?? '').trim()
 
   return {
     claim: (claim.text ?? '').trim(),
@@ -85,13 +145,12 @@ function pickFirstRating(claim: FactCheckProxyClaim): FactCheckRating | null {
     ...(review.publisher?.site ? { publisherSite: review.publisher.site } : {}),
     textualRating,
     reviewUrl,
-    ...(review.reviewDate ? { reviewedAt: review.reviewDate } : {}),
-    ...(review.languageCode ? { languageCode: review.languageCode } : {}),
+    ...(reviewDate ? { reviewedAt: reviewDate } : {}),
+    ...(isLikelyLanguageCode(languageCode) ? { languageCode } : {}),
   }
 }
 
-async function doSearch(query: string): Promise<FactCheckResult> {
-  const result: FactCheckResult = { query, ratings: [], fetchedAt: Date.now() }
+async function fetchFactCheckPayload(query: string, attempt = 0): Promise<FactCheckProxyResponse | null> {
   try {
     const response = await fetch(PROXY_BASE, {
       method: 'POST',
@@ -101,21 +160,36 @@ async function doSearch(query: string): Promise<FactCheckResult> {
       },
       body: JSON.stringify({ query }),
       cache: 'no-store',
-      signal: AbortSignal.timeout(6_000),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
 
-    if (!response.ok) return result
-
-    const payload = (await response.json()) as FactCheckProxyResponse
-    const claims = Array.isArray(payload.claims) ? payload.claims : []
-
-    for (const claim of claims) {
-      const rating = pickFirstRating(claim)
-      if (rating) result.ratings.push(rating)
-      if (result.ratings.length >= 5) break
+    if (!response.ok) {
+      if (attempt < MAX_RETRIES && isRetryableStatus(response.status)) {
+        await sleep(backoffDelay(attempt))
+        return fetchFactCheckPayload(query, attempt + 1)
+      }
+      return null
     }
-  } catch {
-    // Fail open
+
+    return (await response.json()) as FactCheckProxyResponse
+  } catch (error) {
+    if (attempt < MAX_RETRIES && isRetryableError(error)) {
+      await sleep(backoffDelay(attempt))
+      return fetchFactCheckPayload(query, attempt + 1)
+    }
+    return null
+  }
+}
+
+async function doSearch(query: string): Promise<FactCheckResult> {
+  const result: FactCheckResult = { query, ratings: [], fetchedAt: Date.now() }
+  const payload = await fetchFactCheckPayload(query)
+  const claims = Array.isArray(payload?.claims) ? payload.claims : []
+
+  for (const claim of claims) {
+    const rating = pickFirstRating(claim)
+    if (rating) result.ratings.push(rating)
+    if (result.ratings.length >= 5) break
   }
   return result
 }
@@ -123,25 +197,44 @@ async function doSearch(query: string): Promise<FactCheckResult> {
 export function peekFactCheck(query: string): FactCheckResult | undefined {
   const key = normalizeQuery(query)
   if (!key) return undefined
-  return cache.get(key)
+  const entry = cache.get(key)
+  if (!entry) return undefined
+  return entry.value
+}
+
+function setCache(key: string, value: FactCheckResult): void {
+  evictIfNeeded()
+  const now = Date.now()
+  cache.set(key, {
+    value,
+    expiresAt: now + CACHE_TTL_MS,
+    staleUntil: now + CACHE_STALE_MS,
+  })
 }
 
 export async function searchFactChecks(query: string): Promise<FactCheckResult> {
   const key = normalizeQuery(query)
   if (!key) return { query, ratings: [], fetchedAt: Date.now() }
 
+  const now = Date.now()
   const cached = cache.get(key)
-  if (cached) return cached
+  if (cached && cached.expiresAt > now) return cached.value
 
   const existing = inflight.get(key)
   if (existing) return existing
 
-  const promise = doSearch(key).then((result) => {
-    evictIfNeeded()
-    cache.set(key, result)
-    inflight.delete(key)
-    return result
-  })
+  const promise = doSearch(key)
+    .then((result) => {
+      setCache(key, result)
+      return result
+    })
+    .catch(() => {
+      if (cached && cached.staleUntil > now) return cached.value
+      return { query: key, ratings: [], fetchedAt: Date.now() }
+    })
+    .finally(() => {
+      inflight.delete(key)
+    })
 
   inflight.set(key, promise)
   return promise

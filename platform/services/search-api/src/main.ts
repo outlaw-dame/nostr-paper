@@ -313,8 +313,13 @@ const FACT_CHECK_API_KEY = (
 const FACT_CHECK_ENDPOINT = 'https://factchecktools.googleapis.com/v1alpha1/claims:search';
 const FACT_CHECK_MAX_QUERY = 500;
 const FACT_CHECK_TIMEOUT_MS = 8_000;
-const factCheckCache = new Map<string, { payload: unknown; expiresAt: number }>();
+const FACT_CHECK_MAX_RETRIES = 2;
+const FACT_CHECK_BACKOFF_BASE_MS = 250;
+const FACT_CHECK_BACKOFF_MAX_MS = 2_000;
+const FACT_CHECK_ALLOWED_LANG = /^[a-z]{2,3}(-[a-z0-9]{2,8})?$/i;
+const factCheckCache = new Map<string, { payload: unknown; expiresAt: number; staleUntil: number }>();
 const FACT_CHECK_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+const FACT_CHECK_STALE_MS = 24 * 60 * 60 * 1000; // 24h
 
 function setCorsHeaders(res: ServerResponse, origin: string | undefined): void {
   res.setHeader('Access-Control-Allow-Origin', origin ?? '*');
@@ -341,6 +346,55 @@ async function readBody(req: IncomingMessage, maxBytes = 8 * 1024): Promise<stri
   });
 }
 
+function normalizeFactCheckQuery(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, FACT_CHECK_MAX_QUERY);
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599);
+}
+
+function isRetryableError(error: unknown): boolean {
+  if (error instanceof DOMException) {
+    return error.name === 'TimeoutError' || error.name === 'AbortError';
+  }
+  return error instanceof TypeError;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function backoffDelay(attempt: number): number {
+  const exp = Math.min(FACT_CHECK_BACKOFF_MAX_MS, FACT_CHECK_BACKOFF_BASE_MS * (2 ** attempt));
+  const jitter = Math.floor(Math.random() * Math.max(1, Math.floor(exp / 3)));
+  return Math.min(FACT_CHECK_BACKOFF_MAX_MS, exp + jitter);
+}
+
+async function fetchFactCheckUpstream(params: URLSearchParams, attempt = 0): Promise<Response | null> {
+  try {
+    const response = await fetch(`${FACT_CHECK_ENDPOINT}?${params.toString()}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      redirect: 'error',
+      signal: AbortSignal.timeout(FACT_CHECK_TIMEOUT_MS),
+    });
+
+    if (!response.ok && attempt < FACT_CHECK_MAX_RETRIES && isRetryableStatus(response.status)) {
+      await sleep(backoffDelay(attempt));
+      return fetchFactCheckUpstream(params, attempt + 1);
+    }
+
+    return response;
+  } catch (error) {
+    if (attempt < FACT_CHECK_MAX_RETRIES && isRetryableError(error)) {
+      await sleep(backoffDelay(attempt));
+      return fetchFactCheckUpstream(params, attempt + 1);
+    }
+    return null;
+  }
+}
+
 async function handleFactCheckRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
   setCorsHeaders(res, origin);
@@ -360,7 +414,11 @@ async function handleFactCheckRequest(req: IncomingMessage, res: ServerResponse)
   try {
     const raw = await readBody(req);
     body = raw ? JSON.parse(raw) : {};
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === 'payload_too_large') {
+      sendJson(res, 413, { error: 'payload_too_large' });
+      return;
+    }
     sendJson(res, 400, { error: 'invalid_json' });
     return;
   }
@@ -371,8 +429,11 @@ async function handleFactCheckRequest(req: IncomingMessage, res: ServerResponse)
   }
 
   const record = body as Record<string, unknown>;
-  const query = typeof record.query === 'string' ? record.query.trim() : '';
-  const languageCode = typeof record.languageCode === 'string' ? record.languageCode.trim() : '';
+  const query = typeof record.query === 'string' ? normalizeFactCheckQuery(record.query) : '';
+  const languageCodeRaw = typeof record.languageCode === 'string' ? record.languageCode.trim() : '';
+  const languageCode = languageCodeRaw && FACT_CHECK_ALLOWED_LANG.test(languageCodeRaw)
+    ? languageCodeRaw
+    : '';
 
   if (!query) {
     sendJson(res, 400, { error: 'missing_query' });
@@ -384,8 +445,9 @@ async function handleFactCheckRequest(req: IncomingMessage, res: ServerResponse)
   }
 
   const cacheKey = `${languageCode}|${query.toLowerCase()}`;
+  const now = Date.now();
   const cached = factCheckCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
+  if (cached && cached.expiresAt > now) {
     sendJson(res, 200, cached.payload);
     return;
   }
@@ -394,26 +456,41 @@ async function handleFactCheckRequest(req: IncomingMessage, res: ServerResponse)
   if (languageCode) params.set('languageCode', languageCode);
 
   try {
-    const upstream = await fetch(`${FACT_CHECK_ENDPOINT}?${params.toString()}`, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-      redirect: 'error',
-      signal: AbortSignal.timeout(FACT_CHECK_TIMEOUT_MS),
-    });
-
-    if (!upstream.ok) {
+    const upstream = await fetchFactCheckUpstream(params);
+    if (!upstream) {
+      if (cached && cached.staleUntil > now) {
+        sendJson(res, 200, cached.payload);
+        return;
+      }
       sendJson(res, 502, { error: 'fact_check_upstream_failed' });
       return;
     }
 
+    if (!upstream.ok) {
+      if (cached && cached.staleUntil > now) {
+        sendJson(res, 200, cached.payload);
+        return;
+      }
+      sendJson(res, isRetryableStatus(upstream.status) ? 502 : 400, { error: 'fact_check_upstream_failed' });
+      return;
+    }
+
     const payload = (await upstream.json().catch(() => ({}))) as Record<string, unknown>;
-    factCheckCache.set(cacheKey, { payload, expiresAt: Date.now() + FACT_CHECK_TTL_MS });
+    factCheckCache.set(cacheKey, {
+      payload,
+      expiresAt: now + FACT_CHECK_TTL_MS,
+      staleUntil: now + FACT_CHECK_STALE_MS,
+    });
     if (factCheckCache.size > 1000) {
       const oldestKey = factCheckCache.keys().next().value;
       if (oldestKey !== undefined) factCheckCache.delete(oldestKey);
     }
     sendJson(res, 200, payload);
   } catch (error) {
+    if (cached && cached.staleUntil > now) {
+      sendJson(res, 200, cached.payload);
+      return;
+    }
     const isTimeout = error instanceof DOMException && error.name === 'TimeoutError';
     log.warn({ err: error }, 'fact check upstream error');
     sendJson(res, isTimeout ? 504 : 502, {

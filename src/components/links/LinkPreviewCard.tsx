@@ -40,13 +40,16 @@ import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import { NostrCreatorAttribution } from '@/components/links/NostrCreatorAttribution'
 import { MediaRevealGate, getMediaRevealReason } from '@/components/media/MediaRevealGate'
 import { FactCheckBadge } from '@/components/security/FactCheckBadge'
+import { SourceLensBadge } from '@/components/links/SourceLensBadge'
+import { recordSourceExposure } from '@/lib/media/sourceExposure'
 import { tApp } from '@/lib/i18n/app'
 import type { OGData } from '@/lib/og/types'
 
 // ── Helpers ──────────────────────────────────────────────────
 
-function stopPropagation(e: React.MouseEvent) {
+function trackAndStop(e: React.MouseEvent, domainOrUrl: string) {
   e.stopPropagation()
+  recordSourceExposure(domainOrUrl, 'link-preview')
 }
 
 function hostname(url: string): string | null {
@@ -140,7 +143,7 @@ export function LinkPreviewCard({
         href={url}
         target="_blank"
         rel="noopener noreferrer nofollow"
-        onClick={stopPropagation}
+        onClick={(event) => trackAndStop(event, host ?? data.url)}
         className="block transition-opacity active:opacity-70"
       >
         {/* OG Image — warning-gated while moderation is pending or flagged. */}
@@ -208,6 +211,12 @@ export function LinkPreviewCard({
           {data.title && (
             <div className="pt-1">
               <FactCheckBadge query={data.title} compact />
+            </div>
+          )}
+
+          {host && (
+            <div className="pt-1">
+              <SourceLensBadge domainOrUrl={host} compact />
             </div>
           )}
         </div>
