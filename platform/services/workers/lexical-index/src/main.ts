@@ -1,7 +1,7 @@
 import Redis from 'ioredis';
 import { Pool } from 'pg';
 import pino from 'pino';
-import { buildEventSearchText, mergeEventUrls } from './mediaIndex.js';
+import { buildEventSearchText, extractTaggedUrls, MEDIA_KINDS, mergeEventUrls } from './mediaIndex.js';
 import { scoreInternalModerationRisk } from '@nostr-paper/content-policy';
 import {
   applyTrustedModerationSignals,
@@ -12,6 +12,8 @@ import {
   resolveTrustedModerationFeed,
   upsertKeywordBlock,
   upsertShadowModerationScore,
+  upsertPubkeyAbuseSignal,
+  recordMediaScanPending,
 } from './moderationState.js';
 
 const log = pino({ level: process.env.LOG_LEVEL || 'info' });
@@ -28,9 +30,245 @@ const SHADOW_MODEL_SCORING_ENABLED = process.env.SHADOW_MODEL_SCORING_ENABLED !=
 const SHADOW_MODEL_NAME = process.env.SHADOW_MODEL_NAME || 'internal-shadow-v1';
 const SHADOW_MODEL_VERSION = process.env.SHADOW_MODEL_VERSION || 'v1';
 const SHADOW_MODEL_ENDPOINT = process.env.SHADOW_MODEL_ENDPOINT || '';
+
+// ── Cloudflare Workers AI ─────────────────────────────────────────────────────
+const CF_AI_ACCOUNT_ID  = process.env.CF_AI_ACCOUNT_ID  || '';
+const CF_AI_API_TOKEN   = process.env.CF_AI_API_TOKEN   || '';
+const CF_AI_LLAMA_GUARD_MODEL = process.env.CF_AI_LLAMA_GUARD_MODEL  || '@cf/meta/llama-guard-3-8b';
+const CF_AI_MINILM_MODEL      = process.env.CF_AI_MINILM_MODEL       || '@hf/sentence-transformers/all-minilm-l6-v2';
+const CF_AI_TIMEOUT_MS  = Number(process.env.CF_AI_TIMEOUT_MS || 5000);
+
+// Media scan stream – payload consumed by a dedicated media scanner worker.
+const MEDIA_SCAN_STREAM = process.env.MEDIA_SCAN_STREAM || 'media.scan';
 const MAX_RETRIES = Number(process.env.LEXICAL_MAX_RETRIES || 5);
 const METRICS_LOG_INTERVAL_MS = Number(process.env.METRICS_LOG_INTERVAL_MS || 60000);
 
+// ── LlamaGuard 3 category → internal reason mapping ──────────────────────────
+// MLCommons hazard taxonomy v0.5 as used by Meta's LlamaGuard-3 model.
+const LLAMA_GUARD_CATEGORY_MAP: Record<string, string> = {
+  S1:  'violence',
+  S2:  'illegal_content',
+  S3:  'sexual_content',
+  S4:  'child_safety',
+  S5:  'unsafe_content',   // defamation
+  S6:  'unsafe_content',   // specialized advice
+  S7:  'unsafe_content',   // privacy
+  S8:  'unsafe_content',   // IP
+  S9:  'violence',         // indiscriminate weapons
+  S10: 'identity_hate',
+  S11: 'self_harm',
+  S12: 'sexual_content',
+  S13: 'unsafe_content',   // elections
+};
+
+// ── MiniLM-v6 semantic similarity: category anchor phrases ───────────────────
+// A small set of representative sentences per harm category. We embed these
+// once (lazily), then compare each incoming event against the cached anchors
+// using cosine similarity to determine semantic category membership.
+const MINILM_CATEGORY_ANCHORS: Record<string, string[]> = {
+  child_safety: [
+    'sexual exploitation of children and minors',
+    'child abuse imagery and grooming tactics',
+    'underage sexual content and CSAM',
+  ],
+  hate_speech: [
+    'racial slurs dehumanizing ethnic groups',
+    'antisemitic conspiracy theories and genocide advocacy',
+    'white supremacist propaganda and hate speech',
+  ],
+  identity_attack: [
+    'homophobic and transphobic slurs attacking LGBTQ people',
+    'misogynistic attacks on gender identity',
+    'derogatory language targeting identity groups',
+  ],
+  self_harm: [
+    'instructions for self-harm and suicide methods',
+    'encouraging someone to kill themselves or self-injure',
+    'graphic descriptions of self-mutilation and suicide',
+  ],
+  sexual_content: [
+    'explicit pornographic content and sexual acts',
+    'graphic description of intercourse and adult sexual material',
+    'obscene sexual language and explicit erotica',
+  ],
+  violence: [
+    'graphic violence gore and descriptions of physical harm',
+    'credible threats to commit violent acts',
+    'incitement to murder assault or terrorism',
+  ],
+};
+
+interface CategoryAnchorCache {
+  category: string;
+  phrases: string[];
+  embeddings: number[][];
+}
+
+let anchorCacheResult: CategoryAnchorCache[] | null = null;
+let anchorLoadAttempted = false;
+
+function cfAiUrl(model: string): string {
+  return `https://api.cloudflare.com/client/v4/accounts/${CF_AI_ACCOUNT_ID}/ai/run/${encodeURIComponent(model)}`;
+}
+
+function cfAiHeaders(): Record<string, string> {
+  return {
+    'Authorization': `Bearer ${CF_AI_API_TOKEN}`,
+    'Content-Type': 'application/json',
+  };
+}
+
+async function cfAiFetch<T>(model: string, body: unknown, timeoutMs: number): Promise<T | null> {
+  if (!CF_AI_ACCOUNT_ID || !CF_AI_API_TOKEN) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(cfAiUrl(model), {
+      method: 'POST',
+      headers: cfAiHeaders(),
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    return await res.json() as T;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Lazy-load category anchor embeddings from CF Workers AI MiniLM. */
+async function loadAnchorCache(): Promise<CategoryAnchorCache[] | null> {
+  if (anchorCacheResult) return anchorCacheResult;
+  if (anchorLoadAttempted) return null;
+  anchorLoadAttempted = true;
+
+  const categories = Object.keys(MINILM_CATEGORY_ANCHORS);
+  const allPhrases = categories.flatMap((c) => MINILM_CATEGORY_ANCHORS[c]!);
+
+  const result = await cfAiFetch<{ result: { data: number[][] } }>(
+    CF_AI_MINILM_MODEL,
+    { text: allPhrases },
+    CF_AI_TIMEOUT_MS,
+  );
+
+  const embeddings = result?.result?.data ?? [];
+  if (embeddings.length !== allPhrases.length) return null;
+
+  let offset = 0;
+  const cache: CategoryAnchorCache[] = [];
+  for (const category of categories) {
+    const phrases = MINILM_CATEGORY_ANCHORS[category]!;
+    cache.push({ category, phrases, embeddings: embeddings.slice(offset, offset + phrases.length) });
+    offset += phrases.length;
+  }
+
+  anchorCacheResult = cache;
+  log.info({ categories: categories.length, phrases: allPhrases.length }, 'minilm anchor cache loaded');
+  return cache;
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    dot += a[i]! * b[i]!;
+    normA += a[i]! * a[i]!;
+    normB += b[i]! * b[i]!;
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom > 0 ? dot / denom : 0;
+}
+
+// ── CF Workers AI scorers ─────────────────────────────────────────────────────
+
+interface MlScorerResult {
+  modelName: string;
+  modelVersion: string;
+  score: number;
+  recommendedAction: 'allow' | 'block';
+  reasons: string[];
+  meta: Record<string, unknown>;
+}
+
+/**
+ * Score content with Cloudflare Workers AI LlamaGuard-3.
+ * Returns null if CF AI is not configured or the call fails.
+ */
+async function scoreWithCfLlamaGuard(text: string): Promise<MlScorerResult | null> {
+  if (!CF_AI_ACCOUNT_ID || !CF_AI_API_TOKEN || !text.trim()) return null;
+
+  const resp = await cfAiFetch<{ result?: { response?: string } }>(
+    CF_AI_LLAMA_GUARD_MODEL,
+    { messages: [{ role: 'user', content: text.slice(0, 4096) }] },
+    CF_AI_TIMEOUT_MS,
+  );
+
+  const response = resp?.result?.response?.trim() ?? '';
+  if (!response) return null;
+
+  const isUnsafe = response.toLowerCase().startsWith('unsafe');
+  const categoryCode = isUnsafe ? response.split(/\s+/)[1]?.trim().toUpperCase() : null;
+  const reason = categoryCode ? (LLAMA_GUARD_CATEGORY_MAP[categoryCode] ?? 'unsafe_content') : null;
+  const score = isUnsafe ? 0.95 : 0.05;
+
+  return {
+    modelName: 'cf-llama-guard',
+    modelVersion: CF_AI_LLAMA_GUARD_MODEL,
+    score,
+    recommendedAction: isUnsafe ? 'block' : 'allow',
+    reasons: reason ? [reason, `llama_guard:${categoryCode}`] : [],
+    meta: { rawResponse: response.slice(0, 100), categoryCode },
+  };
+}
+
+/**
+ * Score content using cosine similarity between the text's MiniLM-v6 embedding
+ * and pre-computed category anchor embeddings.
+ * The SIMILARITY_THRESHOLD (0.62) was calibrated so that clean text stays below
+ * it while on-topic harmful text exceeds it.
+ */
+async function scoreWithMiniLmSemantics(text: string): Promise<MlScorerResult | null> {
+  if (!CF_AI_ACCOUNT_ID || !CF_AI_API_TOKEN || !text.trim()) return null;
+
+  const anchors = await loadAnchorCache().catch(() => null);
+  if (!anchors || anchors.length === 0) return null;
+
+  const resp = await cfAiFetch<{ result?: { data?: number[][] } }>(
+    CF_AI_MINILM_MODEL,
+    { text: [text.slice(0, 1000)] },
+    CF_AI_TIMEOUT_MS,
+  );
+
+  const inputEmbedding = resp?.result?.data?.[0];
+  if (!inputEmbedding) return null;
+
+  const SIMILARITY_THRESHOLD = 0.62;
+  const categoryScores: Record<string, number> = {};
+  let topCategory: string | null = null;
+  let topSim = 0;
+
+  for (const { category, embeddings } of anchors) {
+    const maxSim = Math.max(...embeddings.map((anchor) => cosineSimilarity(inputEmbedding, anchor)));
+    categoryScores[category] = Math.round(maxSim * 1000) / 1000;
+    if (maxSim > topSim) { topSim = maxSim; topCategory = category; }
+  }
+
+  const normalizedScore = topSim >= SIMILARITY_THRESHOLD
+    ? Math.min(1, (topSim - SIMILARITY_THRESHOLD) / (1 - SIMILARITY_THRESHOLD))
+    : 0;
+
+  return {
+    modelName: 'cf-minilm-v6',
+    modelVersion: CF_AI_MINILM_MODEL,
+    score: normalizedScore,
+    recommendedAction: normalizedScore >= 0.75 ? 'block' : 'allow',
+    reasons: topCategory && normalizedScore > 0
+      ? [`semantic_category:${topCategory}`, `cosine_sim:${topSim.toFixed(3)}`]
+      : [],
+    meta: { topCategory, topSim, categoryScores },
+  };
+}
 let processedMessages = 0;
 let failedMessages = 0;
 let dlqRoutedMessages = 0;
@@ -233,38 +471,27 @@ function shadowFallbackModel(input: { content: string; title: string | null; sum
   } as const;
 }
 
-async function scoreWithRemoteModel(input: {
-  content: string;
-  title: string | null;
-  summary: string | null;
-  alt: string | null;
-  hashtags: string[];
-}) {
+/** Optional custom shadow model endpoint (backward-compatible). */
+async function scoreWithCustomEndpoint(input: {
+  content: string; title: string | null; summary: string | null;
+  alt: string | null; hashtags: string[];
+}): Promise<MlScorerResult | null> {
   if (!SHADOW_MODEL_ENDPOINT) return null;
-
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3000);
-
+  const timer = setTimeout(() => controller.abort(), 3000);
   try {
-    const response = await fetch(SHADOW_MODEL_ENDPOINT, {
+    const res = await fetch(SHADOW_MODEL_ENDPOINT, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(input),
       signal: controller.signal,
     });
-
-    if (!response.ok) return null;
-    const parsed = await response.json() as {
-      score?: number;
-      recommendedAction?: string;
-      reasons?: string[];
-      modelName?: string;
-      modelVersion?: string;
-      meta?: Record<string, unknown>;
+    if (!res.ok) return null;
+    const parsed = await res.json() as {
+      score?: number; recommendedAction?: string; reasons?: string[];
+      modelName?: string; modelVersion?: string; meta?: Record<string, unknown>;
     };
-
     if (!Number.isFinite(parsed.score ?? Number.NaN)) return null;
-
     return {
       modelName: parsed.modelName || SHADOW_MODEL_NAME,
       modelVersion: parsed.modelVersion || SHADOW_MODEL_VERSION,
@@ -272,11 +499,11 @@ async function scoreWithRemoteModel(input: {
       recommendedAction: parsed.recommendedAction === 'block' ? 'block' : 'allow',
       reasons: Array.isArray(parsed.reasons) ? parsed.reasons.slice(0, 20) : [],
       meta: parsed.meta || {},
-    } as const;
+    };
   } catch {
     return null;
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(timer);
   }
 }
 
@@ -302,24 +529,77 @@ function runShadowModerationScore(event: {
   };
 
   void (async () => {
-    const remote = await scoreWithRemoteModel(payload);
-    const modelResult = remote || shadowFallbackModel(payload);
+    // Run all available models in parallel; persist each result independently.
+    const contentText = [payload.title, payload.summary, payload.alt, payload.content]
+      .filter(Boolean).join(' ').slice(0, 2000);
 
-    await upsertShadowModerationScore(pg, {
-      eventId: event.event_id,
-      modelName: modelResult.modelName,
-      modelVersion: modelResult.modelVersion,
-      score: modelResult.score,
-      recommendedAction: modelResult.recommendedAction,
-      policyAction: context.policyAction,
-      reasons: modelResult.reasons,
-      meta: modelResult.meta,
-    });
+    const [llamaResult, miniLmResult, customResult] = await Promise.allSettled([
+      scoreWithCfLlamaGuard(contentText),
+      scoreWithMiniLmSemantics(contentText),
+      scoreWithCustomEndpoint(payload),
+    ]);
+
+    const results: MlScorerResult[] = [
+      llamaResult.status  === 'fulfilled' && llamaResult.value  ? llamaResult.value  : null,
+      miniLmResult.status === 'fulfilled' && miniLmResult.value ? miniLmResult.value : null,
+      customResult.status === 'fulfilled' && customResult.value ? customResult.value : null,
+    ].filter((r): r is MlScorerResult => r !== null);
+
+    // Fall back to internal scorer only if no external model succeeded.
+    if (results.length === 0) results.push(shadowFallbackModel(payload) as MlScorerResult);
+
+    for (const r of results) {
+      await upsertShadowModerationScore(pg, {
+        eventId: event.event_id,
+        modelName: r.modelName,
+        modelVersion: r.modelVersion,
+        score: r.score,
+        recommendedAction: r.recommendedAction,
+        policyAction: context.policyAction,
+        reasons: r.reasons,
+        meta: r.meta,
+      });
+    }
   })().catch((err) => {
     log.warn({ err, eventId: event.event_id }, 'shadow moderation scoring failed');
   });
 }
 
+/**
+ * Enqueue media URLs for async scanning and mark the search_doc as pending.
+ * Anchored at extractTaggedUrls() in mediaIndex.ts — the same path used by
+ * buildEventSearchText() to index media metadata.
+ */
+function runMediaModerationScan(event: {
+  event_id: string;
+  pubkey: string;
+  kind: number;
+  created_at: number;
+  tags?: string[][];
+}, mediaUrls: string[]) {
+  if (mediaUrls.length === 0) return;
+
+  void (async () => {
+    // Mark search_doc so clients know a scan is in flight.
+    await recordMediaScanPending(pg, event.event_id);
+
+    // Enqueue payload for the media scanner worker.
+    await redis.xadd(
+      MEDIA_SCAN_STREAM,
+      '*',
+      'payload',
+      JSON.stringify({
+        event_id:   event.event_id,
+        pubkey:     event.pubkey,
+        kind:       event.kind,
+        created_at: event.created_at,
+        urls:       mediaUrls,
+      }),
+    );
+  })().catch((err) => {
+    log.warn({ err, eventId: event.event_id }, 'media moderation scan enqueue failed');
+  });
+}
 interface ThreadRefs {
   rootId: string | null;
   rootAddress: string | null;
@@ -495,6 +775,19 @@ async function processMessage(payload: string) {
 
   await pg.query('BEGIN');
 
+  // Reputation: track keyword-blocked events against the author's pubkey.
+  // Fire-and-forget — must not run inside the transaction.
+  if (keywordDecision && event.pubkey) {
+    void upsertPubkeyAbuseSignal(pg, {
+      pubkey:      event.pubkey,
+      signalType:  'keyword_block',
+      eventId:     event.event_id,
+      reason:      keywordDecision.reason,
+      score:       keywordDecision.score,
+      sourceRelay: event.source?.relay_url ?? null,
+    }).catch((err) => log.warn({ err, pubkey: event.pubkey }, 'pubkey abuse signal upsert failed'));
+  }
+
   try {
     const inserted = await pg.query(
       `
@@ -661,6 +954,12 @@ async function processMessage(payload: string) {
 
     if (!SOCIAL_KINDS.has(event.kind) && !trustedModerationEvent && !keywordBlocked && searchText.trim()) {
       await enqueueEmbeddingJob(event.event_id, searchText);
+    }
+
+    // Media moderation: enqueue async scan for events carrying media URLs.
+    if (MEDIA_KINDS.has(event.kind) && !keywordBlocked) {
+      const mediaUrls = extractTaggedUrls(tags);
+      runMediaModerationScan({ event_id: event.event_id, pubkey: event.pubkey, kind: event.kind, created_at: event.created_at, tags }, mediaUrls);
     }
   } catch (err) {
     await pg.query('ROLLBACK');

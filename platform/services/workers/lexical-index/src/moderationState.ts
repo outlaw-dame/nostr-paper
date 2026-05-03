@@ -49,6 +49,26 @@ export interface ShadowModerationScoreInput {
   meta?: Record<string, unknown>;
 }
 
+export interface PubkeyAbuseSignalInput {
+  pubkey: string;
+  /** 'keyword_block' | 'trusted_block' | 'shadow_score_high' */
+  signalType: string;
+  eventId: string;
+  reason?: string | null;
+  score?: number | null;
+  sourceRelay?: string | null;
+}
+
+export interface MediaModerationAnnotationInput {
+  url: string;
+  eventId: string;
+  scanModel: string;
+  riskScore: number;
+  riskCategory?: string | null;
+  isSafe: boolean;
+  meta?: Record<string, unknown>;
+}
+
 function normalizeRelayUrl(url: string | null | undefined): string {
   const trimmed = String(url || '').trim().toLowerCase();
   if (!trimmed) return '';
@@ -265,6 +285,84 @@ export async function ensureModerationStateSchema(pg: Pool): Promise<void> {
       PRIMARY KEY (event_id, model_name)
     )
     `,
+  );
+
+  // ── Account reputation ─────────────────────────────────────────────────
+  await pg.query(
+    `
+    CREATE TABLE IF NOT EXISTS pubkey_abuse_signals (
+      id           bigserial PRIMARY KEY,
+      pubkey       text NOT NULL,
+      signal_type  text NOT NULL,
+      event_id     text NOT NULL,
+      reason       text,
+      score        numeric,
+      source_relay text,
+      occurred_at  timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (pubkey, event_id, signal_type)
+    )
+    `,
+  );
+
+  await pg.query(
+    `
+    CREATE INDEX IF NOT EXISTS idx_pubkey_abuse_pubkey_time
+      ON pubkey_abuse_signals (pubkey, occurred_at DESC)
+    `,
+  );
+
+  await pg.query(
+    `
+    CREATE INDEX IF NOT EXISTS idx_pubkey_abuse_relay
+      ON pubkey_abuse_signals (source_relay, occurred_at DESC)
+      WHERE source_relay IS NOT NULL
+    `,
+  );
+
+  await pg.query(
+    `
+    CREATE TABLE IF NOT EXISTS pubkey_risk_scores (
+      pubkey         text PRIMARY KEY,
+      risk_score     numeric NOT NULL DEFAULT 0,
+      risk_level     text NOT NULL DEFAULT 'low',
+      signal_count   int NOT NULL DEFAULT 0,
+      burst_flag     boolean NOT NULL DEFAULT false,
+      repeat_flag    boolean NOT NULL DEFAULT false,
+      infra_flag     boolean NOT NULL DEFAULT false,
+      last_signal_at timestamptz,
+      score_version  text NOT NULL DEFAULT 'v1',
+      updated_at     timestamptz NOT NULL DEFAULT now()
+    )
+    `,
+  );
+
+  // ── Media moderation annotations ────────────────────────────────────────────
+  await pg.query(
+    `
+    CREATE TABLE IF NOT EXISTS media_moderation_annotations (
+      url           text NOT NULL,
+      event_id      text NOT NULL,
+      scan_model    text NOT NULL,
+      risk_score    numeric NOT NULL DEFAULT 0,
+      risk_category text,
+      is_safe       boolean NOT NULL DEFAULT true,
+      meta          jsonb,
+      scanned_at    timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (url, event_id, scan_model)
+    )
+    `,
+  );
+
+  await pg.query(
+    `
+    CREATE INDEX IF NOT EXISTS idx_media_mod_event
+      ON media_moderation_annotations (event_id, scanned_at DESC)
+    `,
+  );
+
+  // Add media_risk_state to search_docs if not already present.
+  await pg.query(
+    `ALTER TABLE search_docs ADD COLUMN IF NOT EXISTS media_risk_state text NOT NULL DEFAULT 'none'`,
   );
 }
 
@@ -521,5 +619,171 @@ export async function reconcileSearchDocModerationStateForEvents(pg: Pool, event
     WHERE sd.event_id = ANY($1::text[])
     `,
     [eventIds],
+  );
+}
+
+// ── Reputation / risk scoring ─────────────────────────────────────────────────
+
+async function recomputePubkeyRiskScore(pg: Pool, pubkey: string): Promise<void> {
+  const result = await pg.query<{
+    signal_count: string;
+    burst_count: string;
+    distinct_events_30d: string;
+    distinct_relays: string;
+  }>(
+    `
+    SELECT
+      COUNT(*)::text                                                                         AS signal_count,
+      COUNT(*) FILTER (WHERE occurred_at > now() - interval '1 hour')::text                 AS burst_count,
+      COUNT(DISTINCT event_id) FILTER (WHERE occurred_at > now() - interval '30 days')::text AS distinct_events_30d,
+      COUNT(DISTINCT source_relay) FILTER (WHERE source_relay IS NOT NULL)::text             AS distinct_relays
+    FROM pubkey_abuse_signals
+    WHERE pubkey = $1
+    `,
+    [pubkey],
+  );
+
+  const row = result.rows[0];
+  if (!row) return;
+
+  const signalCount      = Number(row.signal_count);
+  const burstCount       = Number(row.burst_count);
+  const distinctEvents   = Number(row.distinct_events_30d);
+  const distinctRelays   = Number(row.distinct_relays);
+
+  // Weighted components:
+  //   burst    – events/hour spike (5/hr = saturated)
+  //   repeat   – distinct blocked events in 30 days (10 = saturated)
+  //   infra    – distinct relay origins with signals (3+ = coordinated pattern)
+  const burstScore  = Math.min(1, burstCount / 5);
+  const repeatScore = Math.min(1, distinctEvents / 10);
+  const infraScore  = Math.min(1, distinctRelays / 3);
+
+  const riskScore = Math.round(
+    (0.3 * burstScore + 0.4 * repeatScore + 0.3 * infraScore) * 1000,
+  ) / 1000;
+
+  const riskLevel =
+    riskScore >= 0.8 ? 'critical'
+    : riskScore >= 0.6 ? 'high'
+    : riskScore >= 0.3 ? 'medium'
+    : 'low';
+
+  await pg.query(
+    `
+    INSERT INTO pubkey_risk_scores (
+      pubkey, risk_score, risk_level, signal_count,
+      burst_flag, repeat_flag, infra_flag, last_signal_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+    ON CONFLICT (pubkey) DO UPDATE
+    SET
+      risk_score     = EXCLUDED.risk_score,
+      risk_level     = EXCLUDED.risk_level,
+      signal_count   = EXCLUDED.signal_count,
+      burst_flag     = EXCLUDED.burst_flag,
+      repeat_flag    = EXCLUDED.repeat_flag,
+      infra_flag     = EXCLUDED.infra_flag,
+      last_signal_at = EXCLUDED.last_signal_at,
+      updated_at     = now()
+    `,
+    [
+      pubkey,
+      riskScore,
+      riskLevel,
+      signalCount,
+      burstScore > 0.4,
+      repeatScore > 0.4,
+      infraScore > 0.4,
+    ],
+  );
+}
+
+/**
+ * Record a single abuse signal for a pubkey and recompute that pubkey's
+ * aggregate risk score. Safe to call void (fire-and-forget) from the hot path.
+ */
+export async function upsertPubkeyAbuseSignal(pg: Pool, input: PubkeyAbuseSignalInput): Promise<void> {
+  await pg.query(
+    `
+    INSERT INTO pubkey_abuse_signals (pubkey, signal_type, event_id, reason, score, source_relay)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT (pubkey, event_id, signal_type) DO UPDATE
+    SET
+      reason       = COALESCE(EXCLUDED.reason, pubkey_abuse_signals.reason),
+      score        = COALESCE(EXCLUDED.score, pubkey_abuse_signals.score),
+      source_relay = COALESCE(EXCLUDED.source_relay, pubkey_abuse_signals.source_relay),
+      occurred_at  = GREATEST(pubkey_abuse_signals.occurred_at, EXCLUDED.occurred_at)
+    `,
+    [
+      input.pubkey,
+      input.signalType,
+      input.eventId,
+      input.reason ?? null,
+      input.score ?? null,
+      input.sourceRelay ?? null,
+    ],
+  );
+
+  await recomputePubkeyRiskScore(pg, input.pubkey);
+}
+
+// ── Media moderation annotations ──────────────────────────────────────────────
+
+/**
+ * Persist the result of an async media scan and update the parent event's
+ * media_risk_state in search_docs when risky content is detected.
+ */
+export async function upsertMediaModerationAnnotation(
+  pg: Pool,
+  input: MediaModerationAnnotationInput,
+): Promise<void> {
+  await pg.query(
+    `
+    INSERT INTO media_moderation_annotations (url, event_id, scan_model, risk_score, risk_category, is_safe, meta)
+    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+    ON CONFLICT (url, event_id, scan_model) DO UPDATE
+    SET
+      risk_score    = EXCLUDED.risk_score,
+      risk_category = EXCLUDED.risk_category,
+      is_safe       = EXCLUDED.is_safe,
+      meta          = EXCLUDED.meta,
+      scanned_at    = now()
+    `,
+    [
+      input.url,
+      input.eventId,
+      input.scanModel,
+      input.riskScore,
+      input.riskCategory ?? null,
+      input.isSafe,
+      JSON.stringify(input.meta ?? {}),
+    ],
+  );
+
+  if (!input.isSafe) {
+    await pg.query(
+      `
+      UPDATE search_docs
+      SET media_risk_state = 'risky'
+      WHERE event_id = $1 AND media_risk_state IN ('none', 'pending', 'safe')
+      `,
+      [input.eventId],
+    );
+  }
+}
+
+/**
+ * Mark a search_doc as having a pending async media scan so clients know
+ * the media risk has not yet been determined.
+ */
+export async function recordMediaScanPending(pg: Pool, eventId: string): Promise<void> {
+  await pg.query(
+    `
+    UPDATE search_docs
+    SET media_risk_state = 'pending'
+    WHERE event_id = $1 AND media_risk_state = 'none'
+    `,
+    [eventId],
   );
 }
