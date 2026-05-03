@@ -12,7 +12,20 @@
  *  - Verify parseIntent / getAdapter fallback logic via unit calls
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+
+function withRuntimeEnv(value: string, run: () => Promise<void>): Promise<void> {
+  const env = import.meta.env as unknown as Record<string, string | undefined>
+  const previous = env.VITE_ROUTER_RUNTIME
+
+  if (value) env.VITE_ROUTER_RUNTIME = value
+  else delete env.VITE_ROUTER_RUNTIME
+
+  return run().finally(() => {
+    if (typeof previous === 'string') env.VITE_ROUTER_RUNTIME = previous
+    else delete env.VITE_ROUTER_RUNTIME
+  })
+}
 
 // ── parseIntent ────────────────────────────────────────────────
 // parseIntent is unexported from the worker — test it via the classify
@@ -24,58 +37,52 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 describe('getRouterRuntime()', () => {
   it('defaults to transformers when env is unset', async () => {
-    vi.stubEnv('VITE_ROUTER_RUNTIME', '')
-    const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
-    expect(getRouterRuntime()).toBe('transformers')
-    vi.unstubAllEnvs()
+    await withRuntimeEnv('', async () => {
+      const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
+      expect(getRouterRuntime()).toBe('transformers')
+    })
   })
 
   it('returns webllm when VITE_ROUTER_RUNTIME=webllm', async () => {
-    vi.stubEnv('VITE_ROUTER_RUNTIME', 'webllm')
-    vi.resetModules()
-    const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
-    expect(getRouterRuntime()).toBe('webllm')
-    vi.unstubAllEnvs()
+    await withRuntimeEnv('webllm', async () => {
+      const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
+      expect(getRouterRuntime()).toBe('webllm')
+    })
   })
 
   it('returns litert when VITE_ROUTER_RUNTIME=litert', async () => {
-    vi.stubEnv('VITE_ROUTER_RUNTIME', 'litert')
-    vi.resetModules()
-    const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
-    expect(getRouterRuntime()).toBe('litert')
-    vi.unstubAllEnvs()
+    await withRuntimeEnv('litert', async () => {
+      const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
+      expect(getRouterRuntime()).toBe('litert')
+    })
   })
 
   it('returns litert when VITE_ROUTER_RUNTIME=mediapipe', async () => {
-    vi.stubEnv('VITE_ROUTER_RUNTIME', 'mediapipe')
-    vi.resetModules()
-    const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
-    expect(getRouterRuntime()).toBe('litert')
-    vi.unstubAllEnvs()
+    await withRuntimeEnv('mediapipe', async () => {
+      const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
+      expect(getRouterRuntime()).toBe('litert')
+    })
   })
 
   it('returns litert when VITE_ROUTER_RUNTIME=mediapipeline', async () => {
-    vi.stubEnv('VITE_ROUTER_RUNTIME', 'mediapipeline')
-    vi.resetModules()
-    const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
-    expect(getRouterRuntime()).toBe('litert')
-    vi.unstubAllEnvs()
+    await withRuntimeEnv('mediapipeline', async () => {
+      const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
+      expect(getRouterRuntime()).toBe('litert')
+    })
   })
 
   it('returns cloudflare when VITE_ROUTER_RUNTIME=cloudflare', async () => {
-    vi.stubEnv('VITE_ROUTER_RUNTIME', 'cloudflare')
-    vi.resetModules()
-    const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
-    expect(getRouterRuntime()).toBe('cloudflare')
-    vi.unstubAllEnvs()
+    await withRuntimeEnv('cloudflare', async () => {
+      const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
+      expect(getRouterRuntime()).toBe('cloudflare')
+    })
   })
 
   it('falls back to transformers for unknown values', async () => {
-    vi.stubEnv('VITE_ROUTER_RUNTIME', 'gpt5000')
-    vi.resetModules()
-    const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
-    expect(getRouterRuntime()).toBe('transformers')
-    vi.unstubAllEnvs()
+    await withRuntimeEnv('gpt5000', async () => {
+      const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
+      expect(getRouterRuntime()).toBe('transformers')
+    })
   })
 })
 
@@ -102,14 +109,11 @@ describe('WebLLM adapter', () => {
       CreateMLCEngine: vi.fn().mockResolvedValue(engine),
     }))
 
-    vi.stubEnv('VITE_ROUTER_RUNTIME', 'webllm')
-    vi.resetModules()
+    await withRuntimeEnv('webllm', async () => {
+      const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
+      expect(getRouterRuntime()).toBe('webllm')
+    })
 
-    const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
-    expect(getRouterRuntime()).toBe('webllm')
-
-    vi.unstubAllEnvs()
-    vi.resetModules()
     vi.restoreAllMocks()
   })
 
@@ -119,13 +123,11 @@ describe('WebLLM adapter', () => {
       CreateMLCEngine: vi.fn().mockResolvedValue(engine),
     }))
 
-    vi.stubEnv('VITE_ROUTER_RUNTIME', 'webllm')
-    vi.resetModules()
-    const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
-    expect(getRouterRuntime()).toBe('webllm')
+    await withRuntimeEnv('webllm', async () => {
+      const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
+      expect(getRouterRuntime()).toBe('webllm')
+    })
 
-    vi.unstubAllEnvs()
-    vi.resetModules()
     vi.restoreAllMocks()
   })
 
@@ -135,13 +137,11 @@ describe('WebLLM adapter', () => {
       CreateMLCEngine: vi.fn().mockResolvedValue(engine),
     }))
 
-    vi.stubEnv('VITE_ROUTER_RUNTIME', 'webllm')
-    vi.resetModules()
-    const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
-    expect(getRouterRuntime()).toBe('webllm')
+    await withRuntimeEnv('webllm', async () => {
+      const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
+      expect(getRouterRuntime()).toBe('webllm')
+    })
 
-    vi.unstubAllEnvs()
-    vi.resetModules()
     vi.restoreAllMocks()
   })
 })
@@ -167,13 +167,11 @@ describe('LiteRT adapter', () => {
       },
     }))
 
-    vi.stubEnv('VITE_ROUTER_RUNTIME', 'litert')
-    vi.resetModules()
-    const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
-    expect(getRouterRuntime()).toBe('litert')
+    await withRuntimeEnv('litert', async () => {
+      const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
+      expect(getRouterRuntime()).toBe('litert')
+    })
 
-    vi.unstubAllEnvs()
-    vi.resetModules()
     vi.restoreAllMocks()
   })
 
@@ -188,13 +186,11 @@ describe('LiteRT adapter', () => {
       },
     }))
 
-    vi.stubEnv('VITE_ROUTER_RUNTIME', 'litert')
-    vi.resetModules()
-    const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
-    expect(getRouterRuntime()).toBe('litert')
+    await withRuntimeEnv('litert', async () => {
+      const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
+      expect(getRouterRuntime()).toBe('litert')
+    })
 
-    vi.unstubAllEnvs()
-    vi.resetModules()
     vi.restoreAllMocks()
   })
 
@@ -208,15 +204,12 @@ describe('LiteRT adapter', () => {
       LlmInference: { createFromOptions },
     }))
 
-    vi.stubEnv('VITE_ROUTER_RUNTIME', 'litert')
-    vi.resetModules()
+    await withRuntimeEnv('litert', async () => {
+      // Verify runtime is recognised before simulating close
+      const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
+      expect(getRouterRuntime()).toBe('litert')
+    })
 
-    // Verify runtime is recognised before simulating close
-    const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
-    expect(getRouterRuntime()).toBe('litert')
-
-    vi.unstubAllEnvs()
-    vi.resetModules()
     vi.restoreAllMocks()
   })
 })
@@ -285,14 +278,12 @@ describe('parseIntent', () => {
 
 describe('getActiveRouterModel', () => {
   it('returns null before any worker interaction', async () => {
-    vi.resetModules()
     const { getActiveRouterModel } = await import('@/lib/search/router')
     // In test environment the worker is not actually spawned, so model stays null
     expect(getActiveRouterModel()).toBeNull()
   })
 
   it('is exported from the router module', async () => {
-    vi.resetModules()
     const routerModule = await import('@/lib/search/router')
     expect(typeof routerModule.getActiveRouterModel).toBe('function')
   })

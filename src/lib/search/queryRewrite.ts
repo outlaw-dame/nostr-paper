@@ -113,7 +113,7 @@ export async function rewriteSearchQuery(
     if (isGemmaAvailable()) {
       raw = await generateGemmaAssistText(prompt, combined)
     } else if (await canUseGeminiAssist()) {
-      raw = await generateGeminiAssistText(prompt, combined)
+      raw = await generateGeminiAssistText(prompt, [], combined)
     } else {
       return null
     }

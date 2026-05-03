@@ -13,20 +13,23 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 
 describe('Cloudflare AI Providers', () => {
   describe('isCloudflareAiAvailable', () => {
-    it('should return false without credentials', () => {
-      const original = import.meta.env
-      delete (import.meta.env as unknown as Record<string, unknown>).VITE_CLOUDFLARE_ACCOUNT_ID
-      
+    it('should return false without credentials', async () => {
+      const env = import.meta.env as unknown as Record<string, string | undefined>
+      const originalAccountId = env.VITE_CLOUDFLARE_ACCOUNT_ID
+      const originalApiToken = env.VITE_CLOUDFLARE_API_TOKEN
+
+      delete env.VITE_CLOUDFLARE_ACCOUNT_ID
+      delete env.VITE_CLOUDFLARE_API_TOKEN
+
       const { isCloudflareAiAvailable } = await import('@/lib/ai/cloudflareAiProviders')
       expect(isCloudflareAiAvailable()).toBe(false)
-      
-      import.meta.env = original
+
+      if (typeof originalAccountId === 'string') env.VITE_CLOUDFLARE_ACCOUNT_ID = originalAccountId
+      if (typeof originalApiToken === 'string') env.VITE_CLOUDFLARE_API_TOKEN = originalApiToken
     })
 
-    it('should return true with valid credentials', () => {
-      // This test requires actual credentials in .env.test
-      const { isCloudflareAiAvailable } = require('@/lib/ai/cloudflareAiProviders')
-      // Result depends on environment
+    it('should return a boolean with current credentials state', async () => {
+      const { isCloudflareAiAvailable } = await import('@/lib/ai/cloudflareAiProviders')
       expect(typeof isCloudflareAiAvailable()).toBe('boolean')
     })
   })

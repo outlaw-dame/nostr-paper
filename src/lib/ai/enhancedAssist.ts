@@ -86,7 +86,7 @@ export async function generateComposeAssistText(
 
   // Try Gemini API
   try {
-    const text = await generateGeminiAssistText(prompt, signal)
+    const text = await generateGeminiAssistText(prompt, [], signal)
     return { text: sanitizeModelOutput(text), source: 'gemini', quality: 0.85 }
   } catch (err) {
     console.warn('Gemini failed, using fallback:', err)
@@ -148,7 +148,7 @@ export async function generateProfileInsights(
 
   // Try Gemini
   try {
-    const text = await generateGeminiAssistText(prompt, signal)
+    const text = await generateGeminiAssistText(prompt, [], signal)
     const insights = text.split('\n').filter((line) => line.trim().length > 10)
     return { insights: insights.slice(0, 3), source: 'gemini' }
   } catch {
@@ -199,7 +199,7 @@ export async function summarizeArticle(
 
   // Try Gemini
   try {
-    const text = await generateGeminiAssistText(prompt, signal)
+    const text = await generateGeminiAssistText(prompt, [], signal)
     return { summary: sanitizeModelOutput(text), source: 'gemini' }
   } catch {
     // Continue to fallback

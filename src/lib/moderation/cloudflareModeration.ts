@@ -46,7 +46,7 @@ async function moderateWithCloudflare(content: string, isPrompt = true): Promise
 
     // Llama Guard returns text like: "safe" or "unsafe\n<category>"
     const lines = response.toLowerCase().trim().split('\n')
-    const status = lines[0]
+    const status = lines[0] ?? ''
     const isSafe = status.includes('safe') && !status.includes('unsafe')
 
     const labels: ModerationLabel[] = []

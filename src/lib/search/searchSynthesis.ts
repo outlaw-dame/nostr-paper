@@ -144,7 +144,7 @@ export async function synthesizeSearchAnswer(
     }
 
     if (await canUseGeminiAssist()) {
-      const raw = await generateGeminiAssistText(prompt, combined)
+      const raw = await generateGeminiAssistText(prompt, [], combined)
       const text = sanitizeSynthesisOutput(raw)
       if (!text) return null
       return { text, source: 'gemini' }
