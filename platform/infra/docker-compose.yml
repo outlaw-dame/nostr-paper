@@ -94,7 +94,9 @@ services:
         condition: service_healthy
 
   search:
-    build: ../services/search-api
+    build:
+      context: ..
+      dockerfile: services/search-api/Dockerfile
     environment:
       POSTGRES_URL: postgres://nostr:nostr@postgres:5432/nostr_search
       PORT: 3001
