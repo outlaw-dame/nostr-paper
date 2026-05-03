@@ -1,10 +1,13 @@
 import { generateText, isGemmaAvailable } from '@/lib/gemma/client'
 import { withRetry } from '@/lib/retry'
 import { loadTranslationSecrets } from '@/lib/translation/storage'
+import { moderateContent } from '@/lib/moderation/cloudflareModeration'
+import type { AiTaskType } from '@/lib/ai/taskRouting'
 
 const MAX_OUTPUT_CHARS = 1200
 const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
+const ASSIST_QUALITY_THRESHOLD = 0.52
 
 function sanitizeModelOutput(value: string): string {
   const withoutFences = value
@@ -96,6 +99,7 @@ export async function canUseGeminiAssist(): Promise<boolean> {
 
 export async function generateGeminiAssistText(
   prompt: string,
+  moderationGuidance: string[] = [],
   signal?: AbortSignal,
 ): Promise<string> {
   const key = await loadGeminiApiKey()
@@ -109,9 +113,22 @@ export async function generateGeminiAssistText(
   const requestBody = {
     systemInstruction: {
       role: 'system',
-      parts: [{ text: 'You are a concise writing-quality assistant. Return plain text only.' }],
+      parts: [{ text: [
+        'You are a concise writing-quality assistant. Return plain text only.',
+        'Follow platform moderation policy at all times.',
+        'Do not produce harassment, hate speech, threats, sexual explicit content, or dangerous instructions.',
+        moderationGuidance.length > 0
+          ? `Moderation guidance: ${moderationGuidance.slice(0, 4).join(' | ')}`
+          : 'Moderation guidance: none provided.',
+      ].join('\n') }],
     },
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    safetySettings: [
+      { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+      { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+      { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+      { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+    ],
     generationConfig: {
       temperature: 0.25,
     },
@@ -165,6 +182,14 @@ export async function generateGeminiAssistText(
     throw new Error('Gemini returned empty output.')
   }
 
+  const moderationDecision = await moderateContent(text, {
+    isPrompt: false,
+    requireConfidence: 0.6,
+  })
+  if (!moderationDecision.isSafe) {
+    throw new Error(`Gemini output blocked by moderation (${moderationDecision.labels.join(', ') || 'unsafe'}).`)
+  }
+
   return text
 }
 
@@ -179,6 +204,8 @@ export type AiAssistProvider = 'auto' | 'gemma' | 'gemini'
 export interface GenerateAssistOptions {
   signal?: AbortSignal
   provider?: AiAssistProvider
+  taskType?: AiTaskType
+  moderationGuidance?: string[]
 }
 
 export async function generateGemmaAssistText(
@@ -220,7 +247,7 @@ async function enhanceGemmaWithGemini(gemmaDraft: string, prompt: string, signal
     `Current draft: ${JSON.stringify(gemmaDraft)}`,
   ].join('\n')
 
-  return generateGeminiAssistText(improvePrompt, signal)
+  return generateGeminiAssistText(improvePrompt, [], signal)
 }
 
 export async function generateAssistText(
@@ -228,9 +255,11 @@ export async function generateAssistText(
   options: GenerateAssistOptions = {},
 ): Promise<{ text: string; source: AiAssistSource; enhancedByGemini: boolean }> {
   const provider = options.provider ?? 'auto'
+  const taskType = options.taskType ?? 'compose_assist_quality'
+  const moderationGuidance = options.moderationGuidance ?? []
 
   if (provider === 'gemini') {
-    const text = await generateGeminiAssistText(prompt, options.signal)
+    const text = await generateGeminiAssistText(prompt, moderationGuidance, options.signal)
     return { text, source: 'gemini', enhancedByGemini: false }
   }
 
@@ -238,9 +267,10 @@ export async function generateAssistText(
     const gemmaText = await generateGemmaAssistText(prompt, options.signal)
     const gemmaQuality = qualityScore(gemmaText)
 
-    if (gemmaQuality < 0.52 && await canUseGeminiAssist()) {
+    const needsUpgrade = gemmaQuality < ASSIST_QUALITY_THRESHOLD || taskType === 'profile_insights' || taskType === 'article_summary'
+    if (needsUpgrade && await canUseGeminiAssist()) {
       try {
-        const enhanced = await enhanceGemmaWithGemini(gemmaText, prompt, options.signal)
+        const enhanced = await generateGeminiAssistText(prompt, moderationGuidance, options.signal)
         return { text: enhanced, source: 'gemini', enhancedByGemini: true }
       } catch {
         return { text: gemmaText, source: 'gemma', enhancedByGemini: false }
@@ -255,9 +285,10 @@ export async function generateAssistText(
       const gemmaText = await generateGemmaAssistText(prompt, options.signal)
       const gemmaQuality = qualityScore(gemmaText)
 
-      if (gemmaQuality < 0.52 && await canUseGeminiAssist()) {
+      const needsUpgrade = gemmaQuality < ASSIST_QUALITY_THRESHOLD || taskType === 'profile_insights' || taskType === 'article_summary'
+      if (needsUpgrade && await canUseGeminiAssist()) {
         try {
-          const enhanced = await enhanceGemmaWithGemini(gemmaText, prompt, options.signal)
+          const enhanced = await generateGeminiAssistText(prompt, moderationGuidance, options.signal)
           return { text: enhanced, source: 'gemini', enhancedByGemini: true }
         } catch {
           return { text: gemmaText, source: 'gemma', enhancedByGemini: false }
@@ -270,7 +301,7 @@ export async function generateAssistText(
     }
   }
 
-  const geminiText = await generateGeminiAssistText(prompt, options.signal)
+  const geminiText = await generateGeminiAssistText(prompt, moderationGuidance, options.signal)
   return { text: geminiText, source: 'gemini', enhancedByGemini: false }
 }
 

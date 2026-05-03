@@ -613,10 +613,19 @@ export default function FeedPage() {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const restoreCompletedRef = useRef(false)
   const rafSaveRef = useRef<number | null>(null)
+  const pendingAutoApplyTimerRef = useRef<number | null>(null)
   const lastFeedSnapshotRef = useRef<FeedViewSnapshot | null>(null)
   const viewportAnchorRef = useRef<FeedViewportAnchor | null>(null)
   const persistFeedPositionRef = useRef<() => void>(() => {})
   const [resumeFeedPosition, setResumeFeedPosition] = useState(true)
+  const [restoreGeneration, setRestoreGeneration] = useState(0)
+
+  const markFeedRestoreCompleted = useCallback(() => {
+    if (!restoreCompletedRef.current) {
+      setRestoreGeneration((generation) => generation + 1)
+    }
+    restoreCompletedRef.current = true
+  }, [])
 
   const { profile: currentUserProfile } = useProfile(currentUser?.pubkey)
   const { isMuted, mutedWords, mutedHashtags } = useMuteList()
@@ -749,7 +758,7 @@ export default function FeedPage() {
   const {
     allowedIds: allowedModerationIds,
     loading: moderationLoading,
-  } = useModerationDocuments(moderationDocuments)
+  } = useModerationDocuments(moderationDocuments, { failClosed: true })
 
   const pullY     = useMotionValue(0)
   const pullHint  = useTransform(pullY, [0, COMPOSE_TRIGGER_OFFSET], [0, 1])
@@ -759,7 +768,7 @@ export default function FeedPage() {
     () => filterNsfwTaggedEvents(
       tagMatchedEvents.filter((event) => {
         if (isMuted(event.pubkey)) return false
-        if (moderationDocumentIds.has(event.id) && !allowedModerationIds.has(event.id) && !moderationLoading) return false
+        if (moderationDocumentIds.has(event.id) && !allowedModerationIds.has(event.id)) return false
 
         // Word mutes: hide events whose content contains a muted keyword.
         if (mutedWords.size > 0) {
@@ -779,7 +788,7 @@ export default function FeedPage() {
       }),
       hideNsfwTaggedPosts,
     ),
-    [allowedModerationIds, hideNsfwTaggedPosts, isMuted, moderationDocumentIds, moderationLoading, mutedHashtags, mutedWords, tagMatchedEvents],
+    [allowedModerationIds, hideNsfwTaggedPosts, isMuted, moderationDocumentIds, mutedHashtags, mutedWords, tagMatchedEvents],
   )
   const repostFeatureEnabled = !activeTagTimeline && activeSection.id === 'feed' && repostCarouselVisible
   const repostCarouselItems = useMemo(
@@ -939,11 +948,11 @@ export default function FeedPage() {
       if (container) {
         container.scrollTop = 0
       }
-      restoreCompletedRef.current = true
+      markFeedRestoreCompleted()
     } else {
       restoreCompletedRef.current = false
     }
-  }, [feedScopeKey, resumeFeedPosition])
+  }, [feedScopeKey, markFeedRestoreCompleted, resumeFeedPosition])
 
   useEffect(() => {
     if (!resumeFeedPosition) return
@@ -974,8 +983,34 @@ export default function FeedPage() {
   useLayoutEffect(() => {
     return () => {
       persistFeedPositionRef.current()
+      if (pendingAutoApplyTimerRef.current !== null) {
+        window.clearTimeout(pendingAutoApplyTimerRef.current)
+        pendingAutoApplyTimerRef.current = null
+      }
     }
   }, [])
+
+  useEffect(() => {
+    if (pendingEventCount === 0) return
+    if (!restoreCompletedRef.current) return
+
+    if (pendingAutoApplyTimerRef.current !== null) {
+      window.clearTimeout(pendingAutoApplyTimerRef.current)
+    }
+
+    pendingAutoApplyTimerRef.current = window.setTimeout(() => {
+      pendingAutoApplyTimerRef.current = null
+      captureCurrentFeedView(feedEventSignature)
+      applyPendingEvents()
+    }, 220)
+
+    return () => {
+      if (pendingAutoApplyTimerRef.current !== null) {
+        window.clearTimeout(pendingAutoApplyTimerRef.current)
+        pendingAutoApplyTimerRef.current = null
+      }
+    }
+  }, [applyPendingEvents, captureCurrentFeedView, feedEventSignature, pendingEventCount, restoreGeneration])
 
   useEffect(() => {
     if (!resumeFeedPosition) return
@@ -1008,13 +1043,13 @@ export default function FeedPage() {
     const container = scrollContainerRef.current
     const snapshot = getFeedViewSnapshot(feedScopeKey)
     if (!container) {
-      restoreCompletedRef.current = true
+      markFeedRestoreCompleted()
       return
     }
 
     if (!snapshot) {
       container.scrollTop = 0
-      restoreCompletedRef.current = true
+      markFeedRestoreCompleted()
       captureCurrentFeedView(feedEventSignature)
       return
     }
@@ -1057,7 +1092,7 @@ export default function FeedPage() {
       attempts += 1
       const restored = restore()
       if (restored || attempts >= MAX_FEED_RESTORE_ATTEMPTS) {
-        restoreCompletedRef.current = true
+        markFeedRestoreCompleted()
         captureCurrentFeedView(feedEventSignature)
         return
       }
@@ -1073,7 +1108,7 @@ export default function FeedPage() {
         window.cancelAnimationFrame(restoreFrame)
       }
     }
-  }, [captureCurrentFeedView, eose, feedEventSignature, feedScopeKey, feedSurfaceLoading, resumeFeedPosition, visibleEvents.length])
+  }, [captureCurrentFeedView, eose, feedEventSignature, feedScopeKey, feedSurfaceLoading, markFeedRestoreCompleted, resumeFeedPosition, visibleEvents.length])
 
   const checkEvent      = useEventFilterCheck()
   const semanticResults = useSemanticFiltering(visibleEvents)
@@ -1119,11 +1154,6 @@ export default function FeedPage() {
     },
     [handleCompose, pullY],
   )
-
-  const handleShowPendingFeedEvents = useCallback(() => {
-    captureCurrentFeedView(feedEventSignature)
-    applyPendingEvents()
-  }, [applyPendingEvents, captureCurrentFeedView, feedEventSignature])
 
   const handleSectionChange = useCallback((id: string) => {
     persistFeedPosition()
@@ -1285,27 +1315,6 @@ export default function FeedPage() {
         </div>
       </motion.div>
 
-      {pendingEventCount > 0 && (
-        <div className="pointer-events-none fixed inset-x-0 top-[calc(env(safe-area-inset-top)+12px)] z-30 flex justify-center px-4">
-          <button
-            type="button"
-            onClick={handleShowPendingFeedEvents}
-            className="
-              pointer-events-auto flex min-h-10 max-w-full items-center gap-2 rounded-full
-              border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg)/0.88)]
-              px-4 py-2 text-[14px] font-semibold text-[#007AFF] shadow-lg
-              backdrop-blur-xl transition-transform active:scale-[0.98]
-            "
-            aria-label={tApp('feedShowNewPosts', { count: pendingEventCount })}
-          >
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
-              <path d="M8 12.5V3.5M8 3.5L4.5 7M8 3.5L11.5 7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <span className="truncate">{tApp('feedShowNewPosts', { count: pendingEventCount })}</span>
-          </button>
-        </div>
-      )}
-
       {/* Main draggable container — pull-down triggers compose */}
       <motion.div
         drag="y"
@@ -1322,7 +1331,7 @@ export default function FeedPage() {
           role="tabpanel"
           onPointerDownCapture={persistFeedPosition}
           className="
-            min-h-0 flex-1 overflow-y-auto
+            min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]
             px-4 pb-safe
           "
         >

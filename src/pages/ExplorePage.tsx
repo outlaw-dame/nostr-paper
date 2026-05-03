@@ -177,12 +177,12 @@ export default function ExplorePage() {
     [followPackModerationDocuments],
   )
 
-  const { allowedIds: allowedEventIds } = useModerationDocuments(eventModerationDocuments)
-  const { allowedIds: allowedProfileIds } = useModerationDocuments(profileModerationDocuments)
+  const { allowedIds: allowedEventIds } = useModerationDocuments(eventModerationDocuments, { failClosed: true })
+  const { allowedIds: allowedProfileIds } = useModerationDocuments(profileModerationDocuments, { failClosed: true })
   const {
     allowedIds: allowedFollowPackIds,
     loading: followPackModerationLoading,
-  } = useModerationDocuments(followPackModerationDocuments)
+  } = useModerationDocuments(followPackModerationDocuments, { failClosed: true })
 
   const visibleEvents = useMemo(
     () => filterNsfwTaggedEvents(

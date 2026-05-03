@@ -628,6 +628,8 @@ export function ComposeSheet() {
       generateAssistText(prompt, {
         signal: controller.signal,
         provider: aiAssistProvider,
+        taskType: 'compose_assist_quality',
+        moderationGuidance,
       })
         .then((result) => {
           if (controller.signal.aborted) return

@@ -920,6 +920,7 @@ export default function ProfilePage() {
       generateAssistText(prompt, {
         signal: controller.signal,
         provider: aiAssistProvider,
+        taskType: 'profile_insights',
       })
         .then((result) => {
           if (controller.signal.aborted) return

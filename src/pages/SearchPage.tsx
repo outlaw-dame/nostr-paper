@@ -130,12 +130,12 @@ export default function SearchPage() {
   )
   const {
     allowedIds: allowedEventIds,
-    loading: _eventModerationLoading,
-  } = useModerationDocuments(eventModerationDocuments)
+    loading: eventModerationLoading,
+  } = useModerationDocuments(eventModerationDocuments, { failClosed: true })
   const {
     allowedIds: allowedProfileIds,
-    loading: _profileModerationLoading,
-  } = useModerationDocuments(profileModerationDocuments)
+    loading: profileModerationLoading,
+  } = useModerationDocuments(profileModerationDocuments, { failClosed: true })
   const visibleEvents = useMemo(
     () => filterNsfwTaggedEvents(
       events.filter((event) => {
@@ -194,7 +194,7 @@ export default function SearchPage() {
   // localLoading / relayLoading drive the status text and skeleton display.
   // Moderation loading is intentionally excluded — it runs in the background
   // after results are already visible and should not gate the empty-state check.
-  const fetchLoading = localLoading || relayLoading || muteListLoading
+  const fetchLoading = localLoading || relayLoading || muteListLoading || eventModerationLoading || profileModerationLoading
   const idle = input.trim().length === 0
   const hasResults = visibleEvents.length > 0 || visibleProfiles.length > 0
   const showSkeleton = fetchLoading && !hasResults && !idle
