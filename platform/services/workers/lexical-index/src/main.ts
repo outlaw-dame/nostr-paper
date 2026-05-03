@@ -1,8 +1,15 @@
 import Redis from 'ioredis';
 import { Pool } from 'pg';
 import pino from 'pino';
-import { matchesInternalSystemKeywordPolicy } from '@nostr-paper/content-policy';
 import { buildEventSearchText, mergeEventUrls } from './mediaIndex.js';
+import {
+  ensureModerationStateSchema,
+  evaluateKeywordBlock,
+  normalizeTagrReason,
+  reconcileSearchDocModerationState,
+  upsertKeywordBlock,
+  upsertTagrBlocks,
+} from './moderationState.js';
 
 const log = pino({ level: process.env.LOG_LEVEL || 'info' });
 
@@ -87,28 +94,6 @@ async function ensureGroup() {
   }
 }
 
-async function ensureTagrSchema() {
-  await pg.query(
-    `
-    CREATE TABLE IF NOT EXISTS tagr_blocks (
-      event_id        text PRIMARY KEY,
-      reason          text NOT NULL,
-      source_event_id text NOT NULL,
-      source_pubkey   text NOT NULL,
-      blocked_at      timestamptz NOT NULL,
-      updated_at      timestamptz NOT NULL DEFAULT now()
-    )
-    `,
-  );
-
-  await pg.query(
-    `
-    CREATE INDEX IF NOT EXISTS idx_tagr_blocks_blocked_at
-      ON tagr_blocks (blocked_at DESC)
-    `,
-  );
-}
-
 async function enqueueEmbeddingJob(eventId: string, text: string) {
   await withRetry('enqueueEmbeddingJob', () => redis.xadd(
     EMBED_STREAM,
@@ -183,8 +168,8 @@ function parseTagrReason(event: { kind: number; tags?: string[][] }): string {
     .map((tag) => (tag[2] || '').trim().toLowerCase())
     .find((value) => value.length > 0);
 
-  if (typedReason) return typedReason;
-  return event.kind === 1984 ? 'report' : 'label';
+  if (typedReason) return normalizeTagrReason(typedReason);
+  return normalizeTagrReason(event.kind === 1984 ? 'report' : 'label');
 }
 
 function extractTagrTargetEventIds(tags: string[][]): string[] {
@@ -209,35 +194,15 @@ async function applyTagrBlocks(event: {
   const reason = parseTagrReason(event);
   const blockedAtIso = new Date(event.created_at * 1000).toISOString();
 
-  await pg.query(
-    `
-    INSERT INTO tagr_blocks (event_id, reason, source_event_id, source_pubkey, blocked_at)
-    SELECT
-      target_id,
-      $2,
-      $3,
-      $4,
-      $5::timestamptz
-    FROM unnest($1::text[]) AS target_id
-    ON CONFLICT (event_id) DO UPDATE
-    SET
-      reason = EXCLUDED.reason,
-      source_event_id = EXCLUDED.source_event_id,
-      source_pubkey = EXCLUDED.source_pubkey,
-      blocked_at = GREATEST(tagr_blocks.blocked_at, EXCLUDED.blocked_at),
-      updated_at = now()
-    `,
-    [targetEventIds, reason, event.event_id, event.pubkey, blockedAtIso],
-  );
+  await upsertTagrBlocks(pg, {
+    targetEventIds,
+    reason,
+    sourceEventId: event.event_id,
+    sourcePubkey: event.pubkey,
+    blockedAtIso,
+  });
 
-  await pg.query(
-    `
-    UPDATE search_docs
-    SET moderation_state = 'blocked'
-    WHERE event_id = ANY($1::text[])
-    `,
-    [targetEventIds],
-  );
+  await reconcileSearchDocModerationState(pg);
 }
 
 interface ThreadRefs {
@@ -406,13 +371,12 @@ async function processMessage(payload: string) {
     tags,
     kind: event.kind,
   });
-  const keywordBlocked = matchesInternalSystemKeywordPolicy({
+  const keywordDecision = evaluateKeywordBlock({
+    created_at: event.created_at,
     content: event.content || '',
-    title,
-    summary,
-    alt,
-    hashtags,
+    tags,
   });
+  const keywordBlocked = keywordDecision !== null;
 
   await pg.query('BEGIN');
 
@@ -446,6 +410,10 @@ async function processMessage(payload: string) {
 
     if (inserted.rowCount && SOCIAL_KINDS.has(event.kind)) {
       await upsertSocialMetrics(event);
+    }
+
+    if (keywordDecision) {
+      await upsertKeywordBlock(pg, event.event_id, keywordDecision);
     }
 
     if (!SOCIAL_KINDS.has(event.kind) && !tagrModerationEvent) {
@@ -482,7 +450,7 @@ async function processMessage(payload: string) {
           $8,
           $9,
           CASE
-            WHEN $15::boolean
+            WHEN EXISTS (SELECT 1 FROM keyword_blocks kb WHERE kb.event_id = $1)
               THEN 'blocked'
             WHEN EXISTS (SELECT 1 FROM tagr_blocks tb WHERE tb.event_id = $1)
               THEN 'blocked'
@@ -504,7 +472,7 @@ async function processMessage(payload: string) {
           mentions     = EXCLUDED.mentions,
           urls         = EXCLUDED.urls,
           moderation_state = CASE
-            WHEN $15::boolean
+            WHEN EXISTS (SELECT 1 FROM keyword_blocks kb WHERE kb.event_id = EXCLUDED.event_id)
               THEN 'blocked'
             WHEN EXISTS (SELECT 1 FROM tagr_blocks tb WHERE tb.event_id = EXCLUDED.event_id)
               THEN 'blocked'
@@ -531,7 +499,6 @@ async function processMessage(payload: string) {
           refs.rootAddress,
           refs.rootKind,
           refs.isReply,
-          keywordBlocked,
         ]
       );
     }
@@ -578,7 +545,7 @@ async function processMessage(payload: string) {
 
 async function run() {
   await pg.query('SELECT 1');
-  await ensureTagrSchema();
+  await ensureModerationStateSchema(pg);
   await ensureGroup();
 
   while (true) {

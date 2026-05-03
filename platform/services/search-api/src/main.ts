@@ -2,6 +2,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { Pool } from 'pg';
 import pino from 'pino';
 import { embedText, warmupEmbedder } from 'semantic-embedder';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 
 const log = pino({ level: process.env.LOG_LEVEL || 'info' });
 
@@ -13,6 +14,9 @@ const PORT = Number(process.env.PORT || 3001);
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 20;
 const LOG_RELAY_REQS = process.env.LOG_RELAY_REQS === 'true';
+const MODERATION_OPS_TOKEN = typeof process.env.MODERATION_OPS_TOKEN === 'string'
+  ? process.env.MODERATION_OPS_TOKEN.trim()
+  : '';
 
 function sanitizeLimit(rawLimit: unknown): number {
   const parsed = safeNumber(rawLimit);
@@ -59,8 +63,263 @@ function toPgVector(values: number[]): string {
   return `[${values.join(',')}]`;
 }
 
+function sendJson(res: ServerResponse, status: number, payload: unknown): void {
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.end(JSON.stringify(payload));
+}
+
+function parseUrl(req: IncomingMessage): URL {
+  return new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+}
+
+function isOpsAuthorized(req: IncomingMessage): boolean {
+  if (!MODERATION_OPS_TOKEN) return true;
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader !== 'string') return false;
+
+  const token = authHeader.startsWith('Bearer ')
+    ? authHeader.slice(7).trim()
+    : authHeader.trim();
+
+  return token === MODERATION_OPS_TOKEN;
+}
+
+async function queryModerationStats() {
+  const docsResult = await db.query<{ moderation_state: string; count: string }>(`
+    SELECT moderation_state, COUNT(*)::text AS count
+    FROM search_docs
+    GROUP BY moderation_state
+  `);
+
+  const tagrResult = await db.query<{ reason: string; policy_version: string; count: string }>(`
+    SELECT reason, policy_version, COUNT(*)::text AS count
+    FROM tagr_blocks
+    GROUP BY reason, policy_version
+    ORDER BY COUNT(*) DESC
+    LIMIT 20
+  `);
+
+  const keywordResult = await db.query<{ reason: string; policy_version: string; count: string }>(`
+    SELECT reason, policy_version, COUNT(*)::text AS count
+    FROM keyword_blocks
+    GROUP BY reason, policy_version
+    ORDER BY COUNT(*) DESC
+    LIMIT 20
+  `);
+
+  return {
+    byState: docsResult.rows.map((row) => ({ state: row.moderation_state, count: Number(row.count) })),
+    tagrTopReasons: tagrResult.rows.map((row) => ({
+      reason: row.reason,
+      policyVersion: row.policy_version,
+      count: Number(row.count),
+    })),
+    keywordTopReasons: keywordResult.rows.map((row) => ({
+      reason: row.reason,
+      policyVersion: row.policy_version,
+      count: Number(row.count),
+    })),
+  };
+}
+
+async function queryBlockedEvents(opts: { source: 'all' | 'tagr' | 'keyword'; reason?: string; limit: number }) {
+  if (opts.source === 'tagr') {
+    const result = await db.query<{
+      event_id: string;
+      reason: string;
+      policy_version: string;
+      blocked_at: string;
+      kind: number | null;
+      author_pubkey: string | null;
+    }>(
+      `
+      SELECT
+        tb.event_id,
+        tb.reason,
+        tb.policy_version,
+        tb.blocked_at::text,
+        sd.kind,
+        sd.author_pubkey
+      FROM tagr_blocks tb
+      LEFT JOIN search_docs sd ON sd.event_id = tb.event_id
+      WHERE ($1::text IS NULL OR tb.reason = $1)
+      ORDER BY tb.blocked_at DESC
+      LIMIT $2
+      `,
+      [opts.reason ?? null, opts.limit],
+    );
+
+    return result.rows.map((row) => ({
+      eventId: row.event_id,
+      source: 'tagr',
+      reason: row.reason,
+      policyVersion: row.policy_version,
+      blockedAt: row.blocked_at,
+      kind: row.kind,
+      authorPubkey: row.author_pubkey,
+    }));
+  }
+
+  if (opts.source === 'keyword') {
+    const result = await db.query<{
+      event_id: string;
+      reason: string;
+      policy_version: string;
+      blocked_at: string;
+      kind: number | null;
+      author_pubkey: string | null;
+    }>(
+      `
+      SELECT
+        kb.event_id,
+        kb.reason,
+        kb.policy_version,
+        kb.blocked_at::text,
+        sd.kind,
+        sd.author_pubkey
+      FROM keyword_blocks kb
+      LEFT JOIN search_docs sd ON sd.event_id = kb.event_id
+      WHERE ($1::text IS NULL OR kb.reason = $1)
+      ORDER BY kb.blocked_at DESC
+      LIMIT $2
+      `,
+      [opts.reason ?? null, opts.limit],
+    );
+
+    return result.rows.map((row) => ({
+      eventId: row.event_id,
+      source: 'keyword',
+      reason: row.reason,
+      policyVersion: row.policy_version,
+      blockedAt: row.blocked_at,
+      kind: row.kind,
+      authorPubkey: row.author_pubkey,
+    }));
+  }
+
+  const result = await db.query<{
+    source: 'tagr' | 'keyword';
+    event_id: string;
+    reason: string;
+    policy_version: string;
+    blocked_at: string;
+    kind: number | null;
+    author_pubkey: string | null;
+  }>(
+    `
+    SELECT
+      merged.source,
+      merged.event_id,
+      merged.reason,
+      merged.policy_version,
+      merged.blocked_at::text,
+      sd.kind,
+      sd.author_pubkey
+    FROM (
+      SELECT 'tagr'::text AS source, event_id, reason, policy_version, blocked_at
+      FROM tagr_blocks
+      UNION ALL
+      SELECT 'keyword'::text AS source, event_id, reason, policy_version, blocked_at
+      FROM keyword_blocks
+    ) merged
+    LEFT JOIN search_docs sd ON sd.event_id = merged.event_id
+    WHERE ($1::text IS NULL OR merged.reason = $1)
+    ORDER BY merged.blocked_at DESC
+    LIMIT $2
+    `,
+    [opts.reason ?? null, opts.limit],
+  );
+
+  return result.rows.map((row) => ({
+    eventId: row.event_id,
+    source: row.source,
+    reason: row.reason,
+    policyVersion: row.policy_version,
+    blockedAt: row.blocked_at,
+    kind: row.kind,
+    authorPubkey: row.author_pubkey,
+  }));
+}
+
+async function reconcileModerationState() {
+  const result = await db.query(`
+    UPDATE search_docs sd
+    SET moderation_state = CASE
+      WHEN EXISTS (SELECT 1 FROM keyword_blocks kb WHERE kb.event_id = sd.event_id) THEN 'blocked'
+      WHEN EXISTS (SELECT 1 FROM tagr_blocks tb WHERE tb.event_id = sd.event_id) THEN 'blocked'
+      ELSE 'allowed'
+    END
+  `);
+
+  return { updatedRows: result.rowCount ?? 0 };
+}
+
+async function handleOpsRequest(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const url = parseUrl(req);
+
+  if (!url.pathname.startsWith('/ops/moderation')) {
+    return false;
+  }
+
+  if (!isOpsAuthorized(req)) {
+    sendJson(res, 401, { error: 'unauthorized' });
+    return true;
+  }
+
+  try {
+    if (req.method === 'GET' && url.pathname === '/ops/moderation/stats') {
+      const stats = await queryModerationStats();
+      sendJson(res, 200, stats);
+      return true;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/ops/moderation/blocked') {
+      const sourceRaw = url.searchParams.get('source') || 'all';
+      const source = sourceRaw === 'tagr' || sourceRaw === 'keyword' ? sourceRaw : 'all';
+      const reason = url.searchParams.get('reason') || undefined;
+      const limit = sanitizeLimit(Number(url.searchParams.get('limit') || DEFAULT_LIMIT));
+      const rows = await queryBlockedEvents({ source, reason, limit });
+      sendJson(res, 200, { source, limit, rows });
+      return true;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/ops/moderation/reconcile') {
+      const outcome = await reconcileModerationState();
+      sendJson(res, 200, {
+        ok: true,
+        ...outcome,
+        reconciledAt: new Date().toISOString(),
+      });
+      return true;
+    }
+
+    sendJson(res, 404, { error: 'not_found' });
+    return true;
+  } catch (error) {
+    log.error({ err: error }, 'moderation ops request failed');
+    sendJson(res, 500, { error: 'moderation_ops_failed' });
+    return true;
+  }
+}
+
 function setupWebSocketServer() {
-  const wss = new WebSocketServer({ port: PORT });
+  const server = createServer((req, res) => {
+    const url = parseUrl(req);
+
+    if (url.pathname === '/healthz') {
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    void handleOpsRequest(req, res).then((handled) => {
+      if (!handled) {
+        sendJson(res, 404, { error: 'not_found' });
+      }
+    });
+  });
+
+  const wss = new WebSocketServer({ server });
 
   wss.on('connection', (ws) => {
     ws.on('message', async (data) => {
@@ -300,6 +559,8 @@ function setupWebSocketServer() {
       log.error({ err }, 'ws error');
     });
   });
+
+  server.listen(PORT);
 
   return wss;
 }

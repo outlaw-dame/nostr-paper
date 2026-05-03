@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "scenarios": [
+    {
+      "name": "clean_event_accepted",
+      "config": {
+        "RELAY_POLICY_MODE": "enforce"
+      },
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": 1,
+          "created_at": 1700000000,
+          "content": "hello nostr relay",
+          "tags": [],
+          "expectedAction": "accept"
+        }
+      ]
+    },
+    {
+      "name": "duplicate_body_rejected",
+      "config": {
+        "RELAY_POLICY_MODE": "enforce"
+      },
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000010",
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": 1,
+          "created_at": 1700000100,
+          "content": "same payload for replay corpus",
+          "tags": [],
+          "expectedAction": "accept"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000011",
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": 1,
+          "created_at": 1700000101,
+          "content": "same payload for replay corpus",
+          "tags": [],
+          "expectedAction": "reject",
+          "expectedMessageIncludes": "duplicate event body"
+        }
+      ]
+    },
+    {
+      "name": "hellthread_fanout_rejected",
+      "config": {
+        "RELAY_POLICY_MODE": "enforce",
+        "RELAY_POLICY_HELLTHREAD_TAG_LIMIT": "3"
+      },
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000020",
+          "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "kind": 1,
+          "created_at": 1700000200,
+          "content": "mass mention attempt",
+          "tags": [
+            ["p", "1111111111111111111111111111111111111111111111111111111111111111"],
+            ["p", "2222222222222222222222222222222222222222222222222222222222222222"],
+            ["p", "3333333333333333333333333333333333333333333333333333333333333333"],
+            ["p", "4444444444444444444444444444444444444444444444444444444444444444"]
+          ],
+          "expectedAction": "reject",
+          "expectedMessageIncludes": "excessive p-tag fanout"
+        }
+      ]
+    },
+    {
+      "name": "pubkey_bucket_exhausted",
+      "config": {
+        "RELAY_POLICY_MODE": "enforce",
+        "RELAY_POLICY_PUBKEY_POINTS_PER_MINUTE": "2",
+        "RELAY_POLICY_SOURCE_POINTS_PER_MINUTE": "100",
+        "RELAY_POLICY_GLOBAL_POINTS_PER_SECOND": "100",
+        "RELAY_POLICY_BURST_MULTIPLIER": "1"
+      },
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000030",
+          "pubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "kind": 1,
+          "created_at": 1700000300,
+          "content": "first event",
+          "tags": [],
+          "expectedAction": "accept"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000031",
+          "pubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "kind": 1,
+          "created_at": 1700000301,
+          "content": "second event",
+          "tags": [],
+          "expectedAction": "reject",
+          "expectedMessageIncludes": "pubkey bucket exhausted"
+        }
+      ]
+    },
+    {
+      "name": "allowlisted_pubkey_bypass",
+      "config": {
+        "RELAY_POLICY_MODE": "enforce",
+        "RELAY_POLICY_PUBKEY_POINTS_PER_MINUTE": "1",
+        "RELAY_POLICY_BURST_MULTIPLIER": "1",
+        "RELAY_POLICY_ALLOWLIST_PUBKEYS": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000040",
+          "pubkey": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "kind": 1,
+          "created_at": 1700000400,
+          "content": "allowlisted event one",
+          "tags": [],
+          "expectedAction": "accept"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000041",
+          "pubkey": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "kind": 1,
+          "created_at": 1700000401,
+          "content": "allowlisted event two",
+          "tags": [],
+          "expectedAction": "accept"
+        }
+      ]
+    }
+  ]
+}

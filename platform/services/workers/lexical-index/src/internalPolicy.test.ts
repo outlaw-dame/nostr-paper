@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { matchesInternalSystemKeywordPolicy } from '@nostr-paper/content-policy';
+import {
+  INTERNAL_SYSTEM_KEYWORD_REASON,
+  matchesInternalSystemKeywordPolicy,
+  normalizeModerationReason,
+} from '@nostr-paper/content-policy';
 
 test('internal keyword policy matches plain text terms', () => {
   const blocked = matchesInternalSystemKeywordPolicy({
@@ -28,4 +32,10 @@ test('internal keyword policy does not block clean content', () => {
   });
 
   assert.equal(blocked, false);
+});
+
+test('normalizes keyword and Tagr reasons into one taxonomy', () => {
+  assert.equal(normalizeModerationReason(INTERNAL_SYSTEM_KEYWORD_REASON, 'keyword'), 'keyword_extreme_harm');
+  assert.equal(normalizeModerationReason('MOD>SP-sam', 'tagr'), 'spam');
+  assert.equal(normalizeModerationReason('report', 'tagr'), 'community_report');
 });

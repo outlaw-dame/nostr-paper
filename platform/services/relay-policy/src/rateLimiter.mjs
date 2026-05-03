@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 
 const DEFAULTS = {
   mode: 'enforce',
+  policyVersion: 'relay-policy-v1',
   pubkeyPointsPerMinute: 120,
   sourcePointsPerMinute: 600,
   globalPointsPerSecond: 250,
@@ -55,6 +56,9 @@ export function parsePolicyConfig(env = process.env) {
 
   return {
     mode: env.RELAY_POLICY_MODE === 'observe' ? 'observe' : DEFAULTS.mode,
+    policyVersion: typeof env.RELAY_POLICY_VERSION === 'string' && env.RELAY_POLICY_VERSION.trim().length > 0
+      ? env.RELAY_POLICY_VERSION.trim()
+      : DEFAULTS.policyVersion,
     pubkeyPointsPerMinute: numberFromEnv('RELAY_POLICY_PUBKEY_POINTS_PER_MINUTE', DEFAULTS.pubkeyPointsPerMinute),
     sourcePointsPerMinute: numberFromEnv('RELAY_POLICY_SOURCE_POINTS_PER_MINUTE', DEFAULTS.sourcePointsPerMinute),
     globalPointsPerSecond: numberFromEnv('RELAY_POLICY_GLOBAL_POINTS_PER_SECOND', DEFAULTS.globalPointsPerSecond),
@@ -182,14 +186,14 @@ function blocked(config, id, action, msg) {
     return {
       id,
       action: 'accept',
-      msg: `observe-only: ${msg}`,
+      msg: `observe-only [${config.policyVersion}]: ${msg}`,
     };
   }
 
   return {
     id,
     action,
-    msg,
+    msg: `[${config.policyVersion}] ${msg}`,
   };
 }
 

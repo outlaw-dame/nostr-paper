@@ -39,9 +39,12 @@ This is not model-based moderation. It is an inline abuse throttle. AI or heavie
 ### Tagr Moderation Integration
 
 - Ingestion bridge can subscribe to a dedicated Tagr relay source (`TAGR_RELAY_URL`) and accept only the trusted bot pubkey (`TAGR_BOT_PUBKEY`) for kinds `1984` and `1985`.
-- Lexical worker persists Tagr decisions in `tagr_blocks` and marks matching `search_docs` rows as `moderation_state='blocked'`.
+- Lexical worker normalizes moderation reasons into a shared taxonomy, persists Tagr decisions in `tagr_blocks`, persists internal keyword-policy decisions in `keyword_blocks`, and marks matching `search_docs` rows as `moderation_state='blocked'`.
 - Search API already enforces `moderation_state='allowed'`, so Tagr-blocked content is excluded from relay-search results.
 - Block state is durable and self-healing: if moderation arrives before the target event is indexed, later upserts still resolve to `blocked`.
+- Policy rollout and rollback use explicit version strings (`RELAY_POLICY_VERSION`, internal keyword policy version, `TAGR_POLICY_VERSION`) plus observe/enforce mode. A reconciliation job can backfill `moderation_state` after policy updates.
+- Search API also provides a small moderation ops surface for operations tooling: stats (`/ops/moderation/stats`), blocked-event inspection (`/ops/moderation/blocked`), and on-demand state repair (`/ops/moderation/reconcile`).
+- Relay policy updates are now gated by a replay corpus regression suite (`services/relay-policy/src/abuseReplay.corpus.json`) executed in CI.
 
 ### Relay Media Handling
 

@@ -73,11 +73,30 @@ jobs:
           path: coverage/
           retention-days: 7
 
+  relay-policy-replay:
+    name: Relay Policy Replay
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Relay policy unit tests
+        run: npm test --prefix platform/services/relay-policy
+
+      - name: Relay policy replay regression
+        run: npm run test:replay --prefix platform/services/relay-policy
+
   # ── Build ──────────────────────────────────────────────────
   build:
     name: Production Build
     runs-on: ubuntu-latest
-    needs: [type-check, lint, test]
+    needs: [type-check, lint, test, relay-policy-replay]
     steps:
       - uses: actions/checkout@v4
 

@@ -32,6 +32,11 @@ test('accepts normal writes and returns strfry-compatible output', () => {
   assert.equal(strfryOutputForDecision(decision).id, eventId);
 });
 
+test('parses policy version from environment for rollout tracking', () => {
+  const parsed = parsePolicyConfig({ RELAY_POLICY_VERSION: 'relay-policy-v2' });
+  assert.equal(parsed.policyVersion, 'relay-policy-v2');
+});
+
 test('rejects pubkeys that exhaust their weighted token bucket', () => {
   const limiter = createRelayRateLimiter(config({
     pubkeyPointsPerMinute: 2,
@@ -45,6 +50,7 @@ test('rejects pubkeys that exhaust their weighted token bucket', () => {
 
   assert.equal(first.action, 'accept');
   assert.equal(second.action, 'reject');
+  assert.match(second.msg, /relay-policy-v1/);
   assert.match(second.msg, /pubkey bucket exhausted/);
 });
 

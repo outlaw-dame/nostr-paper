@@ -24,6 +24,37 @@ const RAW_INTERNAL_SYSTEM_KEYWORD_TERMS = [
   'sib cest', 'sibcest', 'incest',
 ];
 
+const INTERNAL_SYSTEM_POLICY_VERSION = 'internal-keyword-v1';
+const INTERNAL_SYSTEM_KEYWORD_REASON = 'keyword_extreme_harm';
+
+const TAGR_REASON_PREFIX_MAP = new Map([
+  ['ns', 'sexual_content'],
+  ['pn', 'nudity'],
+  ['il', 'illegal_content'],
+  ['vi', 'violence'],
+  ['sp', 'spam'],
+  ['nw', 'nsfw'],
+  ['im', 'impersonation'],
+  ['ih', 'identity_hate'],
+  ['cl', 'child_safety'],
+  ['hc', 'harassment'],
+  ['na', 'unsafe_content'],
+]);
+
+const TAGR_REASON_EXACT_MAP = new Map([
+  ['report', 'community_report'],
+  ['label', 'community_label'],
+  ['spam', 'spam'],
+  ['scam', 'scam'],
+  ['impersonation', 'impersonation'],
+  ['harassment', 'harassment'],
+  ['hate', 'identity_hate'],
+  ['identity_hate', 'identity_hate'],
+  ['violence', 'violence'],
+  ['threat', 'threat'],
+  ['nsfw', 'nsfw'],
+]);
+
 function normalize(value) {
   return value
     .normalize('NFD')
@@ -48,6 +79,31 @@ function buildTermSet() {
 }
 
 const INTERNAL_SYSTEM_KEYWORD_TERMS = Object.freeze([...buildTermSet()]);
+
+function normalizeModerationReason(reason, source = 'external') {
+  const normalized = normalize(typeof reason === 'string' ? reason : '').replace(/^tagr:/, '');
+
+  if (source === 'keyword') {
+    return INTERNAL_SYSTEM_KEYWORD_REASON;
+  }
+
+  if (!normalized) return 'unsafe_content';
+
+  if (TAGR_REASON_EXACT_MAP.has(normalized)) {
+    return TAGR_REASON_EXACT_MAP.get(normalized);
+  }
+
+  if (/^[a-z]{2}(?:-[a-z]{3})?$/.test(normalized)) {
+    const prefix = normalized.slice(0, 2);
+    return TAGR_REASON_PREFIX_MAP.get(prefix) || 'unsafe_content';
+  }
+
+  if (normalized.startsWith('mod>')) {
+    return normalizeModerationReason(normalized.slice(4), source);
+  }
+
+  return normalized.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'unsafe_content';
+}
 
 function uniqueNormalizedHashtags(hashtags) {
   const out = new Set();
@@ -109,6 +165,9 @@ function matchesInternalSystemKeywordPolicy(input) {
 }
 
 export {
+  INTERNAL_SYSTEM_POLICY_VERSION,
+  INTERNAL_SYSTEM_KEYWORD_REASON,
   INTERNAL_SYSTEM_KEYWORD_TERMS,
   matchesInternalSystemKeywordPolicy,
+  normalizeModerationReason,
 };
