@@ -231,7 +231,10 @@ const COMPOSE_TRIGGER_OFFSET = 85  // px downward pull to open compose sheet
 const FEED_VIEW_STATE_KEY = 'nostr-paper:feed:view-state:v1'
 const FEED_STATE_TTL_MS = 1000 * 60 * 60 * 24 * 7
 const MIN_PRIMARY_FEED_ITEMS = 6
-const LIVE_FEED_AUTO_INSERT_THRESHOLD_PX = 100
+// Any deliberate scroll past the very top engages buffering so that incoming
+// live events do not displace the post the user is currently reading. The
+// previous 100 px threshold left the hero swap path unprotected.
+const LIVE_FEED_AUTO_INSERT_THRESHOLD_PX = 8
 const MAX_FEED_RESTORE_ATTEMPTS = 8
 
 interface FeedViewSnapshot {
@@ -898,9 +901,10 @@ export default function FeedPage() {
     if (
       previousAnchor &&
       previousAnchor.scopeKey === feedScopeKey &&
-      previousAnchor.signature !== feedEventSignature &&
-      previousAnchor.scrollTop > LIVE_FEED_AUTO_INSERT_THRESHOLD_PX
+      previousAnchor.signature !== feedEventSignature
     ) {
+      // Always correct, even near the top — the most jarring displacement
+      // comes from a hero swap when scrollTop is small.
       const anchorElement = getFeedEventElement(container, previousAnchor.eventId)
       if (anchorElement) {
         const nextOffset = getElementOffsetWithinContainer(container, anchorElement)
@@ -989,9 +993,34 @@ export default function FeedPage() {
     }
   }, [])
 
+  // Manual apply: capture anchor first so the layout effect's scroll-correction
+  // path can keep the user's current reading position pinned after the merge.
+  const handleApplyPendingEvents = useCallback(() => {
+    captureCurrentFeedView(feedEventSignature)
+    applyPendingEvents()
+    const container = scrollContainerRef.current
+    // If the user is at (or near) the top, treat the pill tap as an explicit
+    // "jump to newest" gesture instead of holding position.
+    if (container && container.scrollTop <= LIVE_FEED_AUTO_INSERT_THRESHOLD_PX) {
+      window.requestAnimationFrame(() => {
+        if (scrollContainerRef.current) {
+          scrollContainerRef.current.scrollTop = 0
+        }
+      })
+    }
+  }, [applyPendingEvents, captureCurrentFeedView, feedEventSignature])
+
+  // Only auto-apply when the user is parked at the very top AND the tab is
+  // visible — every other case waits for the user to tap the "Show N new
+  // posts" pill so reading is never interrupted.
   useEffect(() => {
     if (pendingEventCount === 0) return
     if (!restoreCompletedRef.current) return
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+
+    const container = scrollContainerRef.current
+    if (!container) return
+    if (container.scrollTop > LIVE_FEED_AUTO_INSERT_THRESHOLD_PX) return
 
     if (pendingAutoApplyTimerRef.current !== null) {
       window.clearTimeout(pendingAutoApplyTimerRef.current)
@@ -999,6 +1028,8 @@ export default function FeedPage() {
 
     pendingAutoApplyTimerRef.current = window.setTimeout(() => {
       pendingAutoApplyTimerRef.current = null
+      const live = scrollContainerRef.current
+      if (live && live.scrollTop > LIVE_FEED_AUTO_INSERT_THRESHOLD_PX) return
       captureCurrentFeedView(feedEventSignature)
       applyPendingEvents()
     }, 220)
@@ -1115,7 +1146,10 @@ export default function FeedPage() {
   const virtualizer = useVirtualizer({
     count: secondaryEvents.length,
     getScrollElement: () => scrollContainerRef.current,
-    estimateSize: () => 280,
+    // Closer to the median rendered card height (image + author + body), which
+    // reduces post-mount measurement deltas that perturb scroll position when
+    // new items are inserted near the viewport.
+    estimateSize: () => 360,
     overscan: 5,
   })
   const virtualItems = virtualizer.getVirtualItems()
@@ -1503,6 +1537,18 @@ export default function FeedPage() {
               </div>
             )}
 
+            {pendingEventCount > 0 && (
+              <div className="sticky top-2 z-20 mt-3 flex justify-center">
+                <button
+                  type="button"
+                  onClick={handleApplyPendingEvents}
+                  className="rounded-full bg-[rgb(var(--color-accent))] px-4 py-2 text-[13px] font-semibold text-white shadow-lg shadow-[rgb(var(--color-accent)/0.35)] transition active:scale-[0.97]"
+                >
+                  Show {pendingEventCount > 99 ? '99+' : pendingEventCount} new {pendingEventCount === 1 ? 'post' : 'posts'}
+                </button>
+              </div>
+            )}
+
             <div className="mt-3">
               {feedSurfaceLoading && !heroEvent ? (
                 <FeedSkeleton type="hero" />
@@ -1742,6 +1788,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
                 interactive
                 isSensitive={contentWarning !== null}
                 sensitiveReason={contentWarning?.reason ?? null}
+                isUnfollowed={followStatus === false}
               />
             )}
             <QuotePreviewList event={event} className="mt-3" compact linked={false} maxItems={1} showHeader={false} />
@@ -1831,8 +1878,8 @@ function RichStoryMedia({
   const [autoplayFailed, setAutoplayFailed] = useState(false)
 
   // ── Rich-story media moderation ──────────────────────────────
-  // Classify the card image/poster before rendering. failClosed keeps the
-  // placeholder visible during classification instead of flashing content.
+  // Classify the card image/poster while keeping the media surface stable.
+  // Pending or flagged media shows a tap-to-reveal warning instead of blanking.
   const richMediaModerationDocument = useMemo(
     () => buildMediaModerationDocument({
       id: `${eventId}:rich-story`,
@@ -1844,7 +1891,6 @@ function RichStoryMedia({
   )
   const { blocked: richMediaBlocked, loading: richModerationLoading } = useMediaModerationDocument(
     richMediaModerationDocument,
-    { failClosed: true },
   )
   const filteredPlaybackSources = useMemo(
     () => (playbackSources ?? []).filter((source) => shouldAttemptMediaUrl(source.url)),
@@ -1924,14 +1970,7 @@ function RichStoryMedia({
 
   return (
     <div ref={mediaRef} className={`relative mb-4 overflow-hidden rounded-[18px] bg-[rgb(var(--color-surface-secondary))] ${aspectClassName}`}>
-      {richMediaBlocked || richModerationLoading ? (
-        <div
-          className="h-full w-full"
-          style={{
-            background: 'linear-gradient(135deg, rgba(42, 54, 72, 0.18), rgba(42, 54, 72, 0.04))',
-          }}
-        />
-      ) : enableFeedInlineMedia && mediaVisible && youTubeId ? (
+      {enableFeedInlineMedia && mediaVisible && youTubeId && !isSensitive && !isUnfollowed && !richMediaBlocked && !richModerationLoading ? (
         <iframe
           src={`https://www.youtube-nocookie.com/embed/${youTubeId}?modestbranding=1&playsinline=1&rel=0`}
           className="h-full w-full"
@@ -1939,7 +1978,7 @@ function RichStoryMedia({
           allowFullScreen
           title="YouTube video"
         />
-      ) : enableFeedInlineMedia && mediaVisible && vimeoId ? (
+      ) : enableFeedInlineMedia && mediaVisible && vimeoId && !isSensitive && !isUnfollowed && !richMediaBlocked && !richModerationLoading ? (
         <iframe
           src={`https://player.vimeo.com/video/${vimeoId}?title=0&byline=0&portrait=0`}
           className="h-full w-full"
@@ -1947,7 +1986,7 @@ function RichStoryMedia({
           allowFullScreen
           title="Vimeo video"
         />
-      ) : enableFeedInlineMedia && mediaVisible && peertubeEmbed ? (
+      ) : enableFeedInlineMedia && mediaVisible && peertubeEmbed && !isSensitive && !isUnfollowed && !richMediaBlocked && !richModerationLoading ? (
         <iframe
           src={peertubeEmbed}
           className="h-full w-full"
@@ -1989,7 +2028,7 @@ function RichStoryMedia({
             />
           ))}
         </video>
-      ) : imageSrc && !richMediaBlocked && !richModerationLoading ? (
+      ) : imageSrc ? (
         <SensitiveImage
           src={imageSrc}
           className="h-full w-full"
@@ -1997,6 +2036,7 @@ function RichStoryMedia({
           isSensitive={isSensitive}
           reason={sensitiveReason}
           isUnfollowed={isUnfollowed}
+          moderationState={richMediaBlocked ? 'blocked' : richModerationLoading ? 'pending' : null}
         />
       ) : (
         <div
