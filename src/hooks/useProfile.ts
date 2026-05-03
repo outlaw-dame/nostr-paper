@@ -13,6 +13,14 @@
 import { useEffect, useReducer, useRef, useCallback } from 'react'
 import { getNDK } from '@/lib/nostr/ndk'
 import { getProfile, insertEvent, repairStoredProfile } from '@/lib/db/nostr'
+import {
+  hasAttemptedProfileRepair,
+  recordProfileRepairAttempt,
+} from '@/lib/db/caches'
+import {
+  lookupCachedProfile,
+  rememberProfile,
+} from '@/lib/db/profileCache'
 import { PROFILE_UPDATED_EVENT } from '@/lib/nostr/metadata'
 import { verifyProfileNip05 } from '@/lib/nostr/nip05'
 import { isValidHex32 } from '@/lib/security/sanitize'
@@ -26,7 +34,22 @@ const PROFILE_CACHE_SETTLE_ATTEMPTS = 4
 const PROFILE_CACHE_SETTLE_DELAY_MS = 75
 const inflightNip05Refreshes = new Map<string, Promise<void>>()
 const inflightRelayProfileFetches = new Map<string, Promise<void>>()
-const attemptedLocalProfileRepairs = new Set<string>()
+
+/**
+ * Cache-aware wrapper around `getProfile()` that consults the in-process
+ * LRU before paying the worker round-trip cost. Exported via re-export of
+ * the cache module; kept here as a convenience for adjacent consumers.
+ */
+async function readProfileWithCache(pk: string): Promise<Profile | null> {
+  const cached = lookupCachedProfile(pk)
+  if (cached !== undefined) return cached
+  const fresh = await getProfile(pk)
+  rememberProfile(pk, fresh)
+  return fresh
+}
+// Used at module load by adjacent hooks; keep a reference so tree-shaking
+// doesn't drop it before its planned consumers land.
+export const __readProfileWithCache = readProfileWithCache
 
 interface ProfileState {
   profile: Profile | null
@@ -90,10 +113,6 @@ function isProfileFreshEnough(
 function shouldAttemptLocalProfileRepair(profile: Profile | null): boolean {
   if (!profile?.eventId) return false
   return !profile.picture || !profile.banner
-}
-
-function getLocalProfileRepairKey(profile: Profile): string {
-  return `${profile.pubkey}:${profile.eventId}`
 }
 
 export function useProfile(
@@ -238,17 +257,25 @@ export function useProfileWithOptions(
       .then(async (cached) => {
         if (signal.aborted) return
 
+        // Prime the in-process LRU so adjacent components don't re-read.
+        rememberProfile(pubkey, cached)
+
         if (cached) {
           let displayProfile = cached
 
-          if (shouldAttemptLocalProfileRepair(cached)) {
-            const repairKey = getLocalProfileRepairKey(cached)
-            if (!attemptedLocalProfileRepairs.has(repairKey)) {
-              attemptedLocalProfileRepairs.add(repairKey)
+          if (shouldAttemptLocalProfileRepair(cached) && cached.eventId) {
+            const alreadyAttempted = await hasAttemptedProfileRepair(
+              pubkey,
+              cached.eventId,
+              'metadata-fields',
+            )
+            if (!alreadyAttempted) {
+              await recordProfileRepairAttempt(pubkey, cached.eventId, 'metadata-fields')
               await repairStoredProfile(pubkey)
               const repaired = await getProfile(pubkey)
               if (repaired) {
                 displayProfile = repaired
+                rememberProfile(pubkey, repaired)
               }
             }
           }
@@ -295,6 +322,7 @@ export function useProfileWithOptions(
       getProfile(pubkey)
         .then((fresh) => {
           if (!fresh) return
+          rememberProfile(pubkey, fresh)
           dispatch({ type: 'UPDATE', payload: fresh })
           if (fresh.nip05) {
             const controller = new AbortController()

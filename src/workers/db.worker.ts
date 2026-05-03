@@ -433,6 +433,87 @@ CREATE INDEX IF NOT EXISTS idx_link_mentions_event_id
   ON link_mentions(event_id);
 `
 
+// ── Migration v13: Cross-Session Caches (Moderation, Mute, Cursors, Repairs) ──
+//
+// These tables move work that previously lived in process memory or
+// localStorage into the durable SQLite layer so:
+//   * moderation decisions survive reloads (no re-running ML scorers),
+//   * mute lists survive across devices when the relay round-trip is slow,
+//   * feed subscriptions can resume from a known watermark instead of
+//     re-streaming events we've already seen,
+//   * one-shot profile repairs don't fire on every session.
+//
+// All indexes here are designed so the hot read path is a single-row PK or
+// unique-index lookup, never a scan.
+
+const MIGRATION_V13_SQL = `
+-- Persisted moderation decisions keyed by document id + content fingerprint.
+-- Re-derivable but expensive to recompute; PK is composite so changes to the
+-- underlying content (different cache_key) automatically invalidate prior
+-- decisions without an explicit purge.
+CREATE TABLE IF NOT EXISTS moderation_decisions (
+  document_id    TEXT    NOT NULL,
+  cache_key      TEXT    NOT NULL,
+  document_kind  TEXT    NOT NULL,
+  action         TEXT    NOT NULL,    -- 'allow' | 'block'
+  reason         TEXT,
+  model          TEXT    NOT NULL,
+  policy_version TEXT    NOT NULL,
+  scores_json    TEXT    NOT NULL,
+  decided_at     INTEGER NOT NULL DEFAULT (unixepoch()),
+  PRIMARY KEY (document_id, cache_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_moderation_decisions_decided_at
+  ON moderation_decisions(decided_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_moderation_decisions_document_kind_decided
+  ON moderation_decisions(document_kind, decided_at DESC);
+
+-- Parsed kind-10000 mute list state per author.  We still keep the underlying
+-- kind-10000 event in the events table; this table is the resolved view that
+-- consumers actually need.
+CREATE TABLE IF NOT EXISTS mute_lists_cache (
+  pubkey       TEXT    PRIMARY KEY,
+  event_id     TEXT,
+  pubkeys_json TEXT    NOT NULL DEFAULT '[]',
+  words_json   TEXT    NOT NULL DEFAULT '[]',
+  hashtags_json TEXT   NOT NULL DEFAULT '[]',
+  updated_at   INTEGER NOT NULL,
+  saved_at     INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+-- Per-(user, feed scope) watermark so resubscriptions don't re-stream events
+-- we already persisted.  signature stores the fingerprint of the events the
+-- snapshot is keyed on so stale anchors auto-invalidate.
+CREATE TABLE IF NOT EXISTS feed_cursors (
+  scope_key   TEXT    PRIMARY KEY,
+  since_ts    INTEGER NOT NULL,
+  last_event_id TEXT,
+  signature   TEXT,
+  updated_at  INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+-- Records one-shot profile repair attempts so they don't re-run every session.
+-- (event_id, repair_kind) is unique so the same repair is only attempted once
+-- per stored profile event.
+CREATE TABLE IF NOT EXISTS profile_repair_log (
+  pubkey       TEXT    NOT NULL,
+  event_id     TEXT    NOT NULL,
+  repair_kind  TEXT    NOT NULL,
+  attempted_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  PRIMARY KEY (pubkey, event_id, repair_kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_profile_repair_log_attempted_at
+  ON profile_repair_log(attempted_at DESC);
+
+-- Covering index so cache-warmth checks ("show newest cached for kind") are
+-- a single index seek and don't touch the events table.
+CREATE INDEX IF NOT EXISTS idx_events_inserted_at
+  ON events(inserted_at DESC);
+`
+
 // ── Worker State ─────────────────────────────────────────────
 
 type SqliteDB = {
@@ -813,7 +894,19 @@ async function initializeDB(): Promise<void> {
     // Idempotent — all CREATE IF NOT EXISTS; safe to re-run for index repairs.
     _db.exec(MIGRATION_V12_SQL)
   }
-
+  // Migration v13: cross-session caches (moderation, mute, cursors, repair log)
+  const v13Applied: number[] = []
+  _db.exec({
+    sql: 'SELECT 1 FROM schema_migrations WHERE version = 13',
+    rowMode: 'object',
+    callback: () => { v13Applied.push(1) },
+  })
+  if (v13Applied.length === 0) {
+    _db.exec(MIGRATION_V13_SQL)
+    _db.exec({ sql: 'INSERT INTO schema_migrations (version) VALUES (13)' })
+  } else {
+    _db.exec(MIGRATION_V13_SQL)
+  }
   // Bound analysis rows per index before running optimize.
   // analysis_limit = 0 means unlimited, which is slow on large DBs on mobile.
   _db.exec('PRAGMA analysis_limit = 400;')

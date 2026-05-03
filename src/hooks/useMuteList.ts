@@ -20,9 +20,18 @@ import { getNDK } from '@/lib/nostr/ndk'
 import { normalizeHashtag } from '@/lib/security/sanitize'
 import { withRetry } from '@/lib/retry'
 import { isValidHex32 } from '@/lib/security/sanitize'
+import {
+  getCachedMuteList as readCachedMuteListFromDB,
+  saveCachedMuteList as writeCachedMuteListToDB,
+} from '@/lib/db/caches'
 
 const MUTE_LIST_KIND = 10000
-const LOCAL_MUTE_CACHE_KEY_PREFIX = 'nostr-paper:mute-list:v2:'
+
+// Legacy localStorage cache. Kept readable so users updating from a previous
+// build still get an immediate paint from their old cache; new writes always
+// go to SQLite via `mute_lists_cache`. The legacy entry is removed once the
+// SQLite copy supersedes it.
+const LEGACY_LOCAL_MUTE_CACHE_KEY_PREFIX = 'nostr-paper:mute-list:v2:'
 
 // ── Cache helpers ─────────────────────────────────────────────
 
@@ -32,18 +41,17 @@ interface CachedMuteList {
   hashtags: string[]
 }
 
-function getMuteCacheKey(pubkey: string): string {
-  return `${LOCAL_MUTE_CACHE_KEY_PREFIX}${pubkey}`
+function getLegacyMuteCacheKey(pubkey: string): string {
+  return `${LEGACY_LOCAL_MUTE_CACHE_KEY_PREFIX}${pubkey}`
 }
 
-function loadCachedMuteList(pubkey: string): CachedMuteList {
-  const empty: CachedMuteList = { pubkeys: [], words: [], hashtags: [] }
-  if (typeof window === 'undefined') return empty
+function loadLegacyCachedMuteList(pubkey: string): CachedMuteList | null {
+  if (typeof window === 'undefined') return null
   try {
-    const raw = window.localStorage.getItem(getMuteCacheKey(pubkey))
-    if (!raw) return empty
+    const raw = window.localStorage.getItem(getLegacyMuteCacheKey(pubkey))
+    if (!raw) return null
     const parsed = JSON.parse(raw) as unknown
-    if (typeof parsed !== 'object' || parsed === null) return empty
+    if (typeof parsed !== 'object' || parsed === null) return null
     const obj = parsed as Record<string, unknown>
     const toStringArray = (v: unknown): string[] =>
       Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
@@ -53,17 +61,63 @@ function loadCachedMuteList(pubkey: string): CachedMuteList {
       hashtags: toStringArray(obj['hashtags']),
     }
   } catch {
-    return empty
+    return null
   }
 }
 
-function saveCachedMuteList(pubkey: string, state: CachedMuteList): void {
+function clearLegacyMuteCache(pubkey: string): void {
   if (typeof window === 'undefined') return
   try {
-    window.localStorage.setItem(getMuteCacheKey(pubkey), JSON.stringify(state))
+    window.localStorage.removeItem(getLegacyMuteCacheKey(pubkey))
   } catch {
-    // Best-effort cache only.
+    // Best-effort.
   }
+}
+
+async function loadCachedMuteList(pubkey: string): Promise<CachedMuteList> {
+  const empty: CachedMuteList = { pubkeys: [], words: [], hashtags: [] }
+  try {
+    const persisted = await readCachedMuteListFromDB(pubkey)
+    if (persisted) {
+      return {
+        pubkeys: persisted.pubkeys.filter(isValidHex32),
+        words: persisted.words,
+        hashtags: persisted.hashtags,
+      }
+    }
+  } catch {
+    // Fall through to legacy/empty.
+  }
+  // One-shot migration from the localStorage cache used by previous builds.
+  const legacy = loadLegacyCachedMuteList(pubkey)
+  if (legacy) {
+    try {
+      await writeCachedMuteListToDB(pubkey, {
+        ...legacy,
+        eventId: null,
+        updatedAt: Math.floor(Date.now() / 1000),
+      })
+      clearLegacyMuteCache(pubkey)
+    } catch {
+      // Non-fatal — we'll re-migrate next time.
+    }
+    return legacy
+  }
+  return empty
+}
+
+function saveCachedMuteList(
+  pubkey: string,
+  state: CachedMuteList,
+  meta: { eventId: string | null; updatedAt: number },
+): void {
+  void writeCachedMuteListToDB(pubkey, {
+    pubkeys: state.pubkeys,
+    words: state.words,
+    hashtags: state.hashtags,
+    eventId: meta.eventId,
+    updatedAt: meta.updatedAt,
+  }).catch(() => { /* non-fatal */ })
 }
 
 // ── Tag extraction ────────────────────────────────────────────
@@ -156,7 +210,7 @@ export function useMuteList(): UseMuteListResult {
       return
     }
 
-    const cached = loadCachedMuteList(currentUser.pubkey)
+    const cached = await loadCachedMuteList(currentUser.pubkey)
     if (cached.pubkeys.length + cached.words.length + cached.hashtags.length > 0) {
       applyState(cached)
     }
@@ -173,10 +227,17 @@ export function useMuteList(): UseMuteListResult {
         if (event) {
           const state = extractMuteListState(event.tags as string[][])
           applyState(state)
-          saveCachedMuteList(currentUser.pubkey, state)
+          saveCachedMuteList(currentUser.pubkey, state, {
+            eventId: event.id ?? null,
+            updatedAt: event.created_at ?? Math.floor(Date.now() / 1000),
+          })
         } else {
-          applyState({ pubkeys: [], words: [], hashtags: [] })
-          saveCachedMuteList(currentUser.pubkey, { pubkeys: [], words: [], hashtags: [] })
+          const empty = { pubkeys: [], words: [], hashtags: [] }
+          applyState(empty)
+          saveCachedMuteList(currentUser.pubkey, empty, {
+            eventId: null,
+            updatedAt: Math.floor(Date.now() / 1000),
+          })
         }
       }, {
         maxAttempts: 3,
@@ -248,7 +309,10 @@ export function useMuteList(): UseMuteListResult {
 
         await withRetry(() => ndkEvent.publish(), { maxAttempts: 3, baseDelayMs: 1000 })
         applyState(next)
-        saveCachedMuteList(currentUser.pubkey, next)
+        saveCachedMuteList(currentUser.pubkey, next, {
+          eventId: ndkEvent.id ?? null,
+          updatedAt: ndkEvent.created_at ?? Math.floor(Date.now() / 1000),
+        })
       })
 
       // Keep errors from blocking the queue for subsequent callers.

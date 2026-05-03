@@ -16,6 +16,7 @@ import { withRetry } from '@/lib/retry'
 import { isValidHex32 } from '@/lib/security/sanitize'
 import type { ContactList, NostrEvent } from '@/types'
 import { Kind } from '@/types'
+import { emitContactListUpdated } from '@/lib/db/followSet'
 
 const CONTACT_LIST_STALE_SECONDS = 15 * 60
 const CONTACT_FETCH_LIMIT = 8
@@ -113,6 +114,7 @@ export async function syncContactListFromRelays(
   if (!newest) return local
 
   await insertEvent(newest)
+  emitContactListUpdated(pubkey)
   return getContactList(pubkey)
 }
 
@@ -169,6 +171,9 @@ export async function publishContactList(
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent
   await insertEvent(rawEvent)
+  // Notify the in-memory follow set so consumers (e.g. `useFollowStatus`)
+  // pick up the new state without waiting for the next sync cycle.
+  emitContactListUpdated(rawEvent.pubkey)
   return rawEvent
 }
 
