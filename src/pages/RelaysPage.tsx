@@ -25,6 +25,7 @@ import {
   canRetryRelayConnection,
   getDefaultRelayUrls,
   getNDK,
+  getPrimaryConfiguredRelayUrl,
   removeRelayFromPool,
   retryRelayConnection,
 } from '@/lib/nostr/ndk'
@@ -59,7 +60,7 @@ const RECOMMENDED_RELIABLE_WRITE_RELAYS = [
   'wss://relay.snort.social',
   'wss://relay.primal.net',
   'wss://relay.momostr.pink',
-  'wss://ditto.pub/relay',
+  'wss://relay.ditto.pub',
 ] as const
 
 const CURATED_RELAY_RECOMMENDATIONS = [
@@ -84,7 +85,7 @@ const CURATED_RELAY_RECOMMENDATIONS = [
     reasonKey: 'relaysRecommendationMostrPub',
   },
   {
-    url: 'wss://ditto.pub/relay',
+    url: 'wss://relay.ditto.pub',
     reasonKey: 'relaysRecommendationDitto',
   },
   {
@@ -493,6 +494,11 @@ export default function RelaysPage() {
     if (!pendingAddUrl) return false
     return existingRelayKeys.has(normalizeRelayKey(pendingAddUrl))
   }, [existingRelayKeys, pendingAddUrl])
+  const localRelayUrl = useMemo(() => getPrimaryConfiguredRelayUrl(), [])
+  const localRelayEnabled = useMemo(() => {
+    if (!localRelayUrl) return false
+    return relayPreferences.some((preference) => preference.url === localRelayUrl)
+  }, [localRelayUrl, relayPreferences])
 
   const connectedCount = useMemo(
     () => entries.filter(e => isConnected(e.status)).length,
@@ -771,6 +777,40 @@ export default function RelaysPage() {
     setEntries(getRelayEntries(newPreferences))
   }, [existingRelayKeys, relayPreferences])
 
+  const handleToggleLocalRelay = useCallback(() => {
+    if (!localRelayUrl) return
+
+    if (localRelayEnabled) {
+      const nextPreferences = relayPreferences.filter((preference) => preference.url !== localRelayUrl)
+      if (!nextPreferences.some((preference) => preference.read)) {
+        setRelayError(tApp('relaysKeepOneRead'))
+        return
+      }
+      if (!nextPreferences.some((preference) => preference.write)) {
+        setRelayError(tApp('relaysKeepOneWrite'))
+        return
+      }
+
+      setRelayError(null)
+      setImportNotice(null)
+      removeRelayFromPool(localRelayUrl)
+      setStoredRelayPreferences(nextPreferences)
+      setEntries(getRelayEntries(nextPreferences))
+      return
+    }
+
+    const nextPreferences = [
+      { url: localRelayUrl, read: true, write: true },
+      ...relayPreferences.filter((preference) => preference.url !== localRelayUrl),
+    ]
+
+    setRelayError(null)
+    setImportNotice(null)
+    addRelayToPool(localRelayUrl)
+    setStoredRelayPreferences(nextPreferences)
+    setEntries(getRelayEntries(nextPreferences))
+  }, [localRelayEnabled, localRelayUrl, relayPreferences])
+
   // ── Reset to defaults ──────────────────────────────────────
   const handleReset = () => {
     setRelayError(null)
@@ -910,6 +950,28 @@ export default function RelaysPage() {
             <p className="text-[12px] text-[rgb(var(--color-label-secondary))] leading-relaxed">
               {tApp('relaysRetryHint')}
             </p>
+            {localRelayUrl && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[rgb(var(--color-fill)/0.14)] bg-[rgb(var(--color-bg-secondary))] px-3 py-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-medium text-[rgb(var(--color-label))]">
+                    {tApp('relaysLocalRelayTitle')}
+                  </p>
+                  <p className="mt-1 truncate text-[12px] font-mono text-[rgb(var(--color-label-tertiary))]">
+                    {localRelayUrl}
+                  </p>
+                  <p className="mt-1 text-[12px] text-[rgb(var(--color-label-tertiary))] leading-relaxed">
+                    {tApp('relaysLocalRelayHint')}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleToggleLocalRelay}
+                  className="rounded-[14px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[13px] font-semibold text-[rgb(var(--color-label))] active:opacity-80"
+                >
+                  {localRelayEnabled ? tApp('relaysLocalRelayDisable') : tApp('relaysLocalRelayEnable')}
+                </button>
+              </div>
+            )}
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"

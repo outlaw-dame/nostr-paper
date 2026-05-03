@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from 'react'
 import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
 import { recordMediaUrlFailure, recordMediaUrlSuccess, shouldAttemptMediaUrl } from '@/lib/media/failureBackoff'
 import { buildAttachmentPlaybackPlan } from '@/lib/media/playback'
 import { buildAttachmentMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import { canRenderMediaAttachmentInline, getMediaAttachmentKind, getMediaAttachmentPreviewUrl, getMediaAttachmentSourceUrl, getOrderedImageCandidates } from '@/lib/nostr/imeta'
+import { MediaRevealGate, getMediaRevealReason, type MediaRevealReason } from '@/components/media/MediaRevealGate'
+import { openImageLightbox } from '@/lib/ui/imageLightbox'
 import type { Nip92MediaAttachment } from '@/types'
 
 interface NoteMediaAttachmentsProps {
@@ -13,6 +15,7 @@ interface NoteMediaAttachmentsProps {
   interactive?: boolean
   isSensitive?: boolean
   sensitiveReason?: string | null
+  isUnfollowed?: boolean
 }
 
 function formatByteSize(bytes?: number): string | null {
@@ -56,6 +59,25 @@ function buildSourceCandidates(attachment: Nip92MediaAttachment): string[] {
   const primary = getMediaAttachmentSourceUrl(attachment)
   if (!primary || !shouldAttemptMediaUrl(primary)) return []
   return [primary]
+}
+
+function getAttachmentAspectRatio(attachment: Nip92MediaAttachment, fallback: number): number {
+  const match = attachment.dim?.match(/^(\d+)\s*x\s*(\d+)$/i)
+  if (!match) return fallback
+
+  const width = Number(match[1])
+  const height = Number(match[2])
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return fallback
+  }
+
+  return width / height
+}
+
+function getAttachmentAspectStyle(attachment: Nip92MediaAttachment, kind: string): CSSProperties {
+  const fallback = kind === 'video' ? 16 / 9 : 4 / 3
+  const aspectRatio = getAttachmentAspectRatio(attachment, fallback)
+  return { aspectRatio: String(aspectRatio) }
 }
 
 // ── ALT badge + overlay ───────────────────────────────────────
@@ -104,12 +126,14 @@ function AttachmentTile({
   interactive = true,
   isSensitive = false,
   sensitiveReason,
+  isUnfollowed = false,
 }: {
   attachment: Nip92MediaAttachment
   compact?: boolean
   interactive?: boolean
   isSensitive?: boolean
   sensitiveReason?: string | null
+  isUnfollowed?: boolean
 }) {
   const kind = getMediaAttachmentKind(attachment)
   const previewCandidates = useMemo(() => buildPreviewCandidates(attachment), [attachment])
@@ -117,7 +141,7 @@ function AttachmentTile({
     () => buildAttachmentMediaModerationDocument(attachment),
     [attachment],
   )
-  const { blocked, loading } = useMediaModerationDocument(moderationDocument, { failClosed: kind === 'video' })
+  const { blocked, loading } = useMediaModerationDocument(moderationDocument)
   const playbackPlan = useMemo(
     () => (kind === 'video' || kind === 'audio' ? buildAttachmentPlaybackPlan(attachment, kind) : null),
     [attachment, kind],
@@ -131,21 +155,23 @@ function AttachmentTile({
   const [previewFailed, setPreviewFailed] = useState(previewCandidates.length === 0)
   const [playbackFailed, setPlaybackFailed] = useState(false)
   const [showAlt, setShowAlt] = useState(false)
-  const [videoRevealed, setVideoRevealed] = useState(false)
 
   const previewUrl = previewCandidates[previewIndex] ?? null
   const sourceUrl = playbackPlan?.sources[0]?.url ?? buildSourceCandidates(attachment)[0] ?? null
   const sizeLabel = formatByteSize(attachment.size)
   const summary = attachment.alt ?? attachment.summary ?? attachment.mimeType ?? 'Attached file'
+  const revealReason: MediaRevealReason | null = getMediaRevealReason({
+    blocked: moderationDocument !== null && blocked,
+    loading: moderationDocument !== null && loading,
+    isSensitive,
+    isUnfollowed,
+  })
+  const revealResetKey = `${attachment.url}:${revealReason ?? 'none'}:${sensitiveReason ?? ''}`
 
   useEffect(() => {
     setPreviewIndex(0)
     setPreviewFailed(previewCandidates.length === 0)
   }, [attachment.url, previewCandidates.length])
-
-  if (moderationDocument && (loading || blocked)) {
-    return null
-  }
 
   function handleAltToggle(e: MouseEvent<HTMLElement>) {
     e.stopPropagation()
@@ -162,36 +188,55 @@ function AttachmentTile({
 
     return (
       <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))]">
-        <div className="relative">
-          <picture>
-            {pictureSources.map((source) =>
-              source.type ? (
-                <source key={source.url} srcSet={source.url} type={source.type} />
-              ) : null,
-            )}
-            <img
-              src={previewUrl}
-              alt={attachment.alt ?? ''}
-              loading="lazy"
-              decoding="async"
-              referrerPolicy="no-referrer"
-              onLoad={() => {
-                recordMediaUrlSuccess(previewUrl)
-              }}
-              onError={() => {
-                recordMediaUrlFailure(previewUrl)
-                if (previewIndex < previewCandidates.length - 1) {
-                  setPreviewIndex(previewIndex + 1)
-                } else {
-                  setPreviewFailed(true)
+        <div className="relative overflow-hidden" style={getAttachmentAspectStyle(attachment, kind)}>
+          <MediaRevealGate
+            reason={revealReason}
+            resetKey={revealResetKey}
+            details={sensitiveReason}
+            className="h-full w-full"
+          >
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation()
+                if (revealReason === null && previewUrl) {
+                  openImageLightbox(previewUrl, attachment.alt ?? '')
                 }
               }}
-              className={compact ? 'h-full w-full object-cover aspect-[4/3]' : 'max-h-[70vh] w-full object-cover'}
-            />
-          </picture>
-          {attachment.alt && (
-            <AltBadge alt={attachment.alt} show={showAlt} onToggle={handleAltToggle} />
-          )}
+              className="block h-full w-full cursor-zoom-in p-0"
+              aria-label={attachment.alt ? `Open image: ${attachment.alt}` : 'Open image'}
+            >
+            <picture>
+              {pictureSources.map((source) =>
+                source.type ? (
+                  <source key={source.url} srcSet={source.url} type={source.type} />
+                ) : null,
+              )}
+              <img
+                src={previewUrl}
+                alt={attachment.alt ?? ''}
+                loading="lazy"
+                decoding="async"
+                referrerPolicy="no-referrer"
+                onLoad={() => {
+                  recordMediaUrlSuccess(previewUrl)
+                }}
+                onError={() => {
+                  recordMediaUrlFailure(previewUrl)
+                  if (previewIndex < previewCandidates.length - 1) {
+                    setPreviewIndex(previewIndex + 1)
+                  } else {
+                    setPreviewFailed(true)
+                  }
+                }}
+                className="h-full w-full object-cover"
+              />
+            </picture>
+            </button>
+            {attachment.alt && (
+              <AltBadge alt={attachment.alt} show={showAlt} onToggle={handleAltToggle} />
+            )}
+          </MediaRevealGate>
         </div>
 
         {!compact && (
@@ -231,28 +276,35 @@ function AttachmentTile({
         return (
           <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))]">
             <div className="relative">
-              <img
-                src={previewUrl}
-                alt={attachment.alt ?? 'Video attachment'}
-                loading="lazy"
-                decoding="async"
-                referrerPolicy="no-referrer"
-                onLoad={() => {
-                  recordMediaUrlSuccess(previewUrl)
-                }}
-                onError={() => {
-                  recordMediaUrlFailure(previewUrl)
-                  if (previewIndex < previewCandidates.length - 1) {
-                    setPreviewIndex(previewIndex + 1)
-                  } else {
-                    setPreviewFailed(true)
-                  }
-                }}
-                className="aspect-[4/3] h-full w-full object-cover"
-              />
-              {attachment.alt && (
-                <AltBadge alt={attachment.alt} show={showAlt} onToggle={handleAltToggle} />
-              )}
+              <MediaRevealGate
+                reason={revealReason}
+                resetKey={revealResetKey}
+                details={sensitiveReason}
+                className="aspect-[4/3] h-full w-full"
+              >
+                <img
+                  src={previewUrl}
+                  alt={attachment.alt ?? 'Video attachment'}
+                  loading="lazy"
+                  decoding="async"
+                  referrerPolicy="no-referrer"
+                  onLoad={() => {
+                    recordMediaUrlSuccess(previewUrl)
+                  }}
+                  onError={() => {
+                    recordMediaUrlFailure(previewUrl)
+                    if (previewIndex < previewCandidates.length - 1) {
+                      setPreviewIndex(previewIndex + 1)
+                    } else {
+                      setPreviewFailed(true)
+                    }
+                  }}
+                  className="h-full w-full object-cover"
+                />
+                {attachment.alt && (
+                  <AltBadge alt={attachment.alt} show={showAlt} onToggle={handleAltToggle} />
+                )}
+              </MediaRevealGate>
             </div>
           </div>
         )
@@ -264,23 +316,30 @@ function AttachmentTile({
       if (moderationDocument && sourceUrl && !playbackFailed && canRenderInlinePlayback) {
         return (
           <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))]">
-            <video
-              muted
-              playsInline
-              preload="metadata"
-              onLoadedData={() => {
-                playbackSources.forEach((source) => recordMediaUrlSuccess(source.url))
-              }}
-              onError={() => {
-                playbackSources.forEach((source) => recordMediaUrlFailure(source.url))
-                setPlaybackFailed(true)
-              }}
-              className="aspect-[4/3] h-full w-full object-cover"
+            <MediaRevealGate
+              reason={revealReason}
+              resetKey={revealResetKey}
+              details={sensitiveReason}
+              className="aspect-[4/3] h-full w-full"
             >
-              {playbackSources.map((source) => (
-                <source key={source.url} src={source.url} {...(source.type ? { type: source.type } : {})} />
-              ))}
-            </video>
+              <video
+                muted
+                playsInline
+                preload="metadata"
+                onLoadedData={() => {
+                  playbackSources.forEach((source) => recordMediaUrlSuccess(source.url))
+                }}
+                onError={() => {
+                  playbackSources.forEach((source) => recordMediaUrlFailure(source.url))
+                  setPlaybackFailed(true)
+                }}
+                className="h-full w-full object-cover"
+              >
+                {playbackSources.map((source) => (
+                  <source key={source.url} src={source.url} {...(source.type ? { type: source.type } : {})} />
+                ))}
+              </video>
+            </MediaRevealGate>
           </div>
         )
       }
@@ -295,29 +354,14 @@ function AttachmentTile({
         return <GenericFileCard attachment={attachment} compact={false} interactive={interactive} />
       }
 
-      if (isSensitive && !videoRevealed) {
-        return (
-          <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))] aspect-video flex items-center justify-center">
-            <div className="text-center p-6">
-              <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">Content warning</p>
-              {sensitiveReason && (
-                <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">{sensitiveReason}</p>
-              )}
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); setVideoRevealed(true) }}
-                className="mt-4 rounded-full bg-[rgb(var(--color-fill)/0.12)] px-4 py-2 text-[14px] font-medium text-[rgb(var(--color-label))]"
-              >
-                Show video
-              </button>
-            </div>
-          </div>
-        )
-      }
-
       return (
         <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))]">
-          <div className="relative">
+          <MediaRevealGate
+            reason={revealReason}
+            resetKey={revealResetKey}
+            details={sensitiveReason}
+            className="relative aspect-video w-full"
+          >
             <video
               poster={previewUrl ?? undefined}
               controls
@@ -330,7 +374,7 @@ function AttachmentTile({
                 playbackSources.forEach((source) => recordMediaUrlFailure(source.url))
                 setPlaybackFailed(true)
               }}
-              className="max-h-[70vh] w-full bg-black object-contain"
+              className="h-full max-h-[70vh] w-full bg-black object-contain"
             >
               {playbackSources.map((source) => (
                 <source key={source.url} src={source.url} {...(source.type ? { type: source.type } : {})} />
@@ -339,7 +383,7 @@ function AttachmentTile({
             {attachment.alt && (
               <AltBadge alt={attachment.alt} show={showAlt} onToggle={handleAltToggle} />
             )}
-          </div>
+          </MediaRevealGate>
           {(attachment.alt || attachment.summary || attachment.mimeType || sizeLabel) && (
             <div className="space-y-2 px-3 py-3">
               {(attachment.alt || attachment.summary) && (
@@ -518,6 +562,7 @@ export function NoteMediaAttachments({
   interactive = true,
   isSensitive = false,
   sensitiveReason,
+  isUnfollowed = false,
 }: NoteMediaAttachmentsProps) {
   const renderableAttachments = useMemo(
     () => attachments.filter((attachment) => canRenderMediaAttachmentInline(attachment)),
@@ -540,6 +585,7 @@ export function NoteMediaAttachments({
           interactive={interactive}
           isSensitive={isSensitive}
           sensitiveReason={sensitiveReason ?? null}
+          isUnfollowed={isUnfollowed}
         />
       ))}
     </div>

@@ -11,6 +11,7 @@ import { useApp } from '@/contexts/app-context'
 import { useMuteList } from '@/hooks/useMuteList'
 import { useUserStatus } from '@/hooks/useUserStatus'
 import { TwemojiText } from '@/components/ui/TwemojiText'
+import { getCachedAvatarBlobUrl, primeAvatarCache } from '@/lib/media/avatarCache'
 import { formatNip05Identifier } from '@/lib/nostr/nip05'
 import { sanitizeName } from '@/lib/security/sanitize'
 import type { Profile } from '@/types'
@@ -160,6 +161,7 @@ interface AvatarProps {
 
 function Avatar({ src, name, pubkey, size, onClick }: AvatarProps) {
   const [imgFailed, setImgFailed] = useState(() => hasRecentImageFailure(src))
+  const [cachedSrc, setCachedSrc] = useState<string | null>(null)
   const initial  = (name[0] ?? '?').toUpperCase()
   const bgColor  = pubkeyToColor(pubkey)
 
@@ -167,7 +169,19 @@ function Avatar({ src, name, pubkey, size, onClick }: AvatarProps) {
     setImgFailed(hasRecentImageFailure(src))
   }, [src])
 
+  // Opportunistically swap to a previously cached blob URL when available.
+  useEffect(() => {
+    let cancelled = false
+    setCachedSrc(null)
+    if (!src) return
+    void getCachedAvatarBlobUrl(src).then((blobUrl) => {
+      if (!cancelled && blobUrl) setCachedSrc(blobUrl)
+    })
+    return () => { cancelled = true }
+  }, [src])
+
   const showImage = src && !imgFailed
+  const effectiveSrc = cachedSrc ?? src ?? undefined
   const interactive = Boolean(showImage && onClick)
   const commonClassName = [
     'rounded-full overflow-hidden flex-shrink-0 border border-[rgb(var(--color-divider)/0.08)]',
@@ -178,7 +192,7 @@ function Avatar({ src, name, pubkey, size, onClick }: AvatarProps) {
 
   const content = showImage ? (
     <img
-      src={src}
+      src={effectiveSrc}
       alt=""
       width={size}
       height={size}
@@ -188,6 +202,12 @@ function Avatar({ src, name, pubkey, size, onClick }: AvatarProps) {
       // breaks otherwise valid third-party image loads.
       referrerPolicy="no-referrer"
       className="w-full h-full object-cover"
+      onLoad={() => {
+        // Prime the IDB cache from the original network URL only when we
+        // weren't already serving a cached blob — keeps subsequent sessions
+        // hot for hosts that opt in to CORS.
+        if (!cachedSrc && src) void primeAvatarCache(src)
+      }}
       onError={() => {
         if (src) failedImageUrls.set(src, Date.now())
         setImgFailed(true)

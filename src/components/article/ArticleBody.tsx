@@ -7,8 +7,11 @@ import { EventActionBar } from '@/components/nostr/EventActionBar'
 import { QuotePreviewList } from '@/components/nostr/QuotePreviewList'
 import { TranslateTextPanel } from '@/components/translation/TranslateTextPanel'
 import { MarkdownContent } from '@/components/article/MarkdownContent'
+import { SensitiveImage } from '@/components/media/SensitiveImage'
+import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
 import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
+import { parseContentWarning } from '@/lib/nostr/contentWarning'
 import { getArticleNaddr, parseLongFormEvent } from '@/lib/nostr/longForm'
 import type { ArticleCrossReference } from '@/lib/nostr/longForm'
 import { generateArticleSyndicationDocuments } from '@/lib/syndication/export'
@@ -100,6 +103,8 @@ function CrossReferenceList({ references }: { references: ArticleCrossReference[
 
 export function ArticleBody({ event, profile, className = '' }: ArticleBodyProps) {
   const article = useMemo(() => parseLongFormEvent(event), [event])
+  const followStatus = useFollowStatus(event.pubkey)
+  const contentWarning = parseContentWarning(event)
   const articleImageModerationDocument = useMemo(
     () => buildMediaModerationDocument({
       id: `${event.id}:hero-image`,
@@ -169,15 +174,17 @@ export function ArticleBody({ event, profile, className = '' }: ArticleBodyProps
           </div>
         </div>
 
-        {article.image && !(articleImageModerationDocument && (articleImageLoading || articleImageBlocked)) && (
+        {article.image && (
           <div className="overflow-hidden rounded-ios-2xl bg-[rgb(var(--color-bg-secondary))] card-elevated">
-            <img
+            <SensitiveImage
               src={article.image}
+              className="aspect-[16/9] w-full"
               alt=""
-              loading="lazy"
-              decoding="async"
-              referrerPolicy="no-referrer"
-              className="w-full h-auto object-cover"
+              disableTilt
+              isSensitive={contentWarning !== null}
+              reason={contentWarning?.reason}
+              isUnfollowed={followStatus === false}
+              moderationState={articleImageBlocked ? 'blocked' : articleImageLoading ? 'pending' : null}
             />
           </div>
         )}

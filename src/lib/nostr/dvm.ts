@@ -3,6 +3,7 @@ import { insertEvent } from '@/lib/db/nostr'
 import { withOptionalClientTag } from '@/lib/nostr/appHandlers'
 import { decryptNip04, encryptNip04, hasNip04Support } from '@/lib/nostr/nip04'
 import { getNDK } from '@/lib/nostr/ndk'
+import { publishEventWithNip65Outbox } from '@/lib/nostr/outbox'
 import { withRetry } from '@/lib/retry'
 import {
   isSafeURL,
@@ -869,18 +870,7 @@ export async function publishDvmJobRequest({
   await event.sign()
   throwIfAborted(signal)
 
-  await withRetry(
-    async () => {
-      throwIfAborted(signal)
-      await event.publish()
-    },
-    {
-      maxAttempts: 2,
-      baseDelayMs: 750,
-      maxDelayMs: 2_500,
-      ...(signal ? { signal } : {}),
-    },
-  )
+  await publishEventWithNip65Outbox(event, signal)
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent
   await insertEvent(rawEvent)

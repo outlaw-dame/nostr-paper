@@ -41,7 +41,7 @@ const DEFAULT_RELAYS = [
   'wss://nos.lol',
   'wss://relay.momostr.pink',
   'wss://relay.mostr.pub',
-  'wss://ditto.pub/relay',
+  'wss://relay.ditto.pub',
   'wss://nostr.wine',
   'wss://relay.snort.social',
   'wss://relay.primal.net',
@@ -53,6 +53,25 @@ const DEFAULT_RELAYS = [
   'wss://news.nos.social',
   'wss://relay.nostr.net',
 ] as const
+
+function getConfiguredDefaultRelays(): string[] {
+  const configured = import.meta.env.VITE_DEFAULT_RELAY_URLS?.trim()
+  if (!configured) return []
+
+  return configured
+    .split(',')
+    .map((url: string) => url.trim())
+    .filter((url: string) => url.length > 0)
+    .filter((url: string) => isUsableRelayUrl(url))
+}
+
+function getExclusiveConfiguredRelays(): boolean {
+  return import.meta.env.VITE_DEFAULT_RELAYS_EXCLUSIVE === 'true'
+}
+
+function forceDefaultRelays(): boolean {
+  return import.meta.env.VITE_FORCE_DEFAULT_RELAYS === 'true'
+}
 
 const BLOCKED_RELAY_URLS = new Set<string>()
 
@@ -92,7 +111,20 @@ const NIP46_MAX_TOKEN_LENGTH = 2_048
 const NIP46_MAX_RELAY_HINTS = 8
 
 export function getDefaultRelayUrls(): string[] {
-  return [...DEFAULT_RELAYS]
+  const configuredRelays = getConfiguredDefaultRelays()
+  if (configuredRelays.length === 0) return [...DEFAULT_RELAYS]
+
+  if (getExclusiveConfiguredRelays()) {
+    return configuredRelays
+  }
+
+  // Put configured relays first while preserving default coverage and order.
+  return [...new Set([...configuredRelays, ...DEFAULT_RELAYS])]
+}
+
+export function getPrimaryConfiguredRelayUrl(): string | null {
+  const configuredRelays = getConfiguredDefaultRelays()
+  return configuredRelays[0] ?? null
 }
 
 export function getOutboxRelayUrls(): string[] {
@@ -250,9 +282,14 @@ export interface InitNDKOptions {
 export async function initNDK(options: InitNDKOptions = {}): Promise<NDK> {
   if (_ndk) return _ndk
 
+  const defaultRelays = getDefaultRelayUrls()
   // Validate and filter relay URLs — use user's stored list if they've customised it
   const storedRelays = getStoredRelayUrls()
-  const relays = (options.relays ?? storedRelays ?? DEFAULT_RELAYS)
+  const relayCandidates = forceDefaultRelays()
+    ? defaultRelays
+    : (options.relays ?? storedRelays ?? defaultRelays)
+
+  const relays = relayCandidates
     .filter(isUsableRelayUrl)
     .slice(0, 20) // hard cap
 

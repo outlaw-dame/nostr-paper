@@ -30,9 +30,13 @@ interface NoteContentProps {
   hiddenUrls?: string[]
   interactive?: boolean
   allowTranslation?: boolean
+  autoStartTranslation?: boolean
+  sourceLanguage?: string | null
   enableMarkdown?: boolean
   showEntityPreviews?: boolean
 }
+
+const INLINE_TRANSLATE_LIMIT = 140
 
 type ContentToken =
   | { type: 'text';   value: string }
@@ -501,6 +505,8 @@ export function NoteContent({
   hiddenUrls = [],
   interactive = true,
   allowTranslation = false,
+  autoStartTranslation = true,
+  sourceLanguage,
   enableMarkdown = false,
   showEntityPreviews = true,
 }: NoteContentProps) {
@@ -520,6 +526,11 @@ export function NoteContent({
     if (textLengthExcludingUrls <= 500) return false
     return true
   }, [plainText, tokens])
+  const translationTextLength = React.useMemo(
+    () => getTextLengthWithoutUrls(tokens),
+    [tokens],
+  )
+  const inlineAutoTranslate = autoStartTranslation && translationTextLength > 0 && translationTextLength <= INLINE_TRANSLATE_LIMIT
   const entityCandidates = React.useMemo(
     () => collectEntityCandidates(
       tokens.filter(
@@ -547,7 +558,12 @@ export function NoteContent({
           {compactTokens.map((token, index) => renderToken(token, index, true, interactive))}
         </p>
         {allowTranslation && translationSourceText && (
-          <TranslateTextPanel text={translationSourceText} />
+          <TranslateTextPanel
+            text={translationSourceText}
+            autoStart={inlineAutoTranslate}
+            mini={inlineAutoTranslate}
+            {...(sourceLanguage !== undefined ? { sourceLanguage } : {})}
+          />
         )}
       </>
     )
@@ -561,7 +577,12 @@ export function NoteContent({
           <EntityPreviewStack candidates={entityCandidates} />
         )}
         {allowTranslation && translationSourceText && (
-          <TranslateTextPanel text={translationSourceText} />
+          <TranslateTextPanel
+            text={translationSourceText}
+            autoStart={inlineAutoTranslate}
+            mini={inlineAutoTranslate}
+            {...(sourceLanguage !== undefined ? { sourceLanguage } : {})}
+          />
         )}
       </>
     )
@@ -579,7 +600,12 @@ export function NoteContent({
         <EntityPreviewStack candidates={entityCandidates} />
       )}
       {allowTranslation && translationSourceText && (
-        <TranslateTextPanel text={translationSourceText} />
+        <TranslateTextPanel
+          text={translationSourceText}
+          autoStart={inlineAutoTranslate}
+          mini={inlineAutoTranslate}
+          {...(sourceLanguage !== undefined ? { sourceLanguage } : {})}
+        />
       )}
     </>
   )

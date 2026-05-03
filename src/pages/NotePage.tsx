@@ -14,6 +14,7 @@ import { HandlerInformationBody } from '@/components/nostr/HandlerInformationBod
 import { HandlerRecommendationBody } from '@/components/nostr/HandlerRecommendationBody'
 import { ListBody } from '@/components/nostr/ListBody'
 import { NoteMediaAttachments } from '@/components/nostr/NoteMediaAttachments'
+import { CommunityContextNote } from '@/components/security/CommunityContextNote'
 import { PollBody } from '@/components/nostr/PollBody'
 import { PollVoteBody } from '@/components/nostr/PollVoteBody'
 import { QuotePreviewList } from '@/components/nostr/QuotePreviewList'
@@ -25,6 +26,7 @@ import { UnknownKindBody } from '@/components/nostr/UnknownKindBody'
 import { UserStatusBody } from '@/components/nostr/UserStatusBody'
 import { useEventCombinedModeration } from '@/hooks/useEventCombinedModeration'
 import { useFilterOverride } from '@/hooks/useFilterOverride'
+import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { usePageHead } from '@/hooks/usePageHead'
 import { useProfile } from '@/hooks/useProfile'
 import { getEvent } from '@/lib/db/nostr'
@@ -48,6 +50,7 @@ import {
   getMediaAttachmentPreviewUrl,
 } from '@/lib/nostr/imeta'
 import { parseNip51ListEvent } from '@/lib/nostr/lists'
+import { extractEventLanguageTag } from '@/lib/nostr/language'
 import { parseLongFormEvent } from '@/lib/nostr/longForm'
 import { buildNoteMetaTags, buildNoteTitle } from '@/lib/nostr/meta'
 import { decodeEventReference } from '@/lib/nostr/nip21'
@@ -60,6 +63,7 @@ import { HighlightBody } from '@/components/nostr/HighlightBody'
 import { parseHighlightEvent } from '@/lib/nostr/highlight'
 import { parseUserStatusEvent } from '@/lib/nostr/status'
 import { parseCommentEvent, parseNumberedThreadMarker, parseTextNoteReply, parseThreadEvent } from '@/lib/nostr/thread'
+import { parseContentWarning } from '@/lib/nostr/contentWarning'
 import { parseVideoEvent } from '@/lib/nostr/video'
 import { isThreadInspectorEnabled } from '@/lib/runtime/debugSettings'
 import { withRetry } from '@/lib/retry'
@@ -79,6 +83,7 @@ export default function NotePage() {
   const [error, setError] = useState<string | null>(null)
   const [override, setOverride] = useState(false)
   const { profile } = useProfile(event?.pubkey)
+  const followStatus = useFollowStatus(event?.pubkey)
   const { overridden: filterOverride, setOverridden: setFilterOverride } = useFilterOverride(event?.id)
   const {
     blocked:      isBlocked,
@@ -90,6 +95,7 @@ export default function NotePage() {
   const keywordHidden = keywordFilterResult.action === 'hide' || keywordFilterResult.action === 'block'
   const keywordGated = keywordFilterResult.action === 'warn' && !filterOverride
   const blockedByTagr = eventBlocked && (moderationDecision?.reason?.startsWith('tagr:') ?? false)
+  const contentWarning = event ? parseContentWarning(event) : null
 
   // First image attachment URL — used as og:image
   const ogImageUrl = useMemo(() => {
@@ -321,6 +327,7 @@ export default function NotePage() {
     || (event.kind === Kind.Poll && !poll)
     || (event.kind === Kind.PollVote && !pollVote)
   const quoteBody = getQuotePostBody(event)
+  const eventLanguage = extractEventLanguageTag(event)
   const attachments = getEventMediaAttachments(event)
   const hiddenUrls = getImetaHiddenUrls(event)
 
@@ -399,7 +406,13 @@ export default function NotePage() {
             ) : comment ? (
               <>
                 {comment.content.trim().length > 0 && (
-                  <NoteContent content={comment.content} className="mt-4" allowTranslation enableMarkdown />
+                  <NoteContent
+                    content={comment.content}
+                    className="mt-4"
+                    allowTranslation
+                    enableMarkdown
+                    {...(eventLanguage !== null ? { sourceLanguage: eventLanguage } : {})}
+                  />
                 )}
                 <QuotePreviewList event={event} showHeader={false} className="mt-5" compact />
               </>
@@ -414,10 +427,29 @@ export default function NotePage() {
             ) : (
               <>
                 {quoteBody.trim().length > 0 && (
-                  <NoteContent content={quoteBody} className="mt-4" hiddenUrls={hiddenUrls} allowTranslation enableMarkdown />
+                  <NoteContent
+                    content={quoteBody}
+                    className="mt-4"
+                    hiddenUrls={hiddenUrls}
+                    allowTranslation
+                    enableMarkdown
+                    {...(eventLanguage !== null ? { sourceLanguage: eventLanguage } : {})}
+                  />
                 )}
                 {attachments.length > 0 && (
-                  <NoteMediaAttachments attachments={attachments} className="mt-5" />
+                  <NoteMediaAttachments
+                    attachments={attachments}
+                    className="mt-5"
+                    isSensitive={contentWarning !== null}
+                    sensitiveReason={contentWarning?.reason ?? null}
+                    isUnfollowed={followStatus === false}
+                  />
+                )}
+                {quoteBody.trim().length > 0 && (
+                  <CommunityContextNote
+                    content={quoteBody}
+                    className="mt-5"
+                  />
                 )}
                 <QuotePreviewList event={event} showHeader={false} className="mt-5" compact />
               </>

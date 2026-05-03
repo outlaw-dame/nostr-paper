@@ -7,6 +7,7 @@ import { AuthorRow } from '@/components/profile/AuthorRow'
 import { TwemojiText } from '@/components/ui/TwemojiText'
 import { useSelfThreadIndex } from '@/hooks/useSelfThreadIndex'
 import { useEventModeration } from '@/hooks/useModeration'
+import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { useProfile } from '@/hooks/useProfile'
 import {
   getHandlerDisplayName,
@@ -36,6 +37,7 @@ import { getReportPreviewText, parseReportEvent } from '@/lib/nostr/report'
 import { getQuotePostBody, getRepostPreviewText, parseQuoteTags, parseRepostEvent } from '@/lib/nostr/repost'
 import { getUserStatusExternalHref, getUserStatusLabel, parseUserStatusEvent } from '@/lib/nostr/status'
 import { parseCommentEvent, parseNumberedThreadMarker, parseTextNoteReply, parseThreadEvent } from '@/lib/nostr/thread'
+import { parseContentWarning } from '@/lib/nostr/contentWarning'
 import { parseVideoEvent } from '@/lib/nostr/video'
 import { parseHighlightEvent } from '@/lib/nostr/highlight'
 import { isThreadInspectorEnabled } from '@/lib/runtime/debugSettings'
@@ -83,6 +85,8 @@ function getKindLabel(event: NostrEvent): string | null {
 }
 
 function PreviewBody({ event, compact = false, interactive = true }: { event: NostrEvent; compact?: boolean; interactive?: boolean }) {
+  const followStatus = useFollowStatus(event.pubkey)
+  const contentWarning = parseContentWarning(event)
   const list = parseNip51ListEvent(event)
   if (list) {
     return (
@@ -373,6 +377,9 @@ function PreviewBody({ event, compact = false, interactive = true }: { event: No
           className="mt-3"
           compact
           interactive={false}
+          isSensitive={contentWarning !== null}
+          sensitiveReason={contentWarning?.reason ?? null}
+          isUnfollowed={followStatus === false}
         />
       )}
     </>

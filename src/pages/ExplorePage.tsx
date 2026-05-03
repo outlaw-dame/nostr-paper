@@ -32,9 +32,15 @@ import { mergeResults, useEventFilterCheck, useProfileFilterCheck, useSemanticFi
 import { useMuteList } from '@/hooks/useMuteList'
 import { useHideNsfwTaggedPosts } from '@/hooks/useHideNsfwTaggedPosts'
 import { useTrendingTopics } from '@/hooks/useTrendingTopics'
+import { useTrendingLinks } from '@/hooks/useTrendingLinks'
 import { usePopularProfiles } from '@/hooks/usePopularProfiles'
 import { useSuggestedProfiles } from '@/hooks/useSuggestedProfiles'
 import { useSemanticFollowPacks } from '@/hooks/useSemanticFollowPacks'
+import { useFollowStatus } from '@/hooks/useFollowStatus'
+import { useRuntimeFeatureFlags } from '@/hooks/useRuntimeFeatureFlags'
+import { TrendingLinkCard } from '@/components/links/TrendingLinkCard'
+import { NewsBlindspotPanel } from '@/components/explore/NewsBlindspotPanel'
+import type { TrendingLinkStat } from '@/lib/explore/trendingLinks'
 import {
   getExploreFollowPackLabel,
   getExploreFollowPackSummary,
@@ -55,6 +61,7 @@ import { parsePollEvent } from '@/lib/nostr/polls'
 import { parseSearchQuery, warmSearchRelays } from '@/lib/nostr/search'
 import { extractEventHashtags } from '@/lib/feed/tagTimeline'
 import { parseCommentEvent, parseThreadEvent } from '@/lib/nostr/thread'
+import { parseContentWarning } from '@/lib/nostr/contentWarning'
 import { sanitizeText } from '@/lib/security/sanitize'
 import { parseVideoEvent } from '@/lib/nostr/video'
 import { tApp } from '@/lib/i18n/app'
@@ -75,6 +82,7 @@ const SEARCHABLE_KINDS = [
 ]
 
 export default function ExplorePage() {
+  const flags = useRuntimeFeatureFlags()
   const { currentUser } = useApp()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -109,7 +117,9 @@ export default function ExplorePage() {
   } = useMuteList()
   const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
   const [topicsWindow, setTopicsWindow] = useState<'today' | 'week'>('week')
+  const [linksWindow,  setLinksWindow]  = useState<'today' | 'week'>('week')
   const { topics, loading: topicsLoading } = useTrendingTopics(24, topicsWindow)
+  const { links,  loading: linksLoading  } = useTrendingLinks(8,  linksWindow)
   const { packs: followPackCandidates, loading: followPackLoading } = useExploreFollowPacks(18)
   const { profiles: suggestedProfiles, loading: suggestedLoading } = useSuggestedProfiles(currentUser?.pubkey, 8)
   const { profiles: popularProfiles, loading: popularLoading } = usePopularProfiles(8)
@@ -176,7 +186,6 @@ export default function ExplorePage() {
   const { allowedIds: allowedProfileIds } = useModerationDocuments(profileModerationDocuments)
   const {
     allowedIds: allowedFollowPackIds,
-    loading: followPackModerationLoading,
   } = useModerationDocuments(followPackModerationDocuments)
 
   const visibleEvents = useMemo(
@@ -236,6 +245,10 @@ export default function ExplorePage() {
     packs: semanticFollowPacks,
     semanticApplied: followPackSemanticApplied,
   } = useSemanticFollowPacks(visibleFollowPacks, currentUser?.pubkey)
+
+  const handleLinkPress = useCallback((url: string) => {
+    navigate(`/link?url=${encodeURIComponent(url)}`)
+  }, [navigate])
 
   const handleFollowPack = useCallback(async (pack: RankedExploreFollowPack) => {
     if (!currentUser) {
@@ -347,9 +360,16 @@ export default function ExplorePage() {
             topicsLoading={topicsLoading}
             topicsWindow={topicsWindow}
             onTopicsWindowChange={setTopicsWindow}
+            links={links}
+            linksLoading={linksLoading}
+            linksWindow={linksWindow}
+            onLinksWindowChange={setLinksWindow}
+            showBlindspotPanel={flags.phase2BlindspotPanel}
+            showPersonalMix={flags.phase4MediaDietTracking}
+            onLinkPress={handleLinkPress}
             followPacks={semanticFollowPacks}
             followPackSemanticApplied={followPackSemanticApplied}
-            followPacksLoading={followPackLoading || followPackModerationLoading}
+            followPacksLoading={followPackLoading}
             canBulkFollow={Boolean(currentUser)}
             onFollowPack={handleFollowPack}
             suggestedProfiles={suggestedProfiles}
@@ -412,6 +432,13 @@ function ExploreContent({
   topicsLoading,
   topicsWindow,
   onTopicsWindowChange,
+  links,
+  linksLoading,
+  linksWindow,
+  onLinksWindowChange,
+  showBlindspotPanel,
+  showPersonalMix,
+  onLinkPress,
   followPacks,
   followPackSemanticApplied,
   followPacksLoading,
@@ -426,6 +453,13 @@ function ExploreContent({
   topicsLoading: boolean
   topicsWindow: 'today' | 'week'
   onTopicsWindowChange: (w: 'today' | 'week') => void
+  links: TrendingLinkStat[]
+  linksLoading: boolean
+  linksWindow: 'today' | 'week'
+  onLinksWindowChange: (w: 'today' | 'week') => void
+  showBlindspotPanel: boolean
+  showPersonalMix: boolean
+  onLinkPress: (url: string) => void
   followPacks: RankedExploreFollowPack[]
   followPackSemanticApplied: boolean
   followPacksLoading: boolean
@@ -506,6 +540,65 @@ function ExploreContent({
         ) : (
           <p className="px-1 text-[14px] text-[rgb(var(--color-label-tertiary))]">
             {tApp('exploreNoTrendingTopics')}
+          </p>
+        )}
+      </section>
+
+      {/* News — trending external links */}
+      <section>
+        <div className="flex items-center justify-between px-1 mb-3">
+          <div>
+            <h2 className="section-kicker">{tApp('exploreNewsSection')}</h2>
+            <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">
+              {tApp('exploreNewsSectionHint')}
+            </p>
+          </div>
+          <div className="flex items-center gap-1 rounded-full bg-[rgb(var(--color-fill)/0.10)] p-0.5">
+            {(['today', 'week'] as const).map((w) => (
+              <button
+                key={w}
+                onClick={() => onLinksWindowChange(w)}
+                className={`
+                  px-3 py-1 rounded-full text-[12px] font-medium transition-all
+                  ${linksWindow === w
+                    ? 'bg-[rgb(var(--color-bg))] text-[rgb(var(--color-label))] shadow-sm'
+                    : 'text-[rgb(var(--color-label-secondary))]'
+                  }
+                `}
+              >
+                {w === 'today' ? tApp('exploreWindowToday') : tApp('exploreWindowWeek')}
+              </button>
+            ))}
+          </div>
+        </div>
+        {linksLoading ? (
+          <div className="space-y-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-[76px] rounded-[14px] bg-[rgb(var(--color-fill)/0.08)] animate-pulse" />
+            ))}
+          </div>
+        ) : links.length > 0 ? (
+          <div className="space-y-2">
+            {showBlindspotPanel && (
+              <NewsBlindspotPanel
+                links={links}
+                showPersonalMix={showPersonalMix}
+              />
+            )}
+            {links.map((stat, i) => (
+              <motion.div
+                key={stat.url}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.16, delay: i * 0.03 }}
+              >
+                <TrendingLinkCard stat={stat} onClick={onLinkPress} />
+              </motion.div>
+            ))}
+          </div>
+        ) : (
+          <p className="px-1 text-[14px] text-[rgb(var(--color-label-tertiary))]">
+            {tApp('exploreNoNews')}
           </p>
         )}
       </section>
@@ -829,6 +922,7 @@ function EventResult({
 }) {
   const { profile } = useProfile(event.pubkey, { background: false })
   const threadIndex = useSelfThreadIndex(event)
+  const followStatus = useFollowStatus(event.pubkey)
   const filterResult = useMemo(
     () => mergeResults(checkEvent(event, profile ?? undefined), semanticResult),
     [checkEvent, event, profile, semanticResult],
@@ -840,6 +934,7 @@ function EventResult({
   const comment = parseCommentEvent(event)
   const attachments = getEventMediaAttachments(event)
   const hiddenUrls = getImetaHiddenUrls(event)
+  const contentWarning = parseContentWarning(event)
   const kindLabel = poll ? 'Poll'
     : article ? 'Article'
     : thread ? 'Thread'
@@ -881,7 +976,15 @@ function EventResult({
           <>
             <NoteContent content={event.content} className="mt-3" hiddenUrls={hiddenUrls} interactive={false} />
             {attachments.length > 0 && (
-              <NoteMediaAttachments attachments={attachments} className="mt-3" compact interactive={false} />
+              <NoteMediaAttachments
+                attachments={attachments}
+                className="mt-3"
+                compact
+                interactive={false}
+                isSensitive={contentWarning !== null}
+                sensitiveReason={contentWarning?.reason ?? null}
+                isUnfollowed={followStatus === false}
+              />
             )}
           </>
         )}

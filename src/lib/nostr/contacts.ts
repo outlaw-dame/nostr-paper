@@ -11,10 +11,12 @@ import {
   upsertContactListEntry,
 } from '@/lib/nostr/contactList'
 import { getCurrentUser, getNDK } from '@/lib/nostr/ndk'
+import { publishEventWithNip65Outbox } from '@/lib/nostr/outbox'
 import { withRetry } from '@/lib/retry'
 import { isValidHex32 } from '@/lib/security/sanitize'
 import type { ContactList, NostrEvent } from '@/types'
 import { Kind } from '@/types'
+import { emitContactListUpdated } from '@/lib/db/followSet'
 
 const CONTACT_LIST_STALE_SECONDS = 15 * 60
 const CONTACT_FETCH_LIMIT = 8
@@ -112,6 +114,7 @@ export async function syncContactListFromRelays(
   if (!newest) return local
 
   await insertEvent(newest)
+  emitContactListUpdated(pubkey)
   return getContactList(pubkey)
 }
 
@@ -164,21 +167,13 @@ export async function publishContactList(
   await event.sign()
   throwIfAborted(signal)
 
-  await withRetry(
-    async () => {
-      throwIfAborted(signal)
-      await event.publish()
-    },
-    {
-      maxAttempts: 2,
-      baseDelayMs: 750,
-      maxDelayMs: 2_500,
-      ...(signal ? { signal } : {}),
-    },
-  )
+  await publishEventWithNip65Outbox(event, signal)
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent
   await insertEvent(rawEvent)
+  // Notify the in-memory follow set so consumers (e.g. `useFollowStatus`)
+  // pick up the new state without waiting for the next sync cycle.
+  emitContactListUpdated(rawEvent.pubkey)
   return rawEvent
 }
 

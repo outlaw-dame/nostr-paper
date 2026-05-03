@@ -22,6 +22,11 @@ describe('detectLikelyLanguage', () => {
   it('detects likely English text with common stopwords', () => {
     expect(detectLikelyLanguage('This is an English sentence about the new release and what it means for users.')).toBe('en')
   })
+
+  it('detects common Latin-script languages for local fallback routing', () => {
+    expect(detectLikelyLanguage('Este es un mensaje para la comunidad y no se debe perder en el feed.')).toBe('es')
+    expect(detectLikelyLanguage('Ceci est une note pour les lecteurs avec le contexte et la suite.')).toBe('fr')
+  })
 })
 
 describe('looksLikeShortAsciiSnippet', () => {

@@ -1,5 +1,5 @@
 import React from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { EventPreviewCard } from '@/components/nostr/EventPreviewCard'
 import { Nip21Mention } from '@/components/nostr/Nip21Mention'
 import { LinkPreviewCard } from '@/components/links/LinkPreviewCard'
@@ -164,6 +164,12 @@ function PrimaryUrlSlot({
   const shouldTryFeed = !isEmbeddedVideo && (feedLike || (!loading && !data))
   const { feed, loading: syndicationLoading } = useSyndicationPreview(candidate.url, { enabled: shouldTryFeed })
 
+  const navigate = useNavigate()
+  const handleDiscussionsPress = React.useCallback(
+    (url: string) => navigate('/link?url=' + encodeURIComponent(url)),
+    [navigate],
+  )
+
   const moderationDocuments = React.useMemo(() => {
     if (!data) return []
     const text = [data.title, data.description].filter(Boolean).join('\n\n')
@@ -257,6 +263,7 @@ function PrimaryUrlSlot({
       url={candidate.url}
       previewData={data}
       previewLoading={loading}
+      onDiscussionsPress={handleDiscussionsPress}
     />
   )
 }

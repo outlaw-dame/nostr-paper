@@ -2,6 +2,7 @@ import type NDK from '@nostr-dev-kit/ndk';
 import { NDKEvent } from '@nostr-dev-kit/ndk'
 import { insertEvent } from '@/lib/db/nostr'
 import { withOptionalClientTag } from '@/lib/nostr/appHandlers'
+import { publishEventWithNip65Outbox } from '@/lib/nostr/outbox'
 import { buildQuoteTagsFromContent } from '@/lib/nostr/repost'
 import {
   isSafeMediaURL,
@@ -182,6 +183,45 @@ function getTagValues(event: NostrEvent, name: string): string[][] {
   return event.tags.filter(tag => tag[0] === name && typeof tag[1] === 'string')
 }
 
+function normalizeNip94FromTagArray(
+  tags: unknown[],
+  defaults: Pick<NormalizeNip94Input, 'url' | 'mimeType' | 'fileHash'>,
+): Nip94Tags | undefined {
+  const values = new Map<string, string[]>()
+
+  for (const rawTag of tags) {
+    if (!Array.isArray(rawTag) || typeof rawTag[0] !== 'string' || typeof rawTag[1] !== 'string') continue
+    const key = rawTag[0]
+    const value = rawTag[1]
+    const existing = values.get(key) ?? []
+    existing.push(value)
+    values.set(key, existing)
+  }
+
+  const first = (key: string) => values.get(key)?.[0]
+  const fallbacks = values.get('fallback')
+
+  const normalized = normalizeNip94Tags({
+    url: first('url') ?? defaults.url,
+    mimeType: first('m') ?? defaults.mimeType,
+    fileHash: first('x') ?? defaults.fileHash,
+    ...(first('ox') ? { originalHash: first('ox') } : {}),
+    ...(first('size') ? { size: first('size') } : {}),
+    ...(first('dim') ? { dim: first('dim') } : {}),
+    ...(first('magnet') ? { magnet: first('magnet') } : {}),
+    ...(first('i') ? { torrentInfoHash: first('i') } : {}),
+    ...(first('blurhash') ? { blurhash: first('blurhash') } : {}),
+    ...(first('thumb') ? { thumb: first('thumb') } : {}),
+    ...(first('image') ? { image: first('image') } : {}),
+    ...(first('summary') ? { summary: first('summary') } : {}),
+    ...(first('alt') ? { alt: first('alt') } : {}),
+    ...(fallbacks ? { fallbacks } : {}),
+    ...(first('service') ? { service: first('service') } : {}),
+  })
+
+  return normalized ?? undefined
+}
+
 export function parseFileMetadataEvent(event: NostrEvent): Nip94FileMetadata | null {
   if (event.kind !== Kind.FileMetadata) return null
 
@@ -289,6 +329,7 @@ export async function deriveMediaDimensions(file: File | Blob): Promise<string |
 
 export interface PublishFileMetadataOptions extends Partial<NormalizeNip94Input> {
   caption?: string
+  signal?: AbortSignal
 }
 
 export async function publishFileMetadata(
@@ -331,10 +372,12 @@ export async function publishFileMetadata(
   event.tags = await withOptionalClientTag([
     ...buildFileMetadataTags(metadata),
     ...buildQuoteTagsFromContent(caption),
-  ])
+  ], options.signal)
 
+  if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError')
   await event.sign()
-  await event.publish()
+  if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+  await publishEventWithNip65Outbox(event, options.signal)
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent
   await insertEvent(rawEvent)
@@ -345,6 +388,10 @@ export function normalizeNip94FromObject(
   input: unknown,
   defaults: Pick<NormalizeNip94Input, 'url' | 'mimeType' | 'fileHash'>,
 ): Nip94Tags | undefined {
+  if (Array.isArray(input)) {
+    return normalizeNip94FromTagArray(input, defaults)
+  }
+
   if (!isRecord(input)) return undefined
 
   const normalized = normalizeNip94Tags({

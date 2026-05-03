@@ -23,12 +23,14 @@ import {
 } from '@nostr-dev-kit/ndk'
 import { getNDK, waitForCachedEvents } from '@/lib/nostr/ndk'
 import { queryEvents } from '@/lib/db/nostr'
+import { getFeedCursor, setFeedCursor } from '@/lib/db/caches'
 import { isEventExpired } from '@/lib/nostr/expiration'
 import { isValidEvent } from '@/lib/security/sanitize'
 import type { NostrEvent, NostrFilter, FeedSection } from '@/types'
 
 export interface FeedState {
   events:  NostrEvent[]
+  pendingEvents: NostrEvent[]
   loading: boolean
   eose:    boolean   // End of stored events received from relays
   error:   string | null
@@ -39,13 +41,16 @@ type FeedAction =
   | { type: 'LOAD_CACHE'; payload: NostrEvent[] }
   | { type: 'NEW_EVENT';  payload: NostrEvent }
   | { type: 'NEW_EVENTS'; payload: NostrEvent[] }
+  | { type: 'QUEUE_EVENTS'; payload: NostrEvent[] }
+  | { type: 'APPLY_PENDING_EVENTS' }
   | { type: 'EOSE' }
   | { type: 'ERROR';  payload: string }
   | { type: 'RESET' }
 
 const MAX_FEED_SIZE = 200  // cap in-memory feed to prevent unbounded growth
+const MAX_PENDING_FEED_SIZE = 40  // cap queued live events while user is reading
 
-function mergeFeedEvents(current: NostrEvent[], incoming: NostrEvent[]): NostrEvent[] {
+function mergeFeedEvents(current: NostrEvent[], incoming: NostrEvent[], maxSize = MAX_FEED_SIZE): NostrEvent[] {
   if (incoming.length === 0) return current
 
   const merged = new Map<string, NostrEvent>()
@@ -61,7 +66,20 @@ function mergeFeedEvents(current: NostrEvent[], incoming: NostrEvent[]): NostrEv
 
   return [...merged.values()]
     .sort((a, b) => b.created_at - a.created_at)
-    .slice(0, MAX_FEED_SIZE)
+    .slice(0, maxSize)
+}
+
+function queueFeedEvents(current: NostrEvent[], pending: NostrEvent[], incoming: NostrEvent[]): NostrEvent[] {
+  if (incoming.length === 0) return pending
+
+  const displayedIds = new Set(current.map(event => event.id))
+  const pendingIds = new Set(pending.map(event => event.id))
+  const nextEvents = incoming.filter((event) => (
+    !displayedIds.has(event.id) && !pendingIds.has(event.id)
+  ))
+
+  if (nextEvents.length === 0) return pending
+  return mergeFeedEvents(pending, nextEvents, MAX_PENDING_FEED_SIZE)
 }
 
 function feedReducer(state: FeedState, action: FeedAction): FeedState {
@@ -70,7 +88,7 @@ function feedReducer(state: FeedState, action: FeedAction): FeedState {
       return { ...state, loading: true, error: null }
 
     case 'LOAD_CACHE':
-      return { ...state, loading: false, events: action.payload }
+      return { ...state, loading: false, events: action.payload, pendingEvents: [] }
 
     case 'NEW_EVENT': {
       if (state.events.some(e => e.id === action.payload.id)) return state
@@ -83,6 +101,18 @@ function feedReducer(state: FeedState, action: FeedAction): FeedState {
       return { ...state, events }
     }
 
+    case 'QUEUE_EVENTS': {
+      const pendingEvents = queueFeedEvents(state.events, state.pendingEvents, action.payload)
+      if (pendingEvents === state.pendingEvents) return state
+      return { ...state, pendingEvents }
+    }
+
+    case 'APPLY_PENDING_EVENTS': {
+      if (state.pendingEvents.length === 0) return state
+      const events = mergeFeedEvents(state.events, state.pendingEvents)
+      return { ...state, events, pendingEvents: [] }
+    }
+
     case 'EOSE':
       return { ...state, eose: true }
 
@@ -90,7 +120,7 @@ function feedReducer(state: FeedState, action: FeedAction): FeedState {
       return { ...state, loading: false, error: action.payload }
 
     case 'RESET':
-      return { events: [], loading: true, eose: false, error: null }
+      return { events: [], pendingEvents: [], loading: true, eose: false, error: null }
 
     default:
       return state
@@ -99,6 +129,7 @@ function feedReducer(state: FeedState, action: FeedAction): FeedState {
 
 const initialState: FeedState = {
   events:  [],
+  pendingEvents: [],
   loading: true,
   eose:    false,
   error:   null,
@@ -109,14 +140,16 @@ const initialState: FeedState = {
 export interface UseNostrFeedOptions {
   section:  FeedSection
   enabled?: boolean
+  shouldBufferNewEvents?: () => boolean
 }
 
-export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
+export function useNostrFeed({ section, enabled = true, shouldBufferNewEvents }: UseNostrFeedOptions) {
   const [state, dispatch] = useReducer(feedReducer, initialState)
   const subRef   = useRef<NDKSubscription | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const pendingEventsRef = useRef<NostrEvent[]>([])
   const flushTimerRef = useRef<number | null>(null)
+  const shouldBufferNewEventsRef = useRef(shouldBufferNewEvents)
 
   /**
    * Stabilise the filter object so it does not trigger the effect on every render.
@@ -126,6 +159,15 @@ export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
    */
   const filterKey = JSON.stringify(section.filter)
   const stableFilter = useMemo<NostrFilter>(() => section.filter, [filterKey])
+  // Persisted watermark scope: section + filter shape uniquely identifies the
+  // logical subscription, so we can resume from the highest created_at seen.
+  const cursorScopeKey = useMemo(() => `feed:${section.id}:${filterKey}`, [section.id, filterKey])
+  const cursorWatermarkRef = useRef<number>(0)
+  const cursorLastEventIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    shouldBufferNewEventsRef.current = shouldBufferNewEvents
+  }, [shouldBufferNewEvents])
 
   const stopActiveSubscription = useCallback(() => {
     abortRef.current?.abort()
@@ -185,11 +227,17 @@ export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
 
           if (signal.aborted) return
           if (persistedEvents.length > 0) {
-            dispatch({ type: 'NEW_EVENTS', payload: persistedEvents })
+            dispatch({
+              type: shouldBufferNewEventsRef.current?.() ? 'QUEUE_EVENTS' : 'NEW_EVENTS',
+              payload: persistedEvents,
+            })
           }
         } catch {
           if (signal.aborted) return
-          dispatch({ type: 'NEW_EVENTS', payload: pendingEvents })
+          dispatch({
+            type: shouldBufferNewEventsRef.current?.() ? 'QUEUE_EVENTS' : 'NEW_EVENTS',
+            payload: pendingEvents,
+          })
         } finally {
           if (!signal.aborted && pendingEventsRef.current.length > 0) {
             scheduleFlush()
@@ -214,8 +262,26 @@ export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
 
       if (signal.aborted) return
 
+      // 3. Apply persisted cursor so we don't re-pull events the relay has
+      // already delivered to us in a prior session. Cursor is optional and
+      // only narrows; never widens past an explicit filter.since.
+      let liveFilter: NostrFilter = filter
+      try {
+        const cursor = await getFeedCursor(cursorScopeKey)
+        if (cursor && cursor.sinceTs > 0) {
+          const explicitSince = typeof filter.since === 'number' ? filter.since : 0
+          if (cursor.sinceTs > explicitSince) {
+            liveFilter = { ...filter, since: cursor.sinceTs }
+          }
+        }
+      } catch {
+        // Cache failures must never block live subscription.
+      }
+
+      if (signal.aborted) return
+
       const sub = ndk.subscribe(
-        filter as Parameters<typeof ndk.subscribe>[0],
+        liveFilter as Parameters<typeof ndk.subscribe>[0],
         {
           closeOnEose:    false,
           cacheUsage: NDKSubscriptionCacheUsage.CACHE_FIRST,
@@ -229,6 +295,10 @@ export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
         const raw = ndkEvent.rawEvent() as unknown as NostrEvent
         if (!signal.aborted && isValidEvent(raw) && !isEventExpired(raw)) {
           pendingEventsRef.current.push(raw)
+          if (raw.created_at > cursorWatermarkRef.current) {
+            cursorWatermarkRef.current = raw.created_at
+            cursorLastEventIdRef.current = raw.id
+          }
           scheduleFlush()
         }
       })
@@ -242,11 +312,22 @@ export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
         void flushPendingEvents().finally(() => {
           if (!signal.aborted) {
             dispatch({ type: 'EOSE' })
+            // Persist the watermark so the next subscription can resume.
+            // setFeedCursor enforces monotonic advancement on the DB side.
+            const watermark = cursorWatermarkRef.current
+            if (watermark > 0) {
+              const lastEventId = cursorLastEventIdRef.current
+              void setFeedCursor({
+                scopeKey: cursorScopeKey,
+                sinceTs: watermark,
+                ...(lastEventId ? { lastEventId } : {}),
+              }).catch(() => { /* persistence is best-effort */ })
+            }
           }
         })
       })
     },
-    [loadFromCache],
+    [loadFromCache, cursorScopeKey],
   )
 
   useEffect(() => {
@@ -254,6 +335,8 @@ export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
 
     stopActiveSubscription()
     dispatch({ type: 'RESET' })
+    cursorWatermarkRef.current = 0
+    cursorLastEventIdRef.current = null
     abortRef.current = new AbortController()
     const { signal } = abortRef.current
 
@@ -287,5 +370,14 @@ export function useNostrFeed({ section, enabled = true }: UseNostrFeedOptions) {
     }
   }, [stableFilter, stopActiveSubscription, subscribe])
 
-  return { ...state, refresh }
+  const applyPendingEvents = useCallback(() => {
+    dispatch({ type: 'APPLY_PENDING_EVENTS' })
+  }, [])
+
+  return {
+    ...state,
+    pendingEventCount: state.pendingEvents.length,
+    applyPendingEvents,
+    refresh,
+  }
 }

@@ -27,7 +27,7 @@ import {
   setBlossomServers,
   addBlossomServer,
 } from '@/lib/db/blossom'
-import { isValidBlossomUrl } from '@/lib/blossom/validate'
+import { isValidBlossomUrl, normaliseBlossomUrl } from '@/lib/blossom/validate'
 import type { BlossomServer } from '@/types'
 import { Kind } from '@/types'
 
@@ -52,17 +52,27 @@ export async function fetchServerListFromRelays(
     limit:   4,
   })
 
-  // Take the most recent event
-  const latest = [...events].sort(
+  const sorted = [...events].sort(
     (a, b) => (b.created_at ?? 0) - (a.created_at ?? 0)
-  )[0]
+  )
+  const latestBlossom = sorted.find(event => event.kind === BLOSSOM_SERVER_LIST_KIND)
+  const latestNip96 = sorted.find(event => event.kind === NIP96_FILE_SERVER_LIST_KIND)
+  const latest = latestBlossom ?? latestNip96
 
   if (!latest) return []
 
-  return latest.tags
-    .filter(t => t[0] === 'server' && typeof t[1] === 'string')
-    .map(t => t[1]!)
-    .filter(isValidBlossomUrl)
+  const seen = new Set<string>()
+  const urls: string[] = []
+
+  for (const tag of latest.tags) {
+    if (tag[0] !== 'server' || typeof tag[1] !== 'string') continue
+    const normalized = normaliseBlossomUrl(tag[1])
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    urls.push(normalized)
+  }
+
+  return urls
 }
 
 /**

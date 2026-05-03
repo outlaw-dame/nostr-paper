@@ -39,6 +39,7 @@ import { ThreadBody } from '@/components/nostr/ThreadBody'
 import { UnknownKindBody } from '@/components/nostr/UnknownKindBody'
 import { UserStatusBody } from '@/components/nostr/UserStatusBody'
 import { AuthorRow } from '@/components/profile/AuthorRow'
+import { CommunityContextNote } from '@/components/security/CommunityContextNote'
 import { VideoBody } from '@/components/video/VideoBody'
 import { NoteContent } from './NoteContent'
 import {
@@ -316,7 +317,19 @@ export function ExpandedNote({ event, profile, onClose }: ExpandedNoteProps) {
                       />
                     )}
                     {attachments.length > 0 && (
-                      <NoteMediaAttachments attachments={attachments} className="mt-5" isSensitive={contentWarning !== null} sensitiveReason={contentWarning?.reason ?? null} />
+                      <NoteMediaAttachments
+                        attachments={attachments}
+                        className="mt-5"
+                        isSensitive={contentWarning !== null}
+                        sensitiveReason={contentWarning?.reason ?? null}
+                        isUnfollowed={followStatus === false}
+                      />
+                    )}
+                    {quoteBody.trim().length > 0 && (
+                      <CommunityContextNote
+                        content={quoteBody}
+                        className="mt-5"
+                      />
                     )}
                     <QuotePreviewList event={event} className="mt-5" compact />
                   </>

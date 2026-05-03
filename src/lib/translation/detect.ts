@@ -27,6 +27,44 @@ const ENGLISH_STOPWORDS = new Set([
   'where', 'who', 'why', 'will', 'with', 'would', 'you', 'your',
 ])
 
+const LATIN_LANGUAGE_STOPWORDS: Array<{ lang: string; words: Set<string> }> = [
+  {
+    lang: 'es',
+    words: new Set([
+      'el', 'la', 'los', 'las', 'de', 'del', 'que', 'y', 'en', 'un', 'una',
+      'es', 'por', 'para', 'con', 'no', 'se', 'este', 'esta', 'como',
+    ]),
+  },
+  {
+    lang: 'fr',
+    words: new Set([
+      'le', 'la', 'les', 'des', 'de', 'du', 'et', 'est', 'un', 'une',
+      'pour', 'pas', 'avec', 'que', 'qui', 'dans', 'ce', 'cette', 'sur',
+    ]),
+  },
+  {
+    lang: 'de',
+    words: new Set([
+      'der', 'die', 'das', 'den', 'dem', 'und', 'ist', 'nicht', 'ein',
+      'eine', 'zu', 'mit', 'auf', 'für', 'fuer', 'ich', 'wir', 'sie',
+    ]),
+  },
+  {
+    lang: 'it',
+    words: new Set([
+      'il', 'lo', 'la', 'gli', 'le', 'di', 'che', 'e', 'è', 'un', 'una',
+      'per', 'con', 'non', 'in', 'si', 'sono', 'come', 'questo',
+    ]),
+  },
+  {
+    lang: 'pt',
+    words: new Set([
+      'o', 'a', 'os', 'as', 'de', 'do', 'da', 'que', 'e', 'em', 'um',
+      'uma', 'para', 'com', 'nao', 'não', 'se', 'por', 'como',
+    ]),
+  },
+]
+
 // Order matters: Japanese (hiragana/katakana) must come before CJK so a
 // Japanese post is not misclassified as Chinese.
 const SCRIPT_LANGS: ScriptEntry[] = [
@@ -133,10 +171,38 @@ function detectLikelyEnglish(text: string): boolean {
   )
 }
 
+function detectLikelyLatinLanguage(text: string): string | null {
+  const words = text
+    .slice(0, 500)
+    .toLowerCase()
+    .match(/\p{L}+/gu) ?? []
+
+  if (words.length < 5) return null
+
+  let best: { lang: string; hits: number } | null = null
+
+  for (const entry of LATIN_LANGUAGE_STOPWORDS) {
+    const hits = words.reduce((count, word) => (
+      entry.words.has(word) ? count + 1 : count
+    ), 0)
+
+    if (!best || hits > best.hits) {
+      best = { lang: entry.lang, hits }
+    }
+  }
+
+  if (!best) return null
+
+  const density = best.hits / words.length
+  return best.hits >= 3 && density >= 0.16 ? best.lang : null
+}
+
 export function detectLikelyLanguage(text: string): string | null {
   const scriptLanguage = detectScriptLanguage(text)
   if (scriptLanguage) return scriptLanguage
   if (detectLikelyEnglish(text)) return 'en'
+  const latinLanguage = detectLikelyLatinLanguage(text)
+  if (latinLanguage) return latinLanguage
   return null
 }
 

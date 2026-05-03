@@ -159,9 +159,8 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
   const heroPoster = videoPoster ?? primaryMedia
 
   // ── Hero media moderation ────────────────────────────────────
-  // Classify the hero poster/image before rendering. failClosed so the
-  // gradient fallback shows during classification rather than flashing
-  // potentially explicit content.
+  // Classify the hero poster/image in parallel with rendering. Pending or
+  // flagged media stays behind a tap-to-reveal warning instead of disappearing.
   const heroModerationDocument = useMemo(
     () => buildMediaModerationDocument({
       id: `${event.id}:hero`,
@@ -173,7 +172,6 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
   )
   const { blocked: heroMediaBlocked, loading: heroModerationLoading } = useMediaModerationDocument(
     heroModerationDocument,
-    { failClosed: true },
   )
 
   const canAutoplayVideo = Boolean(
@@ -272,13 +270,14 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
               />
             ))}
           </video>
-        ) : primaryMedia && !heroMediaBlocked && !heroModerationLoading ? (
+        ) : primaryMedia ? (
           <SensitiveImage
             src={primaryMedia}
             className="absolute inset-0 w-full h-full"
             isSensitive={contentWarning !== null}
             reason={contentWarning?.reason}
             isUnfollowed={followStatus === false}
+            moderationState={heroMediaBlocked ? 'blocked' : heroModerationLoading ? 'pending' : null}
           />
         ) : (
           // Text-only note or media blocked/loading: gradient background keyed to pubkey color

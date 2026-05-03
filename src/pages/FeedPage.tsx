@@ -10,7 +10,7 @@
  * All data is sourced from SQLite via useNostrFeed (local-first).
  */
 
-import { useState, useCallback, useMemo, useEffect, useRef, memo, type ReactNode } from 'react'
+import { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef, memo, type ReactNode } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'motion/react'
 import { useVirtualizer } from '@tanstack/react-virtual'
@@ -74,6 +74,7 @@ import { buildEventModerationDocument } from '@/lib/moderation/content'
 import { parseRepostEvent } from '@/lib/nostr/repost'
 import { warmSelfThreadIndexCache } from '@/lib/nostr/threadIndex'
 import { parseCommentEvent } from '@/lib/nostr/thread'
+import { extractEventLanguageTag } from '@/lib/nostr/language'
 import { getPeerTubeEmbedUrl, getVimeoVideoId, getYouTubeVideoId } from '@/lib/nostr/imeta'
 import { tApp } from '@/lib/i18n/app'
 import type { ParsedVideoEvent } from '@/lib/nostr/video'
@@ -230,6 +231,11 @@ const COMPOSE_TRIGGER_OFFSET = 85  // px downward pull to open compose sheet
 const FEED_VIEW_STATE_KEY = 'nostr-paper:feed:view-state:v1'
 const FEED_STATE_TTL_MS = 1000 * 60 * 60 * 24 * 7
 const MIN_PRIMARY_FEED_ITEMS = 6
+// Any deliberate scroll past the very top engages buffering so that incoming
+// live events do not displace the post the user is currently reading. The
+// previous 100 px threshold left the hero swap path unprotected.
+const LIVE_FEED_AUTO_INSERT_THRESHOLD_PX = 8
+const MAX_FEED_RESTORE_ATTEMPTS = 8
 
 interface FeedViewSnapshot {
   anchorEventId: string | null
@@ -239,6 +245,14 @@ interface FeedViewSnapshot {
 }
 
 type FeedViewStateMap = Record<string, FeedViewSnapshot>
+
+interface FeedViewportAnchor {
+  scopeKey: string
+  eventId: string
+  offset: number
+  scrollTop: number
+  signature: string
+}
 
 function readFeedViewStateMap(): FeedViewStateMap {
   if (typeof window === 'undefined') return {}
@@ -297,6 +311,20 @@ function clearFeedViewSnapshot(scopeKey: string): void {
   if (!stateMap[scopeKey]) return
   delete stateMap[scopeKey]
   writeFeedViewStateMap(stateMap)
+}
+
+function getFeedEventElement(container: HTMLElement, eventId: string): HTMLElement | null {
+  const escapedEventId = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+    ? CSS.escape(eventId)
+    : eventId.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+
+  return container.querySelector<HTMLElement>(`[data-feed-event-id="${escapedEventId}"]`)
+}
+
+function getElementOffsetWithinContainer(container: HTMLElement, element: HTMLElement): number {
+  const containerRect = container.getBoundingClientRect()
+  const elementRect = element.getBoundingClientRect()
+  return elementRect.top - containerRect.top
 }
 
 function getVisibleAnchor(container: HTMLElement): { id: string; offset: number } | null {
@@ -588,7 +616,19 @@ export default function FeedPage() {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const restoreCompletedRef = useRef(false)
   const rafSaveRef = useRef<number | null>(null)
+  const pendingAutoApplyTimerRef = useRef<number | null>(null)
+  const lastFeedSnapshotRef = useRef<FeedViewSnapshot | null>(null)
+  const viewportAnchorRef = useRef<FeedViewportAnchor | null>(null)
+  const persistFeedPositionRef = useRef<() => void>(() => {})
   const [resumeFeedPosition, setResumeFeedPosition] = useState(true)
+  const [restoreGeneration, setRestoreGeneration] = useState(0)
+
+  const markFeedRestoreCompleted = useCallback(() => {
+    if (!restoreCompletedRef.current) {
+      setRestoreGeneration((generation) => generation + 1)
+    }
+    restoreCompletedRef.current = true
+  }, [])
 
   const { profile: currentUserProfile } = useProfile(currentUser?.pubkey)
   const { isMuted, mutedWords, mutedHashtags } = useMuteList()
@@ -660,7 +700,26 @@ export default function FeedPage() {
     }
   }, [activeArticleFeedId, articleFeedSections])
 
-  const { events, loading, eose } = useNostrFeed({ section: effectiveFeedSection })
+  const shouldBufferNewFeedEvents = useCallback(() => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return true
+    if (!restoreCompletedRef.current) return true
+
+    const container = scrollContainerRef.current
+    if (!container) return false
+
+    return container.scrollTop > LIVE_FEED_AUTO_INSERT_THRESHOLD_PX
+  }, [])
+
+  const {
+    events,
+    loading,
+    eose,
+    pendingEventCount,
+    applyPendingEvents,
+  } = useNostrFeed({
+    section: effectiveFeedSection,
+    shouldBufferNewEvents: shouldBufferNewFeedEvents,
+  })
   const {
     events: semanticTimelineEvents,
     scores: semanticTimelineScores,
@@ -701,7 +760,6 @@ export default function FeedPage() {
   )
   const {
     allowedIds: allowedModerationIds,
-    loading: moderationLoading,
   } = useModerationDocuments(moderationDocuments)
 
   const pullY     = useMotionValue(0)
@@ -712,7 +770,7 @@ export default function FeedPage() {
     () => filterNsfwTaggedEvents(
       tagMatchedEvents.filter((event) => {
         if (isMuted(event.pubkey)) return false
-        if (moderationDocumentIds.has(event.id) && !allowedModerationIds.has(event.id) && !moderationLoading) return false
+        if (moderationDocumentIds.has(event.id) && !allowedModerationIds.has(event.id)) return false
 
         // Word mutes: hide events whose content contains a muted keyword.
         if (mutedWords.size > 0) {
@@ -732,7 +790,7 @@ export default function FeedPage() {
       }),
       hideNsfwTaggedPosts,
     ),
-    [allowedModerationIds, hideNsfwTaggedPosts, isMuted, moderationDocumentIds, moderationLoading, mutedHashtags, mutedWords, tagMatchedEvents],
+    [allowedModerationIds, hideNsfwTaggedPosts, isMuted, moderationDocumentIds, mutedHashtags, mutedWords, tagMatchedEvents],
   )
   const repostFeatureEnabled = !activeTagTimeline && activeSection.id === 'feed' && repostCarouselVisible
   const repostCarouselItems = useMemo(
@@ -778,28 +836,87 @@ export default function FeedPage() {
       : curatedFeedEvents.filter(e => eventPassesFilter(e.id)),
     [topicFilter, curatedFeedEvents, eventPassesFilter],
   )
+  const feedEventSignature = useMemo(
+    () => topicFilteredEvents.map(event => event.id).join('|'),
+    [topicFilteredEvents],
+  )
 
   const heroEvent = topicFilteredEvents[0] ?? null
   const secondaryEvents = topicFilteredEvents.slice(1)
-  const feedSurfaceLoading = loading || moderationLoading
+  const feedSurfaceLoading = loading
 
   useEffect(() => {
     warmSelfThreadIndexCache(visibleEvents)
   }, [visibleEvents])
 
-  const persistFeedPosition = useCallback(() => {
-    if (!resumeFeedPosition) return
+  const captureCurrentFeedView = useCallback((signature = feedEventSignature): FeedViewSnapshot | null => {
     const container = scrollContainerRef.current
-    if (!container) return
+    if (!container) return lastFeedSnapshotRef.current
 
     const anchor = getVisibleAnchor(container)
-    saveFeedViewSnapshot(feedScopeKey, {
+    const snapshot: FeedViewSnapshot = {
       anchorEventId: anchor?.id ?? null,
       anchorOffset: anchor?.offset ?? 0,
       scrollTop: container.scrollTop,
       savedAt: Date.now(),
-    })
-  }, [feedScopeKey, resumeFeedPosition])
+    }
+
+    if (anchor) {
+      viewportAnchorRef.current = {
+        scopeKey: feedScopeKey,
+        eventId: anchor.id,
+        offset: anchor.offset,
+        scrollTop: container.scrollTop,
+        signature,
+      }
+    } else {
+      viewportAnchorRef.current = null
+    }
+
+    lastFeedSnapshotRef.current = snapshot
+    return snapshot
+  }, [feedEventSignature, feedScopeKey])
+
+  const persistFeedPosition = useCallback(() => {
+    if (!resumeFeedPosition) return
+    const snapshot = captureCurrentFeedView()
+    if (!snapshot) return
+    saveFeedViewSnapshot(feedScopeKey, snapshot)
+  }, [captureCurrentFeedView, feedScopeKey, resumeFeedPosition])
+
+  useLayoutEffect(() => {
+    persistFeedPositionRef.current = persistFeedPosition
+  }, [persistFeedPosition])
+
+  useLayoutEffect(() => {
+    if (!resumeFeedPosition) {
+      viewportAnchorRef.current = null
+      return
+    }
+
+    const container = scrollContainerRef.current
+    if (!container || !restoreCompletedRef.current) return
+
+    const previousAnchor = viewportAnchorRef.current
+    if (
+      previousAnchor &&
+      previousAnchor.scopeKey === feedScopeKey &&
+      previousAnchor.signature !== feedEventSignature
+    ) {
+      // Always correct, even near the top — the most jarring displacement
+      // comes from a hero swap when scrollTop is small.
+      const anchorElement = getFeedEventElement(container, previousAnchor.eventId)
+      if (anchorElement) {
+        const nextOffset = getElementOffsetWithinContainer(container, anchorElement)
+        const scrollDelta = nextOffset - previousAnchor.offset
+        if (Math.abs(scrollDelta) > 1) {
+          container.scrollTop += scrollDelta
+        }
+      }
+    }
+
+    captureCurrentFeedView(feedEventSignature)
+  }, [captureCurrentFeedView, feedEventSignature, feedScopeKey, resumeFeedPosition])
 
   useEffect(() => {
     setResumeFeedPosition(getFeedResumeEnabled(resumeScopeId))
@@ -828,15 +945,17 @@ export default function FeedPage() {
   useEffect(() => {
     if (!resumeFeedPosition) {
       clearFeedViewSnapshot(feedScopeKey)
+      lastFeedSnapshotRef.current = null
+      viewportAnchorRef.current = null
       const container = scrollContainerRef.current
       if (container) {
         container.scrollTop = 0
       }
-      restoreCompletedRef.current = true
+      markFeedRestoreCompleted()
     } else {
       restoreCompletedRef.current = false
     }
-  }, [feedScopeKey, resumeFeedPosition])
+  }, [feedScopeKey, markFeedRestoreCompleted, resumeFeedPosition])
 
   useEffect(() => {
     if (!resumeFeedPosition) return
@@ -863,6 +982,65 @@ export default function FeedPage() {
       }
     }
   }, [persistFeedPosition, resumeFeedPosition])
+
+  useLayoutEffect(() => {
+    return () => {
+      persistFeedPositionRef.current()
+      if (pendingAutoApplyTimerRef.current !== null) {
+        window.clearTimeout(pendingAutoApplyTimerRef.current)
+        pendingAutoApplyTimerRef.current = null
+      }
+    }
+  }, [])
+
+  // Manual apply: capture anchor first so the layout effect's scroll-correction
+  // path can keep the user's current reading position pinned after the merge.
+  const handleApplyPendingEvents = useCallback(() => {
+    captureCurrentFeedView(feedEventSignature)
+    applyPendingEvents()
+    const container = scrollContainerRef.current
+    // If the user is at (or near) the top, treat the pill tap as an explicit
+    // "jump to newest" gesture instead of holding position.
+    if (container && container.scrollTop <= LIVE_FEED_AUTO_INSERT_THRESHOLD_PX) {
+      window.requestAnimationFrame(() => {
+        if (scrollContainerRef.current) {
+          scrollContainerRef.current.scrollTop = 0
+        }
+      })
+    }
+  }, [applyPendingEvents, captureCurrentFeedView, feedEventSignature])
+
+  // Only auto-apply when the user is parked at the very top AND the tab is
+  // visible — every other case waits for the user to tap the "Show N new
+  // posts" pill so reading is never interrupted.
+  useEffect(() => {
+    if (pendingEventCount === 0) return
+    if (!restoreCompletedRef.current) return
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+
+    const container = scrollContainerRef.current
+    if (!container) return
+    if (container.scrollTop > LIVE_FEED_AUTO_INSERT_THRESHOLD_PX) return
+
+    if (pendingAutoApplyTimerRef.current !== null) {
+      window.clearTimeout(pendingAutoApplyTimerRef.current)
+    }
+
+    pendingAutoApplyTimerRef.current = window.setTimeout(() => {
+      pendingAutoApplyTimerRef.current = null
+      const live = scrollContainerRef.current
+      if (live && live.scrollTop > LIVE_FEED_AUTO_INSERT_THRESHOLD_PX) return
+      captureCurrentFeedView(feedEventSignature)
+      applyPendingEvents()
+    }, 220)
+
+    return () => {
+      if (pendingAutoApplyTimerRef.current !== null) {
+        window.clearTimeout(pendingAutoApplyTimerRef.current)
+        pendingAutoApplyTimerRef.current = null
+      }
+    }
+  }, [applyPendingEvents, captureCurrentFeedView, feedEventSignature, pendingEventCount, restoreGeneration])
 
   useEffect(() => {
     if (!resumeFeedPosition) return
@@ -895,18 +1073,19 @@ export default function FeedPage() {
     const container = scrollContainerRef.current
     const snapshot = getFeedViewSnapshot(feedScopeKey)
     if (!container) {
-      restoreCompletedRef.current = true
+      markFeedRestoreCompleted()
       return
     }
 
     if (!snapshot) {
       container.scrollTop = 0
-      restoreCompletedRef.current = true
+      markFeedRestoreCompleted()
+      captureCurrentFeedView(feedEventSignature)
       return
     }
 
-    let firstFrame: number | null = null
-    let secondFrame: number | null = null
+    let restoreFrame: number | null = null
+    let attempts = 0
     let cancelled = false
 
     const restore = () => {
@@ -915,52 +1094,51 @@ export default function FeedPage() {
       let restored = false
 
       if (snapshot.anchorEventId) {
-        const selector = `[data-feed-event-id="${snapshot.anchorEventId}"]`
-        const anchorElement = container.querySelector<HTMLElement>(selector)
+        const anchorElement = getFeedEventElement(container, snapshot.anchorEventId)
         if (anchorElement) {
-          const nextTop = Math.max(0, anchorElement.offsetTop - snapshot.anchorOffset)
+          const nextTop = Math.max(
+            0,
+            container.scrollTop + getElementOffsetWithinContainer(container, anchorElement) - snapshot.anchorOffset,
+          )
           container.scrollTop = nextTop
           restored = true
         }
       }
 
-      // If we have an anchor but it is not loaded yet, wait for more feed items
-      // instead of falling back early and causing a visible jump later.
-      if (!restored && snapshot.anchorEventId && !eose) {
-        return false
-      }
-
+      // Seed the virtualizer near the saved position so deep anchors can mount,
+      // then give the next frames a chance to refine by exact event id.
       if (!restored && Number.isFinite(snapshot.scrollTop) && snapshot.scrollTop > 0) {
         container.scrollTop = snapshot.scrollTop
-        restored = true
+        if (!snapshot.anchorEventId || eose || attempts >= MAX_FEED_RESTORE_ATTEMPTS) {
+          restored = true
+        }
       }
 
       return restored || eose
     }
 
-    // Let layout settle before applying the anchor offset.
-    firstFrame = window.requestAnimationFrame(() => {
+    const scheduleRestore = () => {
       if (cancelled) return
-      const firstPassDone = restore()
-      secondFrame = window.requestAnimationFrame(() => {
-        if (cancelled) return
-        const secondPassDone = restore()
-        if (firstPassDone || secondPassDone) {
-          restoreCompletedRef.current = true
-        }
-      })
-    })
+      attempts += 1
+      const restored = restore()
+      if (restored || attempts >= MAX_FEED_RESTORE_ATTEMPTS) {
+        markFeedRestoreCompleted()
+        captureCurrentFeedView(feedEventSignature)
+        return
+      }
+      restoreFrame = window.requestAnimationFrame(scheduleRestore)
+    }
+
+    // Let layout and the virtualizer settle before applying the anchor offset.
+    restoreFrame = window.requestAnimationFrame(scheduleRestore)
 
     return () => {
       cancelled = true
-      if (firstFrame !== null) {
-        window.cancelAnimationFrame(firstFrame)
-      }
-      if (secondFrame !== null) {
-        window.cancelAnimationFrame(secondFrame)
+      if (restoreFrame !== null) {
+        window.cancelAnimationFrame(restoreFrame)
       }
     }
-  }, [eose, feedScopeKey, feedSurfaceLoading, resumeFeedPosition, visibleEvents])
+  }, [captureCurrentFeedView, eose, feedEventSignature, feedScopeKey, feedSurfaceLoading, markFeedRestoreCompleted, resumeFeedPosition, visibleEvents.length])
 
   const checkEvent      = useEventFilterCheck()
   const semanticResults = useSemanticFiltering(visibleEvents)
@@ -968,7 +1146,10 @@ export default function FeedPage() {
   const virtualizer = useVirtualizer({
     count: secondaryEvents.length,
     getScrollElement: () => scrollContainerRef.current,
-    estimateSize: () => 280,
+    // Closer to the median rendered card height (image + author + body), which
+    // reduces post-mount measurement deltas that perturb scroll position when
+    // new items are inserted near the viewport.
+    estimateSize: () => 360,
     overscan: 5,
   })
   const virtualItems = virtualizer.getVirtualItems()
@@ -978,18 +1159,20 @@ export default function FeedPage() {
     : 0
 
   const handleCompose = useCallback(() => {
+    persistFeedPosition()
     navigate({
       pathname: location.pathname,
       search: buildComposeSearch(location.search),
     })
-  }, [location.pathname, location.search, navigate])
+  }, [location.pathname, location.search, navigate, persistFeedPosition])
 
   const handleComposeStory = useCallback(() => {
+    persistFeedPosition()
     navigate({
       pathname: location.pathname,
       search: buildComposeSearch(location.search, { story: true }),
     })
-  }, [location.pathname, location.search, navigate])
+  }, [location.pathname, location.search, navigate, persistFeedPosition])
 
   const stopPullGestureCapture = useCallback((event: React.PointerEvent) => {
     event.stopPropagation()
@@ -1006,6 +1189,7 @@ export default function FeedPage() {
   )
 
   const handleSectionChange = useCallback((id: string) => {
+    persistFeedPosition()
     const section = railSections.find((candidate) => candidate.id === id)
     if (!section) return
 
@@ -1019,7 +1203,7 @@ export default function FeedPage() {
     if (routeSection) {
       navigate('/', { replace: true })
     }
-  }, [location.pathname, location.search, navigate, railSections, routeSection, setTopicFilter])
+  }, [location.pathname, location.search, navigate, persistFeedPosition, railSections, routeSection, setTopicFilter])
 
   useEffect(() => {
     const scopeId = currentUser?.pubkey ?? 'anon'
@@ -1178,8 +1362,9 @@ export default function FeedPage() {
           ref={scrollContainerRef}
           id={`feed-section-${activeSection.id}`}
           role="tabpanel"
+          onPointerDownCapture={persistFeedPosition}
           className="
-            min-h-0 flex-1 overflow-y-auto
+            min-h-0 flex-1 overflow-y-auto [overflow-anchor:auto]
             px-4 pb-safe
           "
         >
@@ -1352,6 +1537,18 @@ export default function FeedPage() {
               </div>
             )}
 
+            {pendingEventCount > 0 && (
+              <div className="sticky top-2 z-20 mt-3 flex justify-center">
+                <button
+                  type="button"
+                  onClick={handleApplyPendingEvents}
+                  className="rounded-full bg-[rgb(var(--color-accent))] px-4 py-2 text-[13px] font-semibold text-white shadow-lg shadow-[rgb(var(--color-accent)/0.35)] transition active:scale-[0.97]"
+                >
+                  Show {pendingEventCount > 99 ? '99+' : pendingEventCount} new {pendingEventCount === 1 ? 'post' : 'posts'}
+                </button>
+              </div>
+            )}
+
             <div className="mt-3">
               {feedSurfaceLoading && !heroEvent ? (
                 <FeedSkeleton type="hero" />
@@ -1366,7 +1563,7 @@ export default function FeedPage() {
                     <HeroCard event={heroEvent} index={0} />
                   </FilteredGate>
                 </div>
-              ) : eose && !moderationLoading ? (
+              ) : eose ? (
                 <EmptyState
                   isTagMix={Boolean(activeTagTimelineDetails && (activeTagTimelineDetails.includeTags.length > 1 || activeTagTimelineDetails.excludeTags.length > 0))}
                   tag={activeTagTimelineDetails && activeTagTimelineDetails.includeTags.length === 1
@@ -1457,6 +1654,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
     storySummary,
     storyTitle,
   } = useStoryCardPreview(event, { ogEnabled: storyPreviewVisible })
+  const eventLanguage = extractEventLanguageTag(event)
   const href = article?.route ?? video?.route ?? `/note/${event.id}`
   return (
     <FilteredGate result={filterResult}>
@@ -1560,7 +1758,11 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
               <TwemojiText text={storySummary} />
             </p>
             {!isStoryCard && (
-              <TranslateTextPanel text={thread?.content ?? ''} />
+              <TranslateTextPanel
+                text={thread?.content ?? ''}
+                autoStart={false}
+                {...(eventLanguage !== null ? { sourceLanguage: eventLanguage } : {})}
+              />
             )}
           </>
         ) : !poll && repost ? (
@@ -1574,6 +1776,8 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
                 className="mt-2"
                 hiddenUrls={hiddenUrls}
                 allowTranslation
+                autoStartTranslation={false}
+                {...(eventLanguage !== null ? { sourceLanguage: eventLanguage } : {})}
               />
             )}
             {attachments.length > 0 && (
@@ -1673,8 +1877,8 @@ function RichStoryMedia({
   const [autoplayFailed, setAutoplayFailed] = useState(false)
 
   // ── Rich-story media moderation ──────────────────────────────
-  // Classify the card image/poster before rendering. failClosed keeps the
-  // placeholder visible during classification instead of flashing content.
+  // Classify the card image/poster while keeping the media surface stable.
+  // Pending or flagged media shows a tap-to-reveal warning instead of blanking.
   const richMediaModerationDocument = useMemo(
     () => buildMediaModerationDocument({
       id: `${eventId}:rich-story`,
@@ -1686,7 +1890,6 @@ function RichStoryMedia({
   )
   const { blocked: richMediaBlocked, loading: richModerationLoading } = useMediaModerationDocument(
     richMediaModerationDocument,
-    { failClosed: true },
   )
   const filteredPlaybackSources = useMemo(
     () => (playbackSources ?? []).filter((source) => shouldAttemptMediaUrl(source.url)),
@@ -1766,14 +1969,7 @@ function RichStoryMedia({
 
   return (
     <div ref={mediaRef} className={`relative mb-4 overflow-hidden rounded-[18px] bg-[rgb(var(--color-surface-secondary))] ${aspectClassName}`}>
-      {richMediaBlocked || richModerationLoading ? (
-        <div
-          className="h-full w-full"
-          style={{
-            background: 'linear-gradient(135deg, rgba(42, 54, 72, 0.18), rgba(42, 54, 72, 0.04))',
-          }}
-        />
-      ) : enableFeedInlineMedia && mediaVisible && youTubeId ? (
+      {enableFeedInlineMedia && mediaVisible && youTubeId && !isSensitive && !isUnfollowed && !richMediaBlocked && !richModerationLoading ? (
         <iframe
           src={`https://www.youtube-nocookie.com/embed/${youTubeId}?modestbranding=1&playsinline=1&rel=0`}
           className="h-full w-full"
@@ -1781,7 +1977,7 @@ function RichStoryMedia({
           allowFullScreen
           title="YouTube video"
         />
-      ) : enableFeedInlineMedia && mediaVisible && vimeoId ? (
+      ) : enableFeedInlineMedia && mediaVisible && vimeoId && !isSensitive && !isUnfollowed && !richMediaBlocked && !richModerationLoading ? (
         <iframe
           src={`https://player.vimeo.com/video/${vimeoId}?title=0&byline=0&portrait=0`}
           className="h-full w-full"
@@ -1789,7 +1985,7 @@ function RichStoryMedia({
           allowFullScreen
           title="Vimeo video"
         />
-      ) : enableFeedInlineMedia && mediaVisible && peertubeEmbed ? (
+      ) : enableFeedInlineMedia && mediaVisible && peertubeEmbed && !isSensitive && !isUnfollowed && !richMediaBlocked && !richModerationLoading ? (
         <iframe
           src={peertubeEmbed}
           className="h-full w-full"
@@ -1831,7 +2027,7 @@ function RichStoryMedia({
             />
           ))}
         </video>
-      ) : imageSrc && !richMediaBlocked && !richModerationLoading ? (
+      ) : imageSrc ? (
         <SensitiveImage
           src={imageSrc}
           className="h-full w-full"

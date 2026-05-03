@@ -6,6 +6,7 @@ import {
   formatZapAmount,
   parseZapReceipt,
   sumZapMsats,
+  validateZapReceipt,
   type LnurlPayData,
 } from './zap'
 
@@ -83,6 +84,53 @@ describe('parseZapReceipt', () => {
     expect(parsed?.senderPubkey).toBeNull()
     expect(parsed?.amountMsats).toBeNull()
     expect(parsed?.comment).toBeNull()
+  })
+})
+
+describe('validateZapReceipt', () => {
+  it('accepts receipts signed by the expected LNURL server pubkey', () => {
+    const recipient = 'c'.repeat(64)
+    const targetEventId = 'd'.repeat(64)
+    const event = signEvent({
+      kind: Kind.Zap,
+      pubkey: 'a'.repeat(64),
+      created_at: 1_700_000_350,
+      tags: [
+        ['p', recipient],
+        ['e', targetEventId],
+        ['description', JSON.stringify({ pubkey: 'b'.repeat(64), tags: [['amount', '21000']] })],
+      ],
+      content: '',
+    })
+
+    expect(validateZapReceipt(event, {
+      expectedLnurlServerPubkey: event.pubkey,
+      expectedRecipientPubkey: recipient,
+      expectedTargetEventId: targetEventId,
+    })).toMatchObject({
+      valid: true,
+      reason: null,
+    })
+  })
+
+  it('rejects receipts signed by an unexpected LNURL server pubkey', () => {
+    const event = signEvent({
+      kind: Kind.Zap,
+      pubkey: 'a'.repeat(64),
+      created_at: 1_700_000_360,
+      tags: [
+        ['p', 'c'.repeat(64)],
+        ['description', JSON.stringify({ tags: [['amount', '21000']] })],
+      ],
+      content: '',
+    })
+
+    expect(validateZapReceipt(event, {
+      expectedLnurlServerPubkey: 'f'.repeat(64),
+    })).toMatchObject({
+      valid: false,
+      reason: 'Zap receipt was not signed by the expected LNURL server pubkey.',
+    })
   })
 })
 

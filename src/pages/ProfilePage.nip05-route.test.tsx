@@ -9,6 +9,7 @@ const resolveNip05IdentifierMock = vi.fn()
 let mockProfileAbout = ''
 
 vi.mock('@/components/nostr/ReportSheet', () => ({ ReportSheet: () => null }))
+vi.mock('@/components/nostr/ZapSheet', () => ({ ZapSheet: () => null }))
 vi.mock('@/components/nostr/UserStatusBody', () => ({ UserStatusBody: () => null }))
 vi.mock('@/components/profile/ProfileMetadataEditor', () => ({ ProfileMetadataEditor: () => null }))
 vi.mock('@/components/translation/TranslateTextPanel', () => ({ TranslateTextPanel: () => null }))

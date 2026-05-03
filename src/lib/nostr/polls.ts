@@ -2,6 +2,7 @@ import { NDKEvent, NDKRelaySet, type NDKFilter } from '@nostr-dev-kit/ndk'
 import { extractHashtags, isValidHex32, isValidRelayURL, sanitizeText } from '@/lib/security/sanitize'
 import { getNDK } from '@/lib/nostr/ndk'
 import { withOptionalClientTag } from '@/lib/nostr/appHandlers'
+import { publishEventWithNip65Outbox } from '@/lib/nostr/outbox'
 import { insertEvent, listPollVoteEvents } from '@/lib/db/nostr'
 import { withRetry } from '@/lib/retry'
 import type { NostrEvent } from '@/types'
@@ -477,18 +478,7 @@ export async function publishPoll({
   await event.sign()
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-  await withRetry(
-    async () => {
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-      await event.publish()
-    },
-    {
-      maxAttempts: 2,
-      baseDelayMs: 750,
-      maxDelayMs: 2_500,
-      ...(signal ? { signal } : {}),
-    },
-  )
+  await publishEventWithNip65Outbox(event, signal)
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent
   await insertEvent(rawEvent)

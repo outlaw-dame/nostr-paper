@@ -4,7 +4,7 @@ import { withOptionalClientTag } from '@/lib/nostr/appHandlers'
 import { getLongFormIdentifier } from '@/lib/nostr/longForm'
 import { getDefaultRelayUrls, getNDK } from '@/lib/nostr/ndk'
 import { buildQuoteTagsFromContent } from '@/lib/nostr/repost'
-import { withRetry } from '@/lib/retry'
+import { publishEventWithNip65Outbox } from '@/lib/nostr/outbox'
 import {
   isSafeMediaURL,
   isValidHex32,
@@ -183,18 +183,7 @@ export async function publishReaction(
   await event.sign()
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-  await withRetry(
-    async () => {
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-      await event.publish()
-    },
-    {
-      maxAttempts: 2,
-      baseDelayMs: 750,
-      maxDelayMs: 2_500,
-      ...(signal ? { signal } : {}),
-    },
-  )
+  await publishEventWithNip65Outbox(event, signal)
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent
   await insertEvent(rawEvent)

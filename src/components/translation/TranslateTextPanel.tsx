@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { TwemojiText } from '@/components/ui/TwemojiText'
 import {
-  inspectConfiguredTranslation,
+  inspectConfiguredTranslationWithOptions,
   TranslationServiceError,
   getProviderDisplayName,
   translateConfiguredText,
@@ -20,6 +20,8 @@ interface TranslateTextPanelProps {
   text: string
   className?: string
   autoStart?: boolean
+  mini?: boolean
+  sourceLanguage?: string | null
 }
 
 const MAX_AUTO_TRANSLATE_CHARS = 2_800
@@ -94,6 +96,8 @@ export function TranslateTextPanel({
   text,
   className = '',
   autoStart = true,
+  mini = false,
+  sourceLanguage,
 }: TranslateTextPanelProps) {
   const [result, setResult] = useState<TranslationResult | null>(null)
   const [hidden, setHidden] = useState(false)
@@ -195,7 +199,10 @@ export function TranslateTextPanel({
     let cancelled = false
     setPreflight(null)
 
-    inspectConfiguredTranslation(trimmedText)
+    inspectConfiguredTranslationWithOptions(
+      trimmedText,
+      sourceLanguage !== undefined ? { sourceLanguageHint: sourceLanguage } : undefined,
+    )
       .then((next) => {
         if (!cancelled) setPreflight(next)
       })
@@ -213,7 +220,7 @@ export function TranslateTextPanel({
     return () => {
       cancelled = true
     }
-  }, [autoStart, hasMeaningfulText, settingsVersion, trimmedText])
+  }, [autoStart, hasMeaningfulText, settingsVersion, sourceLanguage, trimmedText])
 
   useEffect(() => {
     if (!trimmedText || !requested) return
@@ -340,8 +347,30 @@ export function TranslateTextPanel({
   }, [detectedLanguage, result])
   const sameLanguage = preflight?.sameLanguage ?? false
 
+  const stopPropagation = (event: React.SyntheticEvent) => {
+    event.stopPropagation()
+  }
+
   if (!trimmedText || !hasMeaningfulText) return null
   if (sameLanguage || sameLanguageResult || errorCode === 'same-language') return null
+
+  if (mini) {
+    if (!result?.translatedText.trim()) return null
+    if (hidden) return null
+
+    return (
+      <div
+        className={`mt-2 rounded-[10px] bg-[rgb(var(--color-system-blue)/0.08)] px-2.5 py-2 ${className}`}
+        onClick={stopPropagation}
+        onPointerDownCapture={stopPropagation}
+        onPointerUpCapture={stopPropagation}
+      >
+        <p className="whitespace-pre-wrap break-words text-[13px] leading-[1.45] text-[rgb(var(--color-label-secondary))]">
+          <TwemojiText text={result.translatedText} />
+        </p>
+      </div>
+    )
+  }
 
   const requestTranslation = () => {
     pendingRequestIsAutoRef.current = false
@@ -355,10 +384,6 @@ export function TranslateTextPanel({
 
   const autoBlocked = autoBlockedUntil > now
   const autoLongText = trimmedText.length > MAX_AUTO_TRANSLATE_CHARS
-
-  const stopPropagation = (event: React.SyntheticEvent) => {
-    event.stopPropagation()
-  }
 
   return (
     <div
@@ -374,9 +399,13 @@ export function TranslateTextPanel({
               type="button"
               onClick={requestTranslation}
               onPointerDownCapture={stopPropagation}
-              className="text-[12px] font-semibold tracking-[0.01em] text-[#007AFF]"
+              className="inline-flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.01em] text-[#007AFF]"
             >
-              🌐 {tTranslationUi('translateAction')}
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+                <circle cx="8" cy="8" r="6.25" stroke="currentColor" strokeWidth="1.4" />
+                <path d="M2.25 8h11.5M8 1.75c1.6 1.55 2.4 3.64 2.4 6.25S9.6 12.7 8 14.25C6.4 12.7 5.6 10.61 5.6 8S6.4 3.3 8 1.75Z" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span>{tTranslationUi('translateAction')}</span>
             </button>
           )}
           {autoLongText && (

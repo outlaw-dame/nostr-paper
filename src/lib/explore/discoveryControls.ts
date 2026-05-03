@@ -9,6 +9,15 @@ export interface TrendingTopicWeights {
   momentum: number
 }
 
+// News links age faster than hashtags, so freshness and diversity carry more
+// weight here compared to the trending-topics defaults.
+export interface TrendingLinkWeights {
+  popularity: number
+  diversity: number
+  freshness: number
+  momentum: number
+}
+
 export interface SuggestedAccountWeights {
   social: number
   semantic: number
@@ -24,6 +33,7 @@ export interface FollowPackWeights {
 
 export interface DiscoveryControls {
   trending: TrendingTopicWeights
+  links: TrendingLinkWeights
   suggested: SuggestedAccountWeights
   followPacks: FollowPackWeights
 }
@@ -34,6 +44,12 @@ export const DEFAULT_DISCOVERY_CONTROLS: DiscoveryControls = {
     diversity: 0.26,
     freshness: 0.20,
     momentum: 0.16,
+  },
+  links: {
+    popularity: 0.32,
+    diversity: 0.30,
+    freshness: 0.24,
+    momentum: 0.14,
   },
   suggested: {
     social: 0.58,
@@ -80,6 +96,16 @@ function normalizeControls(partial?: Partial<DiscoveryControls> | null): Discove
     DEFAULT_DISCOVERY_CONTROLS.trending,
   )
 
+  const links = normalizeRatioWeights(
+    {
+      popularity: coerceNumber(partial?.links?.popularity, DEFAULT_DISCOVERY_CONTROLS.links.popularity),
+      diversity: coerceNumber(partial?.links?.diversity, DEFAULT_DISCOVERY_CONTROLS.links.diversity),
+      freshness: coerceNumber(partial?.links?.freshness, DEFAULT_DISCOVERY_CONTROLS.links.freshness),
+      momentum: coerceNumber(partial?.links?.momentum, DEFAULT_DISCOVERY_CONTROLS.links.momentum),
+    },
+    DEFAULT_DISCOVERY_CONTROLS.links,
+  )
+
   const suggested = normalizeRatioWeights(
     {
       social: coerceNumber(partial?.suggested?.social, DEFAULT_DISCOVERY_CONTROLS.suggested.social),
@@ -100,6 +126,7 @@ function normalizeControls(partial?: Partial<DiscoveryControls> | null): Discove
 
   return {
     trending,
+    links,
     suggested,
     followPacks: { semanticBoost },
   }
@@ -124,8 +151,9 @@ export function saveDiscoveryControls(next: Partial<DiscoveryControls>): Discove
   const merged = normalizeControls({
     ...current,
     ...next,
-    trending: { ...current.trending, ...next.trending },
-    suggested: { ...current.suggested, ...next.suggested },
+    trending:    { ...current.trending,    ...next.trending },
+    links:       { ...current.links,       ...next.links },
+    suggested:   { ...current.suggested,   ...next.suggested },
     followPacks: { ...current.followPacks, ...next.followPacks },
   })
 

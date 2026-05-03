@@ -22,6 +22,7 @@ import { useModerationDocuments } from '@/hooks/useModeration'
 import { useSearch } from '@/hooks/useSearch'
 import { useProfile } from '@/hooks/useProfile'
 import { useSelfThreadIndex } from '@/hooks/useSelfThreadIndex'
+import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { useMuteList } from '@/hooks/useMuteList'
 import { useHideNsfwTaggedPosts } from '@/hooks/useHideNsfwTaggedPosts'
 import { getEventMediaAttachments, getImetaHiddenUrls } from '@/lib/nostr/imeta'
@@ -37,6 +38,7 @@ import { parseSearchQuery, warmSearchRelays } from '@/lib/nostr/search'
 import { extractEventHashtags } from '@/lib/feed/tagTimeline'
 import { initSemanticSearch } from '@/lib/semantic/client'
 import { parseCommentEvent, parseThreadEvent } from '@/lib/nostr/thread'
+import { parseContentWarning } from '@/lib/nostr/contentWarning'
 import { sanitizeText } from '@/lib/security/sanitize'
 import { parseVideoEvent } from '@/lib/nostr/video'
 import { tApp } from '@/lib/i18n/app'
@@ -130,11 +132,9 @@ export default function SearchPage() {
   )
   const {
     allowedIds: allowedEventIds,
-    loading: _eventModerationLoading,
   } = useModerationDocuments(eventModerationDocuments)
   const {
     allowedIds: allowedProfileIds,
-    loading: _profileModerationLoading,
   } = useModerationDocuments(profileModerationDocuments)
   const visibleEvents = useMemo(
     () => filterNsfwTaggedEvents(
@@ -396,6 +396,7 @@ function EventResult({
 }) {
   const { profile } = useProfile(event.pubkey, { background: false })
   const threadIndex = useSelfThreadIndex(event)
+  const followStatus = useFollowStatus(event.pubkey)
   const filterResult = useMemo(
     () => mergeResults(checkEvent(event, profile ?? undefined), semanticResult),
     [checkEvent, event, profile, semanticResult],
@@ -407,6 +408,7 @@ function EventResult({
   const comment = parseCommentEvent(event)
   const attachments = getEventMediaAttachments(event)
   const hiddenUrls = getImetaHiddenUrls(event)
+  const contentWarning = parseContentWarning(event)
   const kindLabel = poll
     ? tApp('searchKindPoll')
     : article
@@ -479,6 +481,9 @@ function EventResult({
                   className="mt-3"
                   compact
                   interactive={false}
+                  isSensitive={contentWarning !== null}
+                  sensitiveReason={contentWarning?.reason ?? null}
+                  isUnfollowed={followStatus === false}
                 />
               )}
             </>

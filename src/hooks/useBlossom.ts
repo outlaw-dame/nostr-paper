@@ -3,8 +3,8 @@
  *
  * Orchestrates:
  *   1. SHA-256 hashing of the selected file (Web Crypto)
- *   2. NIP-98 auth token creation per server (signed by NIP-07 extension)
- *   3. Parallel upload to all configured servers (best-effort)
+ *   2. BUD-11 auth token creation per Blossom server (signed by NIP-07 extension)
+ *   3. Sequential upload to configured servers so signer prompts do not overlap
  *   4. Local blob metadata caching in SQLite
  *
  * Usage:
@@ -14,8 +14,13 @@
 
 import { useState, useCallback } from 'react'
 import { sha256File }          from '@/lib/blossom/hash'
-import { createNIP98Auth }     from '@/lib/blossom/auth'
-import { blossomBlobUrl, blossomUpload, BlossomError } from '@/lib/blossom/client'
+import { createBlossomAuth, createNIP98Auth } from '@/lib/blossom/auth'
+import {
+  BlossomError,
+  blossomBlobUrl,
+  blossomUpload,
+  blossomUploadRequirements,
+} from '@/lib/blossom/client'
 import { discoverNip96Server, nip96Upload } from '@/lib/blossom/nip96'
 import { getBlossomServers, cacheBlob } from '@/lib/db/blossom'
 import {
@@ -70,16 +75,31 @@ export function useBlossomUpload() {
         })
 
         try {
-          const uploadUrl = `${server.url.replace(/\/+$/, '')}/upload`
-          const auth = await createNIP98Auth(ndk, {
-            url:     uploadUrl,
-            method:  'PUT',
-            payload: sha256,
+          const auth = await createBlossomAuth(ndk, {
+            verb: 'upload',
+            serverUrl: server.url,
+            sha256,
+            content: `Upload ${file.name || 'media'} with Blossom`,
           })
+
           let blob: BlossomBlob | null = null
           let transport: BlossomUploadDiagnostic['transport'] = 'blossom'
 
           try {
+            const requirements = await blossomUploadRequirements(server.url, {
+              sha256,
+              size: file.size,
+              type: file.type || 'application/octet-stream',
+            }, auth)
+
+            if (!requirements.ok) {
+              throw new BlossomError(
+                `Upload rejected by ${server.url} (${requirements.httpStatus}): ${requirements.reason ?? 'Upload not accepted.'}`,
+                requirements.httpStatus,
+                server.url,
+              )
+            }
+
             blob = await blossomUpload(server.url, file, sha256, auth)
           } catch (blossomErr) {
             const nip96 = await discoverNip96Server(server.url)
@@ -131,7 +151,7 @@ export function useBlossomUpload() {
 
       const fallbackUrls = [...new Set(
         successfulServers
-          .map(serverUrl => blossomBlobUrl(serverUrl, firstBlob!.sha256))
+          .map(serverUrl => blossomBlobUrl(serverUrl, firstBlob!.sha256, firstBlob!.type))
           .filter(url => url !== firstBlob!.url),
       )]
 

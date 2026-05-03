@@ -10,6 +10,7 @@
  */
 
 import { dbQuery, dbRun, dbTransaction } from '@/lib/db/client'
+import { normaliseBlossomUrl } from '@/lib/blossom/validate'
 import { normalizeNip94FromObject } from '@/lib/nostr/fileMetadata'
 import type { BlossomServer, BlossomBlob, DBBlossomServer, DBBlossomBlob, Nip94Tags } from '@/types'
 
@@ -20,10 +21,45 @@ export async function getBlossomServers(): Promise<BlossomServer[]> {
   const rows = await dbQuery<DBBlossomServer>(
     'SELECT url, priority, added_at FROM blossom_servers ORDER BY priority ASC'
   )
-  return rows.map(r => ({
+  const stored = rows.map(r => ({
     url:      r.url,
     priority: r.priority,
     addedAt:  r.added_at,
+  }))
+
+  const defaults = getDefaultBlossomServersFromEnv()
+  if (stored.length === 0) return defaults
+
+  const seen = new Set(stored.map(server => server.url))
+  const missingDefaults = defaults
+    .filter(server => !seen.has(server.url))
+    .map((server, index) => ({
+      ...server,
+      priority: stored.length + index,
+    }))
+
+  return [...stored, ...missingDefaults]
+}
+
+function getDefaultBlossomServersFromEnv(): BlossomServer[] {
+  const raw = import.meta.env.VITE_DEFAULT_BLOSSOM_SERVERS
+  if (!raw) return []
+
+  const now = Math.floor(Date.now() / 1000)
+  const seen = new Set<string>()
+  const urls: string[] = []
+
+  for (const candidate of raw.split(',')) {
+    const normalized = normaliseBlossomUrl(candidate.trim())
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    urls.push(normalized)
+  }
+
+  return urls.map((url, index) => ({
+    url,
+    priority: index,
+    addedAt: now,
   }))
 }
 

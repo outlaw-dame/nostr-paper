@@ -1,1 +1,479 @@
-[]
+[
+  {
+    "timestamp": "2026-04-28T10:23:26.118Z",
+    "commit": "local",
+    "hybrid": {
+      "fixtures": [
+        {
+          "fixture": "keyword-intent: exact lexical hit preserved",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "semantic-heavy: conceptual doc lifted into top results",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "recall scenario: both lexical and semantic hits in top-k",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        }
+      ],
+      "summary": {
+        "ndcgMean": 1,
+        "recallMean": 1,
+        "top1AccuracyPct": 1
+      }
+    },
+    "moderation": {
+      "text": {
+        "tp": 7,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      },
+      "media": {
+        "tp": 5,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      }
+    }
+  },
+  {
+    "timestamp": "2026-04-28T10:33:35.170Z",
+    "commit": "local",
+    "hybrid": {
+      "fixtures": [
+        {
+          "fixture": "keyword-intent: exact lexical hit preserved",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "semantic-heavy: conceptual doc lifted into top results",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "recall scenario: both lexical and semantic hits in top-k",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        }
+      ],
+      "summary": {
+        "ndcgMean": 1,
+        "recallMean": 1,
+        "top1AccuracyPct": 1
+      }
+    },
+    "moderation": {
+      "text": {
+        "tp": 7,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      },
+      "media": {
+        "tp": 5,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      }
+    }
+  },
+  {
+    "timestamp": "2026-04-28T13:02:08.333Z",
+    "commit": "local",
+    "hybrid": {
+      "fixtures": [
+        {
+          "fixture": "keyword-intent: exact lexical hit preserved",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "semantic-heavy: conceptual doc lifted into top results",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "recall scenario: both lexical and semantic hits in top-k",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        }
+      ],
+      "summary": {
+        "ndcgMean": 1,
+        "recallMean": 1,
+        "top1AccuracyPct": 1
+      }
+    },
+    "moderation": {
+      "text": {
+        "tp": 7,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      },
+      "media": {
+        "tp": 5,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      }
+    }
+  },
+  {
+    "timestamp": "2026-04-29T23:35:35.158Z",
+    "commit": "local",
+    "hybrid": {
+      "fixtures": [
+        {
+          "fixture": "keyword-intent: exact lexical hit preserved",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "semantic-heavy: conceptual doc lifted into top results",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "recall scenario: both lexical and semantic hits in top-k",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        }
+      ],
+      "summary": {
+        "ndcgMean": 1,
+        "recallMean": 1,
+        "top1AccuracyPct": 1
+      }
+    },
+    "moderation": {
+      "text": {
+        "tp": 7,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      },
+      "media": {
+        "tp": 5,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      }
+    }
+  },
+  {
+    "timestamp": "2026-04-30T02:28:05.239Z",
+    "commit": "local",
+    "hybrid": {
+      "fixtures": [
+        {
+          "fixture": "keyword-intent: exact lexical hit preserved",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "semantic-heavy: conceptual doc lifted into top results",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "recall scenario: both lexical and semantic hits in top-k",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        }
+      ],
+      "summary": {
+        "ndcgMean": 1,
+        "recallMean": 1,
+        "top1AccuracyPct": 1
+      }
+    },
+    "moderation": {
+      "text": {
+        "tp": 7,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      },
+      "media": {
+        "tp": 5,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      }
+    }
+  },
+  {
+    "timestamp": "2026-04-30T02:30:15.725Z",
+    "commit": "local",
+    "hybrid": {
+      "fixtures": [
+        {
+          "fixture": "keyword-intent: exact lexical hit preserved",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "semantic-heavy: conceptual doc lifted into top results",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "recall scenario: both lexical and semantic hits in top-k",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        }
+      ],
+      "summary": {
+        "ndcgMean": 1,
+        "recallMean": 1,
+        "top1AccuracyPct": 1
+      }
+    },
+    "moderation": {
+      "text": {
+        "tp": 7,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      },
+      "media": {
+        "tp": 5,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      }
+    }
+  },
+  {
+    "timestamp": "2026-04-30T02:32:10.444Z",
+    "commit": "local",
+    "hybrid": {
+      "fixtures": [
+        {
+          "fixture": "keyword-intent: exact lexical hit preserved",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "semantic-heavy: conceptual doc lifted into top results",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "recall scenario: both lexical and semantic hits in top-k",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        }
+      ],
+      "summary": {
+        "ndcgMean": 1,
+        "recallMean": 1,
+        "top1AccuracyPct": 1
+      }
+    },
+    "moderation": {
+      "text": {
+        "tp": 7,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      },
+      "media": {
+        "tp": 5,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      }
+    }
+  },
+  {
+    "timestamp": "2026-05-03T13:38:51.267Z",
+    "commit": "local",
+    "hybrid": {
+      "fixtures": [
+        {
+          "fixture": "keyword-intent: exact lexical hit preserved",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "semantic-heavy: conceptual doc lifted into top results",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "recall scenario: both lexical and semantic hits in top-k",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        }
+      ],
+      "summary": {
+        "ndcgMean": 1,
+        "recallMean": 1,
+        "top1AccuracyPct": 1
+      }
+    },
+    "moderation": {
+      "text": {
+        "tp": 7,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      },
+      "media": {
+        "tp": 5,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      }
+    }
+  },
+  {
+    "timestamp": "2026-05-03T13:46:46.784Z",
+    "commit": "local",
+    "hybrid": {
+      "fixtures": [
+        {
+          "fixture": "keyword-intent: exact lexical hit preserved",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "semantic-heavy: conceptual doc lifted into top results",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        },
+        {
+          "fixture": "recall scenario: both lexical and semantic hits in top-k",
+          "ndcg": 1,
+          "recall": 1,
+          "top1Correct": true
+        }
+      ],
+      "summary": {
+        "ndcgMean": 1,
+        "recallMean": 1,
+        "top1AccuracyPct": 1
+      }
+    },
+    "moderation": {
+      "text": {
+        "tp": 7,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      },
+      "media": {
+        "tp": 5,
+        "tn": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "falsePositiveRate": 0
+      }
+    }
+  }
+]

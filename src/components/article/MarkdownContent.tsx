@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Nip21Mention } from '@/components/nostr/Nip21Mention'
 import { TwemojiText } from '@/components/ui/TwemojiText'
 import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
+import { MediaRevealGate, getMediaRevealReason } from '@/components/media/MediaRevealGate'
 import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import { getNip21Route } from '@/lib/nostr/nip21'
 import { isSafeMarkdownLinkDestination } from '@/lib/nostr/longForm'
@@ -395,21 +396,27 @@ function MarkdownImageBlock({
     [id, url],
   )
   const { blocked, loading } = useMediaModerationDocument(moderationDocument)
-
-  if (moderationDocument && (loading || blocked)) {
-    return null
-  }
+  const revealReason = getMediaRevealReason({
+    blocked: moderationDocument !== null && blocked,
+    loading: moderationDocument !== null && loading,
+  })
 
   return (
     <figure className="overflow-hidden rounded-ios-xl bg-[rgb(var(--color-bg-secondary))] card-elevated">
-      <img
-        src={url}
-        alt={alt ?? ''}
-        loading="lazy"
-        decoding="async"
-        referrerPolicy="no-referrer"
-        className="w-full h-auto object-cover"
-      />
+      <MediaRevealGate
+        reason={revealReason}
+        resetKey={`${url}:${revealReason ?? 'none'}`}
+        className="min-h-[12rem] w-full"
+      >
+        <img
+          src={url}
+          alt={alt ?? ''}
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          className="h-full w-full object-cover"
+        />
+      </MediaRevealGate>
       {alt && (
         <figcaption className="px-4 py-3 text-[13px] text-[rgb(var(--color-label-secondary))]">
           <TwemojiText text={alt} />

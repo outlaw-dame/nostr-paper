@@ -149,4 +149,28 @@ describe('normalizeNip94FromObject', () => {
 
     expect(normalized?.fallbacks).toEqual(['https://fallback.example.com/video.mp4'])
   })
+
+  it('normalizes BUD-08 nip94 tag arrays returned by Blossom servers', () => {
+    const normalized = normalizeNip94FromObject([
+      ['url', 'https://cdn.example.com/video.mp4'],
+      ['m', 'video/mp4'],
+      ['x', 'a'.repeat(64)],
+      ['size', '42'],
+      ['fallback', 'https://archive.example.com/ipfs/bafyarchive'],
+      ['service', 'blossom-r2-filebase'],
+    ], {
+      url: 'https://cdn.example.com/fallback.mp4',
+      mimeType: 'application/octet-stream',
+      fileHash: 'f'.repeat(64),
+    })
+
+    expect(normalized).toEqual({
+      url: 'https://cdn.example.com/video.mp4',
+      mimeType: 'video/mp4',
+      fileHash: 'a'.repeat(64),
+      size: 42,
+      fallbacks: ['https://archive.example.com/ipfs/bafyarchive'],
+      service: 'blossom-r2-filebase',
+    })
+  })
 })

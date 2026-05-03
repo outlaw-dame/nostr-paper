@@ -23,6 +23,19 @@ function getDefaultRelayPreferences(): RelayPreference[] {
   return getDefaultRelayUrls().map(url => ({ url, read: true, write: true }))
 }
 
+function serializeRelayPreference(p: RelayPreference): string {
+  return `${p.url}:${p.read ? 'r' : ''}${p.write ? 'w' : ''}`
+}
+
+export function relayListsAreEqual(
+  a: readonly RelayPreference[],
+  b: readonly RelayPreference[],
+): boolean {
+  if (a.length !== b.length) return false
+  const setA = new Set(a.map(serializeRelayPreference))
+  return b.every(p => setA.has(serializeRelayPreference(p)))
+}
+
 export function parseRelayListPreferences(event: Pick<NostrEvent, 'tags'> | null | undefined): RelayPreference[] {
   if (!event) return []
 
@@ -89,6 +102,8 @@ export async function importCurrentUserRelayListPreferences(
 export async function publishCurrentUserRelayList(options: {
   relayPreferences?: readonly RelayPreference[]
   relayUrls?: readonly string[]
+  publishRelayUrls?: readonly string[]
+  force?: boolean
   signal?: AbortSignal
 } = {}): Promise<NostrEvent | null> {
   const ndk = getNDK()
@@ -107,8 +122,22 @@ export async function publishCurrentUserRelayList(options: {
     throw new Error('Relay list must contain at least one valid relay URL.')
   }
 
+  // Skip publishing when explicit preferences are provided but are identical to the
+  // currently stored list. Prevents noisy relay traffic from no-op saves.
+  // When no explicit preferences are given, always publish (explicit republish intent).
+  if (!options.force && (options.relayPreferences ?? options.relayUrls)) {
+    const currentPreferences = normalizeRelayPreferences(getEffectiveRelayListEntries())
+    if (relayListsAreEqual(relayPreferences, currentPreferences)) {
+      return null
+    }
+  }
+
   const relayUrls = relayPreferences.map(({ url }) => url)
-  const publishRelayUrls = normalizeRelayUrls([...relayUrls, ...getOutboxRelayUrls()])
+  const publishRelayUrls = normalizeRelayUrls([
+    ...relayUrls,
+    ...getOutboxRelayUrls(),
+    ...(options.publishRelayUrls ?? []),
+  ])
   const event = new NDKEvent(ndk)
   event.kind = Kind.RelayList
   event.content = ''

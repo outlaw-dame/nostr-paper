@@ -26,8 +26,24 @@ services:
       retries: 10
 
   strfry:
-    image: ghcr.io/hoytech/strfry:latest
+    build:
+      context: ..
+      dockerfile: infra/strfry/Dockerfile
     command: ["relay", "/etc/strfry.conf"]
+    environment:
+      RELAY_POLICY_MODE: ${RELAY_POLICY_MODE:-enforce}
+      RELAY_POLICY_VERSION: ${RELAY_POLICY_VERSION:-relay-policy-v1}
+      RELAY_POLICY_PUBKEY_POINTS_PER_MINUTE: ${RELAY_POLICY_PUBKEY_POINTS_PER_MINUTE:-120}
+      RELAY_POLICY_SOURCE_POINTS_PER_MINUTE: ${RELAY_POLICY_SOURCE_POINTS_PER_MINUTE:-600}
+      RELAY_POLICY_GLOBAL_POINTS_PER_SECOND: ${RELAY_POLICY_GLOBAL_POINTS_PER_SECOND:-250}
+      RELAY_POLICY_BURST_MULTIPLIER: ${RELAY_POLICY_BURST_MULTIPLIER:-2}
+      RELAY_POLICY_HELLTHREAD_TAG_LIMIT: ${RELAY_POLICY_HELLTHREAD_TAG_LIMIT:-80}
+      RELAY_POLICY_MAX_TAGS: ${RELAY_POLICY_MAX_TAGS:-2000}
+      RELAY_POLICY_ALLOWLIST_PUBKEYS: ${RELAY_POLICY_ALLOWLIST_PUBKEYS:-}
+      RELAY_POLICY_ALLOWLIST_SOURCES: ${RELAY_POLICY_ALLOWLIST_SOURCES:-}
+      RELAY_FACT_CHECK_ENABLED: ${RELAY_FACT_CHECK_ENABLED:-false}
+      RELAY_FACT_CHECK_API_KEY: ${GOOGLE_API_KEY:-}
+      RELAY_FACT_CHECK_FLAG_COST_MULTIPLIER: ${RELAY_FACT_CHECK_FLAG_COST_MULTIPLIER:-3}
     ports:
       - "${STRFRY_PORT:-7777}:7777"
     volumes:
@@ -38,6 +54,9 @@ services:
     build: ../services/ingestion-bridge
     environment:
       STRFRY_URL: ws://strfry:7777
+      TAGR_RELAY_URL: ${TAGR_RELAY_URL:-wss://relay.nos.social}
+      TAGR_BOT_PUBKEY: ${TAGR_BOT_PUBKEY:-56d4b3d6310fadb7294b7f041aab469c5ffc8991b1b1b331981b96a246f6ae65}
+      TAGR_POLICY_VERSION: ${TAGR_POLICY_VERSION:-tagr-v1}
       REDIS_URL: redis://redis:6379
       REDIS_STREAM: events.ingest
       LOG_LEVEL: info
@@ -52,6 +71,7 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       POSTGRES_URL: postgres://nostr:nostr@postgres:5432/nostr_search
+      TAGR_BOT_PUBKEY: ${TAGR_BOT_PUBKEY:-56d4b3d6310fadb7294b7f041aab469c5ffc8991b1b1b331981b96a246f6ae65}
       REDIS_STREAM: events.ingest
       EMBED_STREAM: events.embed
       LOG_LEVEL: info
@@ -77,7 +97,9 @@ services:
         condition: service_healthy
 
   search:
-    build: ../services/search-api
+    build:
+      context: ..
+      dockerfile: services/search-api/Dockerfile
     environment:
       POSTGRES_URL: postgres://nostr:nostr@postgres:5432/nostr_search
       PORT: 3001

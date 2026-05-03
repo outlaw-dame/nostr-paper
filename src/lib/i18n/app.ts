@@ -21,6 +21,7 @@ const APP_MESSAGES: Record<AppLocale, AppMessageDictionary> = {
     feedPullToCompose: 'Pull to compose',
     feedOpenSearch: 'Open search',
     feedSearchPrompt: 'Search notes, articles, videos, and people',
+    feedShowNewPosts: 'Show {count} new posts',
 
     profileUpdating: 'Updating...',
     profileUnmute: 'Unmute',
@@ -126,6 +127,17 @@ const APP_MESSAGES: Record<AppLocale, AppMessageDictionary> = {
     explorePopularAccountsHint: 'Consistently followed accounts in your local graph',
     explorePopularInGraph: 'Popular in your local graph',
     exploreNoProfilesCached: 'No profiles cached yet.',
+
+    exploreNewsSection: 'News',
+    exploreNewsSectionHint: 'Links trending in your local cache — ranked by diversity, freshness, and engagement',
+    exploreNoNews: 'No trending links yet — sync more content to see what links people are sharing.',
+    exploreNewsDiscussing: '{count} discussing',
+
+    linkTimelineTitle: 'Discussing',
+    linkTimelineBack: 'Back',
+    linkTimelineNoPosts: 'No posts found for this link.',
+    linkTimelineLoadMore: 'Load more',
+    linkTimelineLoading: 'Loading…',
 
     explorePackNotePrefix: 'Pack note: {petname}',
     explorePackFollowCount: 'Follow {count}',
@@ -421,6 +433,10 @@ const APP_MESSAGES: Record<AppLocale, AppMessageDictionary> = {
     relaysImportCardBody: 'Import your signed-in account\'s current kind-10002 read/write roles into this device, then keep editing locally.',
     relaysImporting: 'Importing...',
     relaysImportRemote: 'Import Remote Roles',
+    relaysLocalRelayTitle: 'Local relay quick toggle',
+    relaysLocalRelayHint: 'Matches Damus/Primal style: keep relay control in user settings. Toggle adds or removes this relay from your active list.',
+    relaysLocalRelayEnable: 'Use My Local Relay',
+    relaysLocalRelayDisable: 'Stop Using Local Relay',
     relaysRecommendationsSection: 'Recommendations',
     relaysFastReadCoverage: 'Fast read coverage',
     relaysFastReadCoverageHint: 'Keep at least one low-latency read relay for feed refreshes and search-heavy browsing.',
@@ -639,6 +655,7 @@ const APP_MESSAGES: Record<AppLocale, AppMessageDictionary> = {
     feedPullToCompose: 'Desliza para redactar',
     feedOpenSearch: 'Abrir busqueda',
     feedSearchPrompt: 'Buscar notas, articulos, videos y personas',
+    feedShowNewPosts: 'Mostrar {count} publicaciones nuevas',
 
     profileUpdating: 'Actualizando...',
     profileUnmute: 'Quitar silencio',
@@ -744,6 +761,17 @@ const APP_MESSAGES: Record<AppLocale, AppMessageDictionary> = {
     explorePopularAccountsHint: 'Cuentas seguidas de forma consistente en tu grafo local',
     explorePopularInGraph: 'Popular en tu grafo local',
     exploreNoProfilesCached: 'Aun no hay perfiles en cache.',
+
+    exploreNewsSection: 'Noticias',
+    exploreNewsSectionHint: 'Enlaces en tendencia en tu cache local — clasificados por diversidad, frescura y participacion',
+    exploreNoNews: 'Aun no hay enlaces en tendencia — sincroniza mas contenido para ver que enlaces comparte la gente.',
+    exploreNewsDiscussing: '{count} hablando',
+
+    linkTimelineTitle: 'Discutiendo',
+    linkTimelineBack: 'Atras',
+    linkTimelineNoPosts: 'No se encontraron publicaciones para este enlace.',
+    linkTimelineLoadMore: 'Cargar mas',
+    linkTimelineLoading: 'Cargando…',
 
     explorePackNotePrefix: 'Nota del paquete: {petname}',
     explorePackFollowCount: 'Seguir {count}',
@@ -1039,6 +1067,10 @@ const APP_MESSAGES: Record<AppLocale, AppMessageDictionary> = {
     relaysImportCardBody: 'Importa en este dispositivo los roles actuales kind-10002 de lectura/escritura de tu cuenta iniciada y luego sigue editando localmente.',
     relaysImporting: 'Importando...',
     relaysImportRemote: 'Importar roles remotos',
+    relaysLocalRelayTitle: 'Alternancia rapida de relay local',
+    relaysLocalRelayHint: 'Sigue el estilo de Damus/Primal: el control del relay vive en ajustes del usuario. La alternancia agrega o quita este relay de tu lista activa.',
+    relaysLocalRelayEnable: 'Usar mi relay local',
+    relaysLocalRelayDisable: 'Dejar de usar relay local',
     relaysRecommendationsSection: 'Recomendaciones',
     relaysFastReadCoverage: 'Cobertura de lectura rapida',
     relaysFastReadCoverageHint: 'Conserva al menos un relay de lectura de baja latencia para actualizar feeds y navegar busquedas intensivas.',

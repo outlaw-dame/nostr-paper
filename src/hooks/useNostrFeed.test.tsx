@@ -22,11 +22,14 @@ interface Snapshot {
   loading: boolean
   eose: boolean
   error: string | null
+  pendingEventCount: number
+  applyPendingEvents: () => void
   refresh: () => Promise<void>
 }
 
 interface HarnessProps {
   section: FeedSection
+  shouldBufferNewEvents?: () => boolean
   onSnapshot: (snapshot: Snapshot) => void
 }
 
@@ -70,8 +73,12 @@ vi.mock('@/lib/nostr/expiration', () => ({
   isEventExpired: () => false,
 }))
 
-function Harness({ section, onSnapshot }: HarnessProps) {
-  const state = useNostrFeed({ section })
+function Harness({ section, shouldBufferNewEvents, onSnapshot }: HarnessProps) {
+  const state = useNostrFeed(
+    shouldBufferNewEvents
+      ? { section, shouldBufferNewEvents }
+      : { section },
+  )
 
   useEffect(() => {
     onSnapshot(state)
@@ -157,6 +164,8 @@ describe('useNostrFeed', () => {
       loading: true,
       eose: false,
       error: null,
+      pendingEventCount: 0,
+      applyPendingEvents: () => {},
       refresh: async () => {},
     }
 
@@ -192,6 +201,8 @@ describe('useNostrFeed', () => {
       loading: true,
       eose: false,
       error: null,
+      pendingEventCount: 0,
+      applyPendingEvents: () => {},
       refresh: async () => {},
     }
 
@@ -228,6 +239,8 @@ describe('useNostrFeed', () => {
       loading: true,
       eose: false,
       error: null,
+      pendingEventCount: 0,
+      applyPendingEvents: () => {},
       refresh: async () => {},
     }
 
@@ -248,6 +261,126 @@ describe('useNostrFeed', () => {
     expect(waitForCachedEventsMock).toHaveBeenCalledWith(['relay-event'])
     expect(queryEventsMock).toHaveBeenLastCalledWith({ ids: ['relay-event'], limit: 1 })
     expect(latest.events).toEqual([canonicalEvent])
+    vi.useRealTimers()
+  })
+
+  it('buffers live relay events until the reader asks to show them', async () => {
+    vi.useFakeTimers()
+    const subscription = createSubscription()
+    const cachedEvent = makeEvent('cached-event', 10)
+    const rawEvent = makeEvent('buffered-event', 20)
+
+    queryEventsMock
+      .mockResolvedValueOnce([cachedEvent])
+      .mockResolvedValueOnce([rawEvent])
+
+    getNDKMock.mockReturnValue({
+      subscribe: vi.fn(() => subscription),
+    } as unknown as ReturnType<typeof getNDK>)
+
+    let latest: Snapshot = {
+      events: [],
+      loading: true,
+      eose: false,
+      error: null,
+      pendingEventCount: 0,
+      applyPendingEvents: () => {},
+      refresh: async () => {},
+    }
+
+    await act(async () => {
+      if (!root) throw new Error('Root not initialized')
+      root.render(
+        <Harness
+          section={makeSection()}
+          shouldBufferNewEvents={() => true}
+          onSnapshot={(snapshot) => { latest = snapshot }}
+        />,
+      )
+      await flush()
+    })
+
+    await act(async () => {
+      subscription.handlers.event!({
+        rawEvent: () => rawEvent,
+      })
+      await vi.advanceTimersByTimeAsync(100)
+      await flush()
+    })
+
+    expect(latest.events.map((event) => event.id)).toEqual(['cached-event'])
+    expect(latest.pendingEventCount).toBe(1)
+
+    await act(async () => {
+      latest.applyPendingEvents()
+      await flush()
+    })
+
+    expect(latest.events.map((event) => event.id)).toEqual(['buffered-event', 'cached-event'])
+    expect(latest.pendingEventCount).toBe(0)
+    vi.useRealTimers()
+  })
+
+  it('caps queued live events while buffering', async () => {
+    vi.useFakeTimers()
+    const subscription = createSubscription()
+    const cachedEvent = makeEvent('cached-event', 1)
+    const bufferedEvents = Array.from({ length: 55 }, (_, index) => (
+      makeEvent(`buffered-${index + 1}`, index + 2)
+    ))
+
+    queryEventsMock
+      .mockResolvedValueOnce([cachedEvent])
+      .mockResolvedValueOnce(bufferedEvents)
+
+    getNDKMock.mockReturnValue({
+      subscribe: vi.fn(() => subscription),
+    } as unknown as ReturnType<typeof getNDK>)
+
+    let latest: Snapshot = {
+      events: [],
+      loading: true,
+      eose: false,
+      error: null,
+      pendingEventCount: 0,
+      applyPendingEvents: () => {},
+      refresh: async () => {},
+    }
+
+    await act(async () => {
+      if (!root) throw new Error('Root not initialized')
+      root.render(
+        <Harness
+          section={makeSection()}
+          shouldBufferNewEvents={() => true}
+          onSnapshot={(snapshot) => { latest = snapshot }}
+        />,
+      )
+      await flush()
+    })
+
+    await act(async () => {
+      for (const event of bufferedEvents) {
+        subscription.handlers.event!({
+          rawEvent: () => event,
+        })
+      }
+      await vi.advanceTimersByTimeAsync(100)
+      await flush()
+    })
+
+    expect(latest.events.map((event) => event.id)).toEqual(['cached-event'])
+    expect(latest.pendingEventCount).toBe(40)
+
+    await act(async () => {
+      latest.applyPendingEvents()
+      await flush()
+    })
+
+    expect(latest.events).toHaveLength(41)
+    expect(latest.events[0]?.id).toBe('buffered-55')
+    expect(latest.events[39]?.id).toBe('buffered-16')
+    expect(latest.events[40]?.id).toBe('cached-event')
     vi.useRealTimers()
   })
 
@@ -293,6 +426,8 @@ describe('useNostrFeed', () => {
       loading: true,
       eose: false,
       error: null,
+      pendingEventCount: 0,
+      applyPendingEvents: () => {},
       refresh: async () => {},
     }
 

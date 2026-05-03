@@ -131,6 +131,7 @@ export default function ActivityPage() {
       generateAssistText(prompt, {
         signal: controller.signal,
         provider: aiAssistProvider,
+        taskType: 'article_summary',
       })
         .then((result) => {
           if (controller.signal.aborted) return

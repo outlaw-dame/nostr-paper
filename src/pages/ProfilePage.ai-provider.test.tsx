@@ -19,6 +19,7 @@ vi.mock('@/lib/db/nostr', () => ({
 }))
 
 vi.mock('@/components/nostr/ReportSheet', () => ({ ReportSheet: () => null }))
+vi.mock('@/components/nostr/ZapSheet', () => ({ ZapSheet: () => null }))
 vi.mock('@/components/nostr/UserStatusBody', () => ({ UserStatusBody: () => null }))
 vi.mock('@/components/profile/ProfileMetadataEditor', () => ({ ProfileMetadataEditor: () => null }))
 vi.mock('@/components/ui/TwemojiText', () => ({ TwemojiText: ({ text }: { text: string }) => <>{text}</> }))

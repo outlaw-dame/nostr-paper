@@ -4,6 +4,16 @@
 interface ImportMetaEnv {
   readonly VITE_SAFE_BROWSING_PROXY_URL?: string
   /**
+   * Optional override for the Google Fact Check Tools proxy endpoint.
+   * Defaults to /__dev/fact-check (dev) or /api/fact-check/search (prod).
+   */
+  readonly VITE_FACT_CHECK_PROXY_URL?: string
+  /**
+   * Optional override for runtime feature flags endpoint.
+   * Defaults to /api/feature-flags.
+   */
+  readonly VITE_FEATURE_FLAGS_URL?: string
+  /**
    * Path or URL to the Gemma 4 E2B model file (.task).
    * Download from: https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm
    * Place in public/models/ and set to e.g. /models/gemma-4-E2B-it-web.task
@@ -50,6 +60,39 @@ interface ImportMetaEnv {
    * through the Vite WebSocket relay proxy instead of directly to the relay.
    */
   readonly VITE_TAGR_RELAY_URL?: string
+  /**
+   * Optional comma-separated Tagr relay URL list.
+   * Entries are prioritized before built-in Tagr defaults.
+   */
+  readonly VITE_TAGR_RELAY_URLS?: string
+  /**
+   * Optional override for the trusted Tagr bot pubkey (hex).
+   * Defaults to the canonical Nos Social Tagr bot pubkey.
+   */
+  readonly VITE_TAGR_BOT_PUBKEY?: string
+  /**
+   * Optional Nostr-compatible platform search relay URL. When set, thread
+   * views can hydrate root conversations through `thread_id` and
+   * `thread_address` filters before falling back to public relays.
+   */
+  readonly VITE_PLATFORM_SEARCH_RELAY_URL?: string
+  /**
+   * Optional comma-separated Blossom server defaults. Useful for deployments
+   * that provide a first-party Cloudflare/R2 + Filebase media edge.
+   */
+  readonly VITE_DEFAULT_BLOSSOM_SERVERS?: string
+  /**
+   * Optional comma-separated relay defaults prepended to the built-in relay set.
+   */
+  readonly VITE_DEFAULT_RELAY_URLS?: string
+  /**
+   * When true, only VITE_DEFAULT_RELAY_URLS is used as the default relay set.
+   */
+  readonly VITE_DEFAULT_RELAYS_EXCLUSIVE?: string
+  /**
+   * When true, init ignores stored relay preferences and always uses defaults.
+   */
+  readonly VITE_FORCE_DEFAULT_RELAYS?: string
 }
 
 interface ImportMeta {

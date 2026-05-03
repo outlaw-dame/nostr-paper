@@ -103,6 +103,7 @@ export async function fetchZapInvoice(
   payData: LnurlPayData,
   zapRequest: NDKEvent,
   amountMsats: number,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (!payData.allowsNostr) {
     throw new Error("This lightning address doesn't support Nostr zaps.")
@@ -116,6 +117,7 @@ export async function fetchZapInvoice(
 
   const res = await fetch(callbackUrl.toString(), {
     headers: { Accept: 'application/json' },
+    ...(signal ? { signal } : {}),
   })
   if (!res.ok) throw new Error(`LNURL callback returned HTTP ${res.status}`)
 
@@ -191,6 +193,75 @@ export function parseZapReceipt(event: NostrEvent): ParsedZapReceipt | null {
     amountMsats,
     comment,
     bolt11,
+  }
+}
+
+export interface ZapReceiptValidationOptions {
+  expectedLnurlServerPubkey?: string
+  expectedRecipientPubkey?: string
+  expectedTargetEventId?: string | null
+}
+
+export interface ZapReceiptValidationResult {
+  receipt: ParsedZapReceipt | null
+  valid: boolean
+  reason: string | null
+}
+
+export function validateZapReceipt(
+  event: NostrEvent,
+  options: ZapReceiptValidationOptions = {},
+): ZapReceiptValidationResult {
+  const receipt = parseZapReceipt(event)
+  if (!receipt) {
+    return {
+      receipt: null,
+      valid: false,
+      reason: 'Zap receipt is malformed.',
+    }
+  }
+
+  if (
+    options.expectedLnurlServerPubkey &&
+    isValidHex32(options.expectedLnurlServerPubkey) &&
+    receipt.pubkey !== options.expectedLnurlServerPubkey
+  ) {
+    return {
+      receipt,
+      valid: false,
+      reason: 'Zap receipt was not signed by the expected LNURL server pubkey.',
+    }
+  }
+
+  if (
+    options.expectedRecipientPubkey &&
+    isValidHex32(options.expectedRecipientPubkey) &&
+    receipt.recipientPubkey !== options.expectedRecipientPubkey
+  ) {
+    return {
+      receipt,
+      valid: false,
+      reason: 'Zap receipt recipient does not match the zap target.',
+    }
+  }
+
+  if (
+    options.expectedTargetEventId !== undefined &&
+    options.expectedTargetEventId !== null &&
+    isValidHex32(options.expectedTargetEventId) &&
+    receipt.targetEventId !== options.expectedTargetEventId
+  ) {
+    return {
+      receipt,
+      valid: false,
+      reason: 'Zap receipt event target does not match the zap target.',
+    }
+  }
+
+  return {
+    receipt,
+    valid: true,
+    reason: null,
   }
 }
 

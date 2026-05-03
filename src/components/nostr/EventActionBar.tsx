@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { ReportSheet } from '@/components/nostr/ReportSheet'
 import { ZapSheet } from '@/components/nostr/ZapSheet'
@@ -16,6 +16,10 @@ import {
 import { buildEventReferenceValue } from '@/lib/nostr/nip21'
 import { publishReaction } from '@/lib/nostr/reaction'
 import { publishRepost } from '@/lib/nostr/repost'
+import {
+  classifySocialPublishFailure,
+  recordSocialPublishFailure,
+} from '@/lib/nostr/socialTelemetry'
 import type { EventEngagementSummary, NostrEvent } from '@/types'
 import { Kind } from '@/types'
 
@@ -52,6 +56,7 @@ export function EventActionBar({ event, className = '' }: EventActionBarProps) {
   const [bookmarked, setBookmarked] = useState(false)
   const [bookmarkLoading, setBookmarkLoading] = useState(false)
   const [zapSheetOpen, setZapSheetOpen] = useState(false)
+  const publishingGuardRef = useRef<Set<'like' | 'repost' | 'delete' | 'bookmark'>>(new Set())
 
   useEffect(() => {
     const controller = new AbortController()
@@ -111,19 +116,35 @@ export function EventActionBar({ event, className = '' }: EventActionBarProps) {
   }
 
   const handleLike = async () => {
+    if (publishingGuardRef.current.has('like') || summary.currentUserHasLiked) return
+    publishingGuardRef.current.add('like')
+    const previousSummary = summary
     setPublishing('like')
     setError(null)
+    setSummary((current) => current.currentUserHasLiked
+      ? current
+      : {
+          ...current,
+          currentUserHasLiked: true,
+          reactionCount: current.reactionCount + 1,
+          likeCount: current.likeCount + 1,
+        })
     try {
       await publishReaction(event, '+')
       await refresh()
     } catch (publishError) {
+      setSummary(previousSummary)
+      recordSocialPublishFailure('reaction', classifySocialPublishFailure(publishError))
       setError(publishError instanceof Error ? publishError.message : 'Failed to publish reaction.')
     } finally {
+      publishingGuardRef.current.delete('like')
       setPublishing(null)
     }
   }
 
   const handleRepost = async () => {
+    if (publishingGuardRef.current.has('repost')) return
+    publishingGuardRef.current.add('repost')
     setPublishing('repost')
     setError(null)
     try {
@@ -132,11 +153,14 @@ export function EventActionBar({ event, className = '' }: EventActionBarProps) {
     } catch (publishError) {
       setError(publishError instanceof Error ? publishError.message : 'Failed to publish repost.')
     } finally {
+      publishingGuardRef.current.delete('repost')
       setPublishing(null)
     }
   }
 
   const handleDelete = async () => {
+    if (publishingGuardRef.current.has('delete')) return
+    publishingGuardRef.current.add('delete')
     setPublishing('delete')
     setError(null)
     try {
@@ -145,11 +169,14 @@ export function EventActionBar({ event, className = '' }: EventActionBarProps) {
     } catch (publishError) {
       setError(publishError instanceof Error ? publishError.message : 'Failed to publish deletion request.')
     } finally {
+      publishingGuardRef.current.delete('delete')
       setPublishing(null)
     }
   }
 
   const handleBookmark = async () => {
+    if (publishingGuardRef.current.has('bookmark')) return
+    publishingGuardRef.current.add('bookmark')
     setPublishing('bookmark')
     setError(null)
     try {
@@ -158,6 +185,7 @@ export function EventActionBar({ event, className = '' }: EventActionBarProps) {
     } catch (publishError) {
       setError(publishError instanceof Error ? publishError.message : 'Failed to update bookmarks.')
     } finally {
+      publishingGuardRef.current.delete('bookmark')
       setPublishing(null)
     }
   }

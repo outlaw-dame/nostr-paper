@@ -1,23 +1,32 @@
 /**
- * Blossom — NIP-98 HTTP Auth
+ * Blossom / Nostr HTTP authorization helpers.
  *
- * Creates and signs kind-27235 Nostr events for authenticating
- * HTTP requests to Blossom servers (BUD-01).
+ * Native Blossom servers use BUD-11 kind-24242 authorization tokens.
+ * The legacy NIP-98 kind-27235 path is kept for NIP-96 fallback servers.
  *
- * Spec: https://github.com/nostr-protocol/nips/blob/master/98.md
- *
- * The signed event is base64-encoded and sent as:
- *   Authorization: Nostr <base64(JSON.stringify(signedEvent))>
- *
- * Each auth token is URL + method specific and expires after ~60 seconds,
- * so a new one must be created per request.
- *
- * Private keys NEVER enter this module — signing is delegated to NDK's
- * signer (NIP-07 browser extension or NIP-46 remote signer).
+ * Private keys NEVER enter this module; signing is delegated to NDK's signer
+ * (NIP-07 browser extension, NIP-46 remote signer, or another app signer).
  */
 
 import type NDK from '@nostr-dev-kit/ndk';
 import { NDKEvent } from '@nostr-dev-kit/ndk'
+
+const HEX_32_PATTERN = /^[0-9a-f]{64}$/
+
+export type BlossomAuthVerb = 'get' | 'upload' | 'list' | 'delete' | 'media'
+
+export interface BlossomAuthOptions {
+  /** BUD-11 action matching the target endpoint. */
+  verb: BlossomAuthVerb
+  /** Blossom server URL. Encoded as a lowercase domain-only `server` tag. */
+  serverUrl?: string
+  /** Optional blob hash scope. Required by upload/delete/media endpoints. */
+  sha256?: string | string[]
+  /** Token lifetime. Blossom clients commonly use a short five-minute window. */
+  expiresInSeconds?: number
+  /** Human-readable explanation shown by signers. */
+  content?: string
+}
 
 export interface NIP98AuthOptions {
   /** Full URL of the request (including path, no trailing slash needed) */
@@ -29,6 +38,87 @@ export interface NIP98AuthOptions {
    * Required for PUT/POST (upload) requests.
    */
   payload?: string
+}
+
+function encodeBase64Url(value: string): string {
+  return btoa(value)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '')
+}
+
+function normalizeBlossomHash(value: string): string {
+  const normalized = value.trim().toLowerCase()
+  if (!HEX_32_PATTERN.test(normalized)) {
+    throw new Error('Blossom authorization hash must be a 32-byte lowercase hex string.')
+  }
+  return normalized
+}
+
+function blossomServerDomain(serverUrl: string): string {
+  const parsed = new URL(serverUrl)
+  return parsed.hostname.toLowerCase()
+}
+
+function defaultBlossomAuthContent(verb: BlossomAuthVerb): string {
+  switch (verb) {
+    case 'get':
+      return 'Get Blossom blob'
+    case 'upload':
+      return 'Upload Blossom blob'
+    case 'list':
+      return 'List Blossom blobs'
+    case 'delete':
+      return 'Delete Blossom blob'
+    case 'media':
+      return 'Process Blossom media'
+  }
+}
+
+/**
+ * Create a BUD-11 Authorization header for native Blossom endpoints.
+ *
+ * The resulting header is:
+ *   Authorization: Nostr <base64url(JSON.stringify(kind24242Event))>
+ */
+export async function createBlossomAuth(
+  ndk: NDK,
+  options: BlossomAuthOptions,
+): Promise<string> {
+  if (!ndk.signer) {
+    throw new Error(
+      'No signing key available. Install a NIP-07 browser extension (nos2x, Alby, etc.).'
+    )
+  }
+
+  const now = Math.floor(Date.now() / 1000)
+  const expiresInSeconds = options.expiresInSeconds ?? 5 * 60
+  const hashes = Array.isArray(options.sha256)
+    ? options.sha256
+    : (options.sha256 ? [options.sha256] : [])
+
+  const tags: string[][] = [
+    ['t', options.verb],
+    ['expiration', String(now + expiresInSeconds)],
+  ]
+
+  if (options.serverUrl) {
+    tags.push(['server', blossomServerDomain(options.serverUrl)])
+  }
+
+  for (const hash of hashes) {
+    tags.push(['x', normalizeBlossomHash(hash)])
+  }
+
+  const event = new NDKEvent(ndk)
+  event.kind = 24242
+  event.content = options.content ?? defaultBlossomAuthContent(options.verb)
+  event.created_at = now
+  event.tags = tags
+
+  await event.sign()
+
+  return `Nostr ${encodeBase64Url(JSON.stringify(event.rawEvent()))}`
 }
 
 /**

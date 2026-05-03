@@ -21,6 +21,10 @@ import { publishCurrentUserRelayList, syncCurrentUserRelayList } from '@/lib/nos
 import { getCurrentUser, performLogout, STORAGE_KEY_PUBKEY } from '@/lib/nostr/ndk'
 import { RELAY_SETTINGS_UPDATED_EVENT } from '@/lib/relay/relaySettings'
 import { markBootStage, recordBootFailure, recordBootSuccess } from '@/lib/runtime/startupDiagnostics'
+import {
+  emitContactListUpdated,
+  setCurrentUserPubkeyForFollowSet,
+} from '@/lib/db/followSet'
 
 const shouldRunDevNip05Sweep = import.meta.env.VITE_ENABLE_DEV_NIP05_SWEEP === 'true'
 const DB_MAINTENANCE_INTERVAL_MS = 6 * 60 * 60 * 1000
@@ -143,7 +147,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
               payload: { pubkey: user.pubkey },
             })
 
-            void syncCurrentUserContactList(signal).catch((error: unknown) => {
+            void syncCurrentUserContactList(signal).then(() => {
+              // Refresh the in-memory follow set after the relay sync lands.
+              if (!signal.aborted) emitContactListUpdated(user.pubkey)
+            }).catch((error: unknown) => {
               if (signal.aborted) return
               console.warn('[App] Kind-3 contact list sync degraded:', error)
             })
@@ -236,6 +243,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       controller.abort()
       window.removeEventListener(RELAY_SETTINGS_UPDATED_EVENT, publishRelayList)
     }
+  }, [state.currentUser?.pubkey])
+
+  // Keep the follow-set singleton (used by `useFollowStatus`) in lock-step
+  // with the signed-in user. Done in a dedicated effect so the sync layer
+  // and the in-memory cache layer stay decoupled.
+  useEffect(() => {
+    setCurrentUserPubkeyForFollowSet(state.currentUser?.pubkey ?? null)
   }, [state.currentUser?.pubkey])
 
   return (

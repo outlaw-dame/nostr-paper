@@ -2,6 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { moderateContentDocuments } from '@/lib/moderation/client'
 import { resolveTagrModerationDecisions } from '@/lib/moderation/tagr'
 import {
+  DEFAULT_MODERATION_MODEL_ID,
+  MODERATION_POLICY_VERSION,
+  emptyModerationScores,
+  evaluateModerationScores,
+} from '@/lib/moderation/policy'
+import {
   buildEventModerationDocument,
   buildProfileModerationDocument,
   buildSyndicationEntryModerationDocument,
@@ -9,11 +15,18 @@ import {
   getModerationDocumentCacheKey,
 } from '@/lib/moderation/content'
 import { useMuteList } from '@/hooks/useMuteList'
+import {
+  getPersistedModerationDecisions,
+  savePersistedModerationDecisions,
+} from '@/lib/db/caches'
 import type { ModerationDecision, ModerationDocument, NostrEvent, Profile } from '@/types'
 import type { SyndicationEntry, SyndicationFeed } from '@/lib/syndication/types'
 
 // Bounded in-memory LRU cache — evict oldest when over the limit so the
 // cache doesn't grow unbounded across a long session with thousands of events.
+// The SQLite-backed `moderation_decisions` table is the durable layer; this
+// Map is just the per-tab hot path so we never block on a worker round-trip
+// for a decision we already returned this session.
 const MODERATION_CACHE_MAX = 1_000
 const inMemoryModerationCache = new Map<string, ModerationDecision>()
 
@@ -24,6 +37,22 @@ function cacheSetModeration(key: string, value: ModerationDecision): void {
     if (firstKey !== undefined) inMemoryModerationCache.delete(firstKey)
   }
   inMemoryModerationCache.set(key, value)
+}
+
+function documentKindFor(document: ModerationDocument): string {
+  return document.kind
+}
+
+/**
+ * Persist freshly-resolved decisions to SQLite without blocking the UI.
+ * Errors are swallowed: the in-memory cache still holds the decision for the
+ * current session, so a transient SQLite issue degrades to in-memory only.
+ */
+function persistDecisionsAsync(
+  inputs: Array<{ documentId: string; cacheKey: string; documentKind: string; decision: ModerationDecision }>,
+): void {
+  if (inputs.length === 0) return
+  void savePersistedModerationDecisions(inputs).catch(() => { /* non-fatal */ })
 }
 
 interface UseModerationDocumentsResult {
@@ -57,10 +86,11 @@ function getAllowedIds(
 
 export function useModerationDocuments(
   documents: ModerationDocument[],
-  options: { enabled?: boolean; failClosed?: boolean } = {},
+  options: { enabled?: boolean; failClosed?: boolean; failOpenOnError?: boolean } = {},
 ): UseModerationDocumentsResult {
   const enabled = options.enabled ?? true
   const failClosed = options.failClosed ?? false
+  const failOpenOnError = options.failOpenOnError ?? true
   const [decisions, setDecisions] = useState<Map<string, ModerationDecision>>(new Map())
   // Start loading:true so consumers don't render undecided events before
   // the first decision batch arrives (prevents feed flicker).
@@ -96,10 +126,40 @@ export function useModerationDocuments(
       }
     }
 
-    // Synchronously apply all cache hits so consumers see decisions immediately
-    // without a loading flash.
+    // Synchronously apply all in-memory cache hits so consumers see decisions
+    // immediately without a loading flash. We then opportunistically check the
+    // SQLite-backed cache for the remaining docs *before* paying the much more
+    // expensive ML / Tagr resolution cost.
     setDecisions(nextDecisions)
     setError(null)
+
+    if (missing.length > 0) {
+      const lookupPairs = missing.map((doc) => ({
+        documentId: doc.id,
+        cacheKey: getModerationDocumentCacheKey(doc),
+      }))
+
+      void getPersistedModerationDecisions(lookupPairs)
+        .then((persisted) => {
+          if (controller.signal.aborted || persisted.size === 0) return
+          const stillMissing: ModerationDocument[] = []
+          const merged = new Map(nextDecisions)
+          for (const doc of missing) {
+            const cacheKey = getModerationDocumentCacheKey(doc)
+            const decision = persisted.get(`${doc.id}:${cacheKey}`)
+            if (decision) {
+              cacheSetModeration(cacheKey, decision)
+              merged.set(doc.id, decision)
+            } else {
+              stillMissing.push(doc)
+            }
+          }
+          setDecisions(merged)
+          // If SQLite filled all the gaps, we can flip loading off early.
+          if (stillMissing.length === 0) setLoading(false)
+        })
+        .catch(() => { /* non-fatal — fall through to ML path */ })
+    }
 
     if (missing.length === 0) {
       setLoading(false)
@@ -133,6 +193,12 @@ export function useModerationDocuments(
         if (controller.signal.aborted) return
 
         const merged = new Map(nextDecisions)
+        const toPersist: Array<{
+          documentId: string
+          cacheKey: string
+          documentKind: string
+          decision: ModerationDecision
+        }> = []
 
         for (const decision of results) {
           const document = missing.find((entry) => entry.id === decision.id)
@@ -141,6 +207,30 @@ export function useModerationDocuments(
           const cacheKey = getModerationDocumentCacheKey(document)
           cacheSetModeration(cacheKey, decision)
           merged.set(decision.id, decision)
+          toPersist.push({
+            documentId: decision.id,
+            cacheKey,
+            documentKind: documentKindFor(document),
+            decision,
+          })
+        }
+
+        for (const document of missing) {
+          if (merged.has(document.id)) continue
+
+          const decision = evaluateModerationScores(
+            document.id,
+            emptyModerationScores(),
+            `${DEFAULT_MODERATION_MODEL_ID}:fallback-allow`,
+          )
+          const fallbackDecision = {
+            ...decision,
+            policyVersion: `${MODERATION_POLICY_VERSION}+missing-result`,
+          }
+          const cacheKey = getModerationDocumentCacheKey(document)
+          cacheSetModeration(cacheKey, fallbackDecision)
+          merged.set(decision.id, fallbackDecision)
+          // Don't persist fallbacks — they're cache holes, not real decisions.
         }
 
         for (const [id, tagrDecision] of tagrDecisions) {
@@ -152,6 +242,7 @@ export function useModerationDocuments(
 
         setDecisions(merged)
         setLoading(false)
+        persistDecisionsAsync(toPersist)
       })
       .catch((moderationError: unknown) => {
         if (controller.signal.aborted) return
@@ -167,13 +258,13 @@ export function useModerationDocuments(
   }, [enabled, signature])
 
   const allowedIds = useMemo(
-    () => getAllowedIds(documents, decisions, !failClosed && (loading || error !== null)),
-    [documents, decisions, loading, error, failClosed],
+    () => getAllowedIds(documents, decisions, (!failClosed && loading) || (error !== null && failOpenOnError)),
+    [documents, decisions, loading, error, failClosed, failOpenOnError],
   )
 
   const blockedIds = useMemo(() => {
     const blocked = new Set<string>()
-    const failOpen = !failClosed && (loading || error !== null)
+    const failOpen = (!failClosed && loading) || (error !== null && failOpenOnError)
 
     for (const document of documents) {
       const decision = decisions.get(document.id)
@@ -186,7 +277,7 @@ export function useModerationDocuments(
     }
 
     return blocked
-  }, [documents, decisions, loading, error, failClosed])
+  }, [documents, decisions, loading, error, failClosed, failOpenOnError])
 
   return {
     decisions,

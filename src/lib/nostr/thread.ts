@@ -3,9 +3,9 @@ import { getDefaultRelayUrls, getNDK } from '@/lib/nostr/ndk'
 import { getEventReadRelayHints, insertEvent } from '@/lib/db/nostr'
 import { withOptionalClientTag } from '@/lib/nostr/appHandlers'
 import { getEventAddressCoordinate, parseAddressCoordinate } from '@/lib/nostr/addressable'
-import { buildQuoteTagsFromContent } from '@/lib/nostr/repost'
+import { buildQuoteTagsFromContent, parseQuoteTags } from '@/lib/nostr/repost'
 import { decodeProfileReference } from '@/lib/nostr/nip21'
-import { withRetry } from '@/lib/retry'
+import { publishEventWithNip65Outbox } from '@/lib/nostr/outbox'
 import {
   LIMITS,
   extractHashtags,
@@ -332,18 +332,7 @@ async function publishConversationEvent(
   await event.sign()
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-  await withRetry(
-    async () => {
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-      await event.publish()
-    },
-    {
-      maxAttempts: 2,
-      baseDelayMs: 750,
-      maxDelayMs: 2_500,
-      ...(signal ? { signal } : {}),
-    },
-  )
+  await publishEventWithNip65Outbox(event, signal)
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent
   await insertEvent(rawEvent)
@@ -659,6 +648,33 @@ export function isThreadComment(comment: ParsedCommentEvent): boolean {
   return parseNumericKind(comment.rootKind) === Kind.Thread
 }
 
+/** True if the kind-1 note is a direct or nested NIP-10 reply. */
+export function isTextNoteReply(event: NostrEvent): boolean {
+  return parseTextNoteReply(event) !== null
+}
+
+/**
+ * True if the event has at least one NIP-18 q-tag.
+ *
+ * Note: an event can be both a reply AND have q-tags (a quote-reply).
+ * Use alongside isTextNoteReply() to distinguish the two in the UI.
+ */
+export function hasQuoteTags(event: NostrEvent): boolean {
+  return parseQuoteTags(event).length > 0
+}
+
+/**
+ * True if the kind-1 note is a "pure" quote repost:
+ * it has NIP-18 q-tags but no NIP-10 reply e-tags.
+ *
+ * A quote-reply (both markers present) returns false —
+ * use isTextNoteReply() + hasQuoteTags() to detect that case.
+ */
+export function isQuoteRepost(event: NostrEvent): boolean {
+  if (event.kind !== Kind.ShortNote) return false
+  return hasQuoteTags(event) && !isTextNoteReply(event)
+}
+
 export async function publishThread({
   title,
   body = '',
@@ -717,16 +733,16 @@ export async function publishComment({
     }
 
     if (isThreadComment(parsedTarget)) {
+      // Root scope = the thread (from parsedTarget's root).
+      // Parent scope = the intermediate kind-1111 comment (target itself).
+      // The old code incorrectly mapped root scope tags to lowercase, making
+      // parent point at the thread instead of the comment being replied to.
       scopeTags = [
         ...buildRootScopeTagsFromParsedComment(parsedTarget),
-        ...buildRootScopeTagsFromParsedComment(parsedTarget)
-          .map((tag) => {
-            if (tag[0] === 'A') return ['a', ...tag.slice(1)]
-            if (tag[0] === 'E') return ['e', ...tag.slice(1)]
-            if (tag[0] === 'K') return ['k', ...tag.slice(1)]
-            if (tag[0] === 'P') return ['p', ...tag.slice(1)]
-            return tag
-          }),
+        ...buildParentScopeTagsFromEvent(
+          target,
+          await resolveRelayHint(target.pubkey, parsedTarget.rootRelayHint),
+        ),
       ]
     } else {
       scopeTags = [
