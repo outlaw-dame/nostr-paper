@@ -1788,7 +1788,6 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
                 interactive
                 isSensitive={contentWarning !== null}
                 sensitiveReason={contentWarning?.reason ?? null}
-                isUnfollowed={followStatus === false}
               />
             )}
             <QuotePreviewList event={event} className="mt-3" compact linked={false} maxItems={1} showHeader={false} />
@@ -2036,7 +2035,6 @@ function RichStoryMedia({
           isSensitive={isSensitive}
           reason={sensitiveReason}
           isUnfollowed={isUnfollowed}
-          moderationState={richMediaBlocked ? 'blocked' : richModerationLoading ? 'pending' : null}
         />
       ) : (
         <div
