@@ -51,6 +51,11 @@ interface ImportMetaEnv {
    */
   readonly VITE_TAGR_RELAY_URL?: string
   /**
+   * Optional comma-separated Tagr relay URL list.
+   * Entries are prioritized before built-in Tagr defaults.
+   */
+  readonly VITE_TAGR_RELAY_URLS?: string
+  /**
    * Optional override for the trusted Tagr bot pubkey (hex).
    * Defaults to the canonical Nos Social Tagr bot pubkey.
    */

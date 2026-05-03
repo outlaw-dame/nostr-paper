@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from 'react'
 import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
 import { recordMediaUrlFailure, recordMediaUrlSuccess, shouldAttemptMediaUrl } from '@/lib/media/failureBackoff'
 import { buildAttachmentPlaybackPlan } from '@/lib/media/playback'
@@ -56,6 +56,54 @@ function buildSourceCandidates(attachment: Nip92MediaAttachment): string[] {
   const primary = getMediaAttachmentSourceUrl(attachment)
   if (!primary || !shouldAttemptMediaUrl(primary)) return []
   return [primary]
+}
+
+function getAttachmentAspectRatio(attachment: Nip92MediaAttachment, fallback: number): number {
+  const match = attachment.dim?.match(/^(\d+)\s*x\s*(\d+)$/i)
+  if (!match) return fallback
+
+  const width = Number(match[1])
+  const height = Number(match[2])
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return fallback
+  }
+
+  return width / height
+}
+
+function getAttachmentAspectStyle(attachment: Nip92MediaAttachment, kind: string): CSSProperties {
+  const fallback = kind === 'video' ? 16 / 9 : 4 / 3
+  const aspectRatio = getAttachmentAspectRatio(attachment, fallback)
+  return { aspectRatio: String(aspectRatio) }
+}
+
+function MediaModerationPlaceholder({
+  attachment,
+  compact,
+  kind,
+}: {
+  attachment: Nip92MediaAttachment
+  compact: boolean
+  kind: string
+}) {
+  return (
+    <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))]">
+      <div
+        className="relative overflow-hidden bg-[rgb(var(--color-fill)/0.08)]"
+        style={getAttachmentAspectStyle(attachment, kind)}
+        aria-hidden="true"
+      >
+        <div className="absolute inset-0 animate-pulse bg-[linear-gradient(110deg,rgba(var(--color-fill),0.06),rgba(var(--color-fill),0.16),rgba(var(--color-fill),0.06))]" />
+      </div>
+
+      {!compact && (
+        <div className="space-y-2 px-3 py-3" aria-hidden="true">
+          <div className="h-3 w-28 rounded-full bg-[rgb(var(--color-fill)/0.1)]" />
+          <div className="h-3 w-16 rounded-full bg-[rgb(var(--color-fill)/0.08)]" />
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ── ALT badge + overlay ───────────────────────────────────────
@@ -117,7 +165,7 @@ function AttachmentTile({
     () => buildAttachmentMediaModerationDocument(attachment),
     [attachment],
   )
-  const { blocked, loading } = useMediaModerationDocument(moderationDocument, { failClosed: kind === 'video' })
+  const { blocked, loading } = useMediaModerationDocument(moderationDocument, { failClosed: true })
   const playbackPlan = useMemo(
     () => (kind === 'video' || kind === 'audio' ? buildAttachmentPlaybackPlan(attachment, kind) : null),
     [attachment, kind],
@@ -143,7 +191,11 @@ function AttachmentTile({
     setPreviewFailed(previewCandidates.length === 0)
   }, [attachment.url, previewCandidates.length])
 
-  if (moderationDocument && (loading || blocked)) {
+  if (moderationDocument && loading) {
+    return <MediaModerationPlaceholder attachment={attachment} compact={compact} kind={kind} />
+  }
+
+  if (moderationDocument && blocked) {
     return null
   }
 
@@ -162,7 +214,7 @@ function AttachmentTile({
 
     return (
       <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))]">
-        <div className="relative">
+        <div className="relative overflow-hidden" style={getAttachmentAspectStyle(attachment, kind)}>
           <picture>
             {pictureSources.map((source) =>
               source.type ? (
@@ -186,7 +238,7 @@ function AttachmentTile({
                   setPreviewFailed(true)
                 }
               }}
-              className={compact ? 'h-full w-full object-cover aspect-[4/3]' : 'max-h-[70vh] w-full object-cover'}
+              className="h-full w-full object-cover"
             />
           </picture>
           {attachment.alt && (

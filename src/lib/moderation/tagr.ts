@@ -28,6 +28,10 @@ const DEFAULT_TAGR_RELAY_URLS = [
   'wss://relay.nos.social',
   'wss://news.nos.social',
   'wss://relay.primal.net',
+  'wss://relay.nostr.band',
+  'wss://relay.snort.social',
+  'wss://nos.lol',
+  'wss://relay.damus.io',
 ] as const
 
 function resolveTagrRelayUrls(): string[] {
@@ -166,14 +170,14 @@ async function syncTagrEvents(
   eventIds: string[],
   profilePubkeys: string[],
   signal?: AbortSignal,
-): Promise<void> {
-  if (signal?.aborted) return
+): Promise<boolean> {
+  if (signal?.aborted) return false
 
   let ndk
   try {
     ndk = getNDK()
   } catch {
-    return
+    return false
   }
 
   const filter: NostrFilter = {
@@ -195,13 +199,13 @@ async function syncTagrEvents(
   try {
     ndkEvents = await ndk.fetchEvents(filter, undefined, relaySet)
   } catch {
-    return
+    return false
   }
 
-  if (signal?.aborted) return
+  if (signal?.aborted) return false
 
   for (const ndkEvent of ndkEvents) {
-    if (signal?.aborted) return
+    if (signal?.aborted) return false
     const raw = ndkEvent.rawEvent() as unknown as NostrEvent
     if (!isValidEvent(raw)) continue
     if (raw.pubkey !== TAGR_BOT_PUBKEY_HEX) continue
@@ -212,6 +216,8 @@ async function syncTagrEvents(
       // Best-effort cache sync; query path is still fail-open.
     }
   }
+
+  return true
 }
 
 async function loadLocalTagrEvents(eventIds: string[], profilePubkeys: string[]): Promise<NostrEvent[]> {
@@ -331,8 +337,10 @@ export async function resolveTagrModerationDecisions(
 
   const syncKey = tagrSyncCacheKey(eventIdList, profilePubkeyList)
   if (!isTagrSyncFresh(syncKey)) {
-    await syncTagrEvents(eventIdList, profilePubkeyList, signal)
-    markTagrSynced(syncKey)
+    const syncCompleted = await syncTagrEvents(eventIdList, profilePubkeyList, signal)
+    if (syncCompleted) {
+      markTagrSynced(syncKey)
+    }
   }
   const localEvents = await loadLocalTagrEvents(eventIdList, profilePubkeyList)
 
