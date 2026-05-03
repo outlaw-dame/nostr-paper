@@ -514,6 +514,44 @@ CREATE INDEX IF NOT EXISTS idx_events_inserted_at
   ON events(inserted_at DESC);
 `
 
+// Migration v14: targeted covering indexes for hot-path aggregations.
+// Derived from query-plan review of:
+//   * listRecentLinkStats / listLinkTimeline / getLinkMentionCount
+//   * listRecentTaggedEvents
+//   * listProfilesByFollowerCount
+//   * Address-based deletion lookups
+// Each index is `IF NOT EXISTS` and additive — no data changes.
+const MIGRATION_V14_SQL = `
+-- listRecentLinkStats does GROUP BY (url, domain) with COUNT(DISTINCT pubkey).
+-- A composite covering index lets SQLite stream the aggregation off the index
+-- without visiting link_mentions row data.
+CREATE INDEX IF NOT EXISTS idx_link_mentions_url_pubkey
+  ON link_mentions(url, pubkey);
+
+-- listLinkTimeline / getLinkMentionCount join on (url, event_id). The existing
+-- idx_link_mentions_url_created sorts by created_at; this composite supports
+-- the JOIN predicate directly without a sort step.
+CREATE INDEX IF NOT EXISTS idx_link_mentions_url_event
+  ON link_mentions(url, event_id);
+
+-- listRecentTaggedEvents EXISTS (tags WHERE name='t' AND length(value)>0)
+-- benefits from a partial index that excludes empty tag values entirely.
+CREATE INDEX IF NOT EXISTS idx_tags_t_event
+  ON tags(event_id) WHERE name = 't' AND length(value) > 0;
+
+-- listProfilesByFollowerCount groups follows by followee. The existing
+-- idx_follows_followee already covers this, but adding follower as a column
+-- enables a covering index for the COUNT(follower) aggregation.
+CREATE INDEX IF NOT EXISTS idx_follows_followee_follower
+  ON follows(followee, follower);
+
+-- Addressable replaceable event coordinate lookups (kind 30000-39999) are
+-- common in hashtag / article supersession checks. Composite ordering matches
+-- the natural lookup pattern (kind, pubkey, d-tag value via tags JOIN).
+CREATE INDEX IF NOT EXISTS idx_events_kind_pubkey
+  ON events(kind, pubkey);
+`
+
 // ── Worker State ─────────────────────────────────────────────
 
 type SqliteDB = {
@@ -906,6 +944,19 @@ async function initializeDB(): Promise<void> {
     _db.exec({ sql: 'INSERT INTO schema_migrations (version) VALUES (13)' })
   } else {
     _db.exec(MIGRATION_V13_SQL)
+  }
+  // Migration v14: covering indexes for link / tag / follow aggregations.
+  const v14Applied: number[] = []
+  _db.exec({
+    sql: 'SELECT 1 FROM schema_migrations WHERE version = 14',
+    rowMode: 'object',
+    callback: () => { v14Applied.push(1) },
+  })
+  if (v14Applied.length === 0) {
+    _db.exec(MIGRATION_V14_SQL)
+    _db.exec({ sql: 'INSERT INTO schema_migrations (version) VALUES (14)' })
+  } else {
+    _db.exec(MIGRATION_V14_SQL)
   }
   // Bound analysis rows per index before running optimize.
   // analysis_limit = 0 means unlimited, which is slow on large DBs on mobile.

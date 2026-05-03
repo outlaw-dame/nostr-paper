@@ -23,6 +23,7 @@ import {
 } from '@nostr-dev-kit/ndk'
 import { getNDK, waitForCachedEvents } from '@/lib/nostr/ndk'
 import { queryEvents } from '@/lib/db/nostr'
+import { getFeedCursor, setFeedCursor } from '@/lib/db/caches'
 import { isEventExpired } from '@/lib/nostr/expiration'
 import { isValidEvent } from '@/lib/security/sanitize'
 import type { NostrEvent, NostrFilter, FeedSection } from '@/types'
@@ -158,6 +159,11 @@ export function useNostrFeed({ section, enabled = true, shouldBufferNewEvents }:
    */
   const filterKey = JSON.stringify(section.filter)
   const stableFilter = useMemo<NostrFilter>(() => section.filter, [filterKey])
+  // Persisted watermark scope: section + filter shape uniquely identifies the
+  // logical subscription, so we can resume from the highest created_at seen.
+  const cursorScopeKey = useMemo(() => `feed:${section.id}:${filterKey}`, [section.id, filterKey])
+  const cursorWatermarkRef = useRef<number>(0)
+  const cursorLastEventIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     shouldBufferNewEventsRef.current = shouldBufferNewEvents
@@ -256,8 +262,26 @@ export function useNostrFeed({ section, enabled = true, shouldBufferNewEvents }:
 
       if (signal.aborted) return
 
+      // 3. Apply persisted cursor so we don't re-pull events the relay has
+      // already delivered to us in a prior session. Cursor is optional and
+      // only narrows; never widens past an explicit filter.since.
+      let liveFilter: NostrFilter = filter
+      try {
+        const cursor = await getFeedCursor(cursorScopeKey)
+        if (cursor && cursor.sinceTs > 0) {
+          const explicitSince = typeof filter.since === 'number' ? filter.since : 0
+          if (cursor.sinceTs > explicitSince) {
+            liveFilter = { ...filter, since: cursor.sinceTs }
+          }
+        }
+      } catch {
+        // Cache failures must never block live subscription.
+      }
+
+      if (signal.aborted) return
+
       const sub = ndk.subscribe(
-        filter as Parameters<typeof ndk.subscribe>[0],
+        liveFilter as Parameters<typeof ndk.subscribe>[0],
         {
           closeOnEose:    false,
           cacheUsage: NDKSubscriptionCacheUsage.CACHE_FIRST,
@@ -271,6 +295,10 @@ export function useNostrFeed({ section, enabled = true, shouldBufferNewEvents }:
         const raw = ndkEvent.rawEvent() as unknown as NostrEvent
         if (!signal.aborted && isValidEvent(raw) && !isEventExpired(raw)) {
           pendingEventsRef.current.push(raw)
+          if (raw.created_at > cursorWatermarkRef.current) {
+            cursorWatermarkRef.current = raw.created_at
+            cursorLastEventIdRef.current = raw.id
+          }
           scheduleFlush()
         }
       })
@@ -284,11 +312,22 @@ export function useNostrFeed({ section, enabled = true, shouldBufferNewEvents }:
         void flushPendingEvents().finally(() => {
           if (!signal.aborted) {
             dispatch({ type: 'EOSE' })
+            // Persist the watermark so the next subscription can resume.
+            // setFeedCursor enforces monotonic advancement on the DB side.
+            const watermark = cursorWatermarkRef.current
+            if (watermark > 0) {
+              const lastEventId = cursorLastEventIdRef.current
+              void setFeedCursor({
+                scopeKey: cursorScopeKey,
+                sinceTs: watermark,
+                ...(lastEventId ? { lastEventId } : {}),
+              }).catch(() => { /* persistence is best-effort */ })
+            }
           }
         })
       })
     },
-    [loadFromCache],
+    [loadFromCache, cursorScopeKey],
   )
 
   useEffect(() => {
@@ -296,6 +335,8 @@ export function useNostrFeed({ section, enabled = true, shouldBufferNewEvents }:
 
     stopActiveSubscription()
     dispatch({ type: 'RESET' })
+    cursorWatermarkRef.current = 0
+    cursorLastEventIdRef.current = null
     abortRef.current = new AbortController()
     const { signal } = abortRef.current
 
