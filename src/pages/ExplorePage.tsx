@@ -36,6 +36,7 @@ import { useTrendingLinks } from '@/hooks/useTrendingLinks'
 import { usePopularProfiles } from '@/hooks/usePopularProfiles'
 import { useSuggestedProfiles } from '@/hooks/useSuggestedProfiles'
 import { useSemanticFollowPacks } from '@/hooks/useSemanticFollowPacks'
+import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { TrendingLinkCard } from '@/components/links/TrendingLinkCard'
 import type { TrendingLinkStat } from '@/lib/explore/trendingLinks'
 import {
@@ -58,6 +59,7 @@ import { parsePollEvent } from '@/lib/nostr/polls'
 import { parseSearchQuery, warmSearchRelays } from '@/lib/nostr/search'
 import { extractEventHashtags } from '@/lib/feed/tagTimeline'
 import { parseCommentEvent, parseThreadEvent } from '@/lib/nostr/thread'
+import { parseContentWarning } from '@/lib/nostr/contentWarning'
 import { sanitizeText } from '@/lib/security/sanitize'
 import { parseVideoEvent } from '@/lib/nostr/video'
 import { tApp } from '@/lib/i18n/app'
@@ -905,6 +907,7 @@ function EventResult({
 }) {
   const { profile } = useProfile(event.pubkey, { background: false })
   const threadIndex = useSelfThreadIndex(event)
+  const followStatus = useFollowStatus(event.pubkey)
   const filterResult = useMemo(
     () => mergeResults(checkEvent(event, profile ?? undefined), semanticResult),
     [checkEvent, event, profile, semanticResult],
@@ -916,6 +919,7 @@ function EventResult({
   const comment = parseCommentEvent(event)
   const attachments = getEventMediaAttachments(event)
   const hiddenUrls = getImetaHiddenUrls(event)
+  const contentWarning = parseContentWarning(event)
   const kindLabel = poll ? 'Poll'
     : article ? 'Article'
     : thread ? 'Thread'
@@ -957,7 +961,15 @@ function EventResult({
           <>
             <NoteContent content={event.content} className="mt-3" hiddenUrls={hiddenUrls} interactive={false} />
             {attachments.length > 0 && (
-              <NoteMediaAttachments attachments={attachments} className="mt-3" compact interactive={false} />
+              <NoteMediaAttachments
+                attachments={attachments}
+                className="mt-3"
+                compact
+                interactive={false}
+                isSensitive={contentWarning !== null}
+                sensitiveReason={contentWarning?.reason ?? null}
+                isUnfollowed={followStatus === false}
+              />
             )}
           </>
         )}

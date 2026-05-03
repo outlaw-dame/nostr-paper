@@ -9,9 +9,8 @@
  *   │                 12 discussing           │
  *   └─────────────────────────────────────────┘
  *
- * OG image is moderated with fail-closed policy (same as LinkPreviewCard)
- * before being shown.  If no OG data is available, or the image is blocked,
- * the card renders without a thumbnail — graceful degradation, not a blank.
+ * OG image thumbnails degrade to a neutral icon while moderation is pending
+ * or flagged, so the list never jumps around or flashes unchecked media.
  */
 
 import React, { useMemo } from 'react'
@@ -36,10 +35,7 @@ export function TrendingLinkCard({ stat, onClick }: TrendingLinkCardProps) {
       : null,
     [og?.image],
   )
-  const { blocked: thumbBlocked, loading: thumbModerationLoading } = useMediaModerationDocument(
-    thumbModerationDoc,
-    { failClosed: true },
-  )
+  const { blocked: thumbBlocked, loading: thumbModerationLoading } = useMediaModerationDocument(thumbModerationDoc)
 
   const showThumb =
     Boolean(og?.image) &&

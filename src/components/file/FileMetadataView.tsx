@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react'
 import { AuthorRow } from '@/components/profile/AuthorRow'
+import { MediaRevealGate, getMediaRevealReason } from '@/components/media/MediaRevealGate'
+import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
 import { recordMediaUrlFailure, recordMediaUrlSuccess, shouldAttemptMediaUrl } from '@/lib/media/failureBackoff'
 import { buildAttachmentPlaybackPlan } from '@/lib/media/playback'
 import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
+import { parseContentWarning } from '@/lib/nostr/contentWarning'
 import type { Nip94FileMetadata, NostrEvent, Profile } from '@/types'
 
 interface FileMetadataViewProps {
@@ -28,6 +31,8 @@ function previewKind(mimeType: string): 'image' | 'video' | 'audio' | 'other' {
 }
 
 export function FileMetadataView({ event, metadata, profile }: FileMetadataViewProps) {
+  const followStatus = useFollowStatus(event.pubkey)
+  const contentWarning = parseContentWarning(event)
   const kind = previewKind(metadata.metadata.mimeType)
   const previewUrlCandidate = metadata.metadata.image ?? metadata.metadata.thumb ?? metadata.metadata.url
   const previewUrl = previewUrlCandidate && shouldAttemptMediaUrl(previewUrlCandidate)
@@ -42,6 +47,12 @@ export function FileMetadataView({ event, metadata, profile }: FileMetadataViewP
     updatedAt: event.created_at,
   })
   const { blocked: mediaBlocked, loading: mediaModerationLoading } = useMediaModerationDocument(moderationDocument)
+  const revealReason = getMediaRevealReason({
+    blocked: moderationDocument !== null && mediaBlocked,
+    loading: moderationDocument !== null && mediaModerationLoading,
+    isSensitive: contentWarning !== null,
+    isUnfollowed: followStatus === false,
+  })
   const playbackPlan = kind === 'video' || kind === 'audio'
     ? buildAttachmentPlaybackPlan(
         {
@@ -70,28 +81,29 @@ export function FileMetadataView({ event, metadata, profile }: FileMetadataViewP
       />
 
       <div className="overflow-hidden rounded-ios-2xl bg-[rgb(var(--color-bg-secondary))] card-elevated">
-        {moderationDocument && (mediaModerationLoading || mediaBlocked) ? (
-          <div className="p-6">
-            <p className="text-[16px] font-medium text-[rgb(var(--color-label))]">
-              {mediaModerationLoading ? 'Loading media…' : 'Media unavailable'}
-            </p>
-          </div>
-        ) : kind === 'image' && previewUrl && !previewFailed ? (
-          <img
-            src={previewUrl}
-            alt={metadata.metadata.alt ?? ''}
-            loading="lazy"
-            decoding="async"
-            referrerPolicy="no-referrer"
-            onLoad={() => {
-              recordMediaUrlSuccess(previewUrl)
-            }}
-            onError={() => {
-              recordMediaUrlFailure(previewUrl)
-              setPreviewFailed(true)
-            }}
-            className="w-full h-auto object-cover"
-          />
+        {kind === 'image' && previewUrl && !previewFailed ? (
+          <MediaRevealGate
+            reason={revealReason}
+            resetKey={`${event.id}:${previewUrl}:${revealReason ?? 'none'}:${contentWarning?.reason ?? ''}`}
+            details={contentWarning?.reason}
+            className="min-h-[12rem] w-full"
+          >
+            <img
+              src={previewUrl}
+              alt={metadata.metadata.alt ?? ''}
+              loading="lazy"
+              decoding="async"
+              referrerPolicy="no-referrer"
+              onLoad={() => {
+                recordMediaUrlSuccess(previewUrl)
+              }}
+              onError={() => {
+                recordMediaUrlFailure(previewUrl)
+                setPreviewFailed(true)
+              }}
+              className="h-full w-full object-cover"
+            />
+          </MediaRevealGate>
         ) : kind === 'image' ? (
           <div className="p-6">
             <p className="text-[16px] font-medium text-[rgb(var(--color-label))]">
@@ -100,22 +112,29 @@ export function FileMetadataView({ event, metadata, profile }: FileMetadataViewP
           </div>
         ) : kind === 'video' ? (
           canRenderInlinePlayback ? (
-            <video
-              controls
-              preload="metadata"
-              poster={previewUrl ?? undefined}
-              onLoadedData={() => {
-                playbackSources.forEach((source) => recordMediaUrlSuccess(source.url))
-              }}
-              onError={() => {
-                playbackSources.forEach((source) => recordMediaUrlFailure(source.url))
-              }}
-              className="w-full h-auto"
+            <MediaRevealGate
+              reason={revealReason}
+              resetKey={`${event.id}:${metadata.metadata.url}:${revealReason ?? 'none'}:${contentWarning?.reason ?? ''}`}
+              details={contentWarning?.reason}
+              className="aspect-video w-full"
             >
-              {playbackSources.map((source) => (
-                <source key={source.url} src={source.url} {...(source.type ? { type: source.type } : {})} />
-              ))}
-            </video>
+              <video
+                controls
+                preload="metadata"
+                poster={previewUrl ?? undefined}
+                onLoadedData={() => {
+                  playbackSources.forEach((source) => recordMediaUrlSuccess(source.url))
+                }}
+                onError={() => {
+                  playbackSources.forEach((source) => recordMediaUrlFailure(source.url))
+                }}
+                className="h-full w-full"
+              >
+                {playbackSources.map((source) => (
+                  <source key={source.url} src={source.url} {...(source.type ? { type: source.type } : {})} />
+                ))}
+              </video>
+            </MediaRevealGate>
           ) : (
             <div className="p-6">
               <p className="text-[16px] font-medium text-[rgb(var(--color-label))]">

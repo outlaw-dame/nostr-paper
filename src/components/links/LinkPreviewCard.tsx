@@ -38,6 +38,7 @@ import { useLinkDiscussionCount } from '@/hooks/useLinkDiscussionCount'
 import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
 import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import { NostrCreatorAttribution } from '@/components/links/NostrCreatorAttribution'
+import { MediaRevealGate, getMediaRevealReason } from '@/components/media/MediaRevealGate'
 import { tApp } from '@/lib/i18n/app'
 import type { OGData } from '@/lib/og/types'
 
@@ -90,10 +91,11 @@ export function LinkPreviewCard({
       : null,
     [data?.image],
   )
-  const { blocked: ogImageBlocked, loading: ogImageModerationLoading } = useMediaModerationDocument(
-    ogImageModerationDoc,
-    { failClosed: true },
-  )
+  const { blocked: ogImageBlocked, loading: ogImageModerationLoading } = useMediaModerationDocument(ogImageModerationDoc)
+  const ogImageRevealReason = getMediaRevealReason({
+    blocked: ogImageModerationDoc !== null && ogImageBlocked,
+    loading: ogImageModerationDoc !== null && ogImageModerationLoading,
+  })
 
   const handleDiscussionsClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
@@ -140,18 +142,24 @@ export function LinkPreviewCard({
         onClick={stopPropagation}
         className="block transition-opacity active:opacity-70"
       >
-        {/* OG Image — only shown once classified as safe */}
-        {data.image && !imageFailed && !ogImageBlocked && !ogImageModerationLoading && (
+        {/* OG Image — warning-gated while moderation is pending or flagged. */}
+        {data.image && !imageFailed && (
           <div className="aspect-[1.91/1] w-full overflow-hidden bg-[rgb(var(--color-fill)/0.06)]">
-            <img
-              src={data.image}
-              alt=""
-              loading="lazy"
-              decoding="async"
-              referrerPolicy="no-referrer"
-              onError={() => setImageFailed(true)}
-              className="h-full w-full object-cover"
-            />
+            <MediaRevealGate
+              reason={ogImageRevealReason}
+              resetKey={`${data.image}:${ogImageRevealReason ?? 'none'}`}
+              className="h-full w-full"
+            >
+              <img
+                src={data.image}
+                alt=""
+                loading="lazy"
+                decoding="async"
+                referrerPolicy="no-referrer"
+                onError={() => setImageFailed(true)}
+                className="h-full w-full object-cover"
+              />
+            </MediaRevealGate>
           </div>
         )}
 

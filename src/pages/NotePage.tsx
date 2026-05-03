@@ -25,6 +25,7 @@ import { UnknownKindBody } from '@/components/nostr/UnknownKindBody'
 import { UserStatusBody } from '@/components/nostr/UserStatusBody'
 import { useEventCombinedModeration } from '@/hooks/useEventCombinedModeration'
 import { useFilterOverride } from '@/hooks/useFilterOverride'
+import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { usePageHead } from '@/hooks/usePageHead'
 import { useProfile } from '@/hooks/useProfile'
 import { getEvent } from '@/lib/db/nostr'
@@ -61,6 +62,7 @@ import { HighlightBody } from '@/components/nostr/HighlightBody'
 import { parseHighlightEvent } from '@/lib/nostr/highlight'
 import { parseUserStatusEvent } from '@/lib/nostr/status'
 import { parseCommentEvent, parseNumberedThreadMarker, parseTextNoteReply, parseThreadEvent } from '@/lib/nostr/thread'
+import { parseContentWarning } from '@/lib/nostr/contentWarning'
 import { parseVideoEvent } from '@/lib/nostr/video'
 import { isThreadInspectorEnabled } from '@/lib/runtime/debugSettings'
 import { withRetry } from '@/lib/retry'
@@ -80,6 +82,7 @@ export default function NotePage() {
   const [error, setError] = useState<string | null>(null)
   const [override, setOverride] = useState(false)
   const { profile } = useProfile(event?.pubkey)
+  const followStatus = useFollowStatus(event?.pubkey)
   const { overridden: filterOverride, setOverridden: setFilterOverride } = useFilterOverride(event?.id)
   const {
     blocked:      isBlocked,
@@ -91,6 +94,7 @@ export default function NotePage() {
   const keywordHidden = keywordFilterResult.action === 'hide' || keywordFilterResult.action === 'block'
   const keywordGated = keywordFilterResult.action === 'warn' && !filterOverride
   const blockedByTagr = eventBlocked && (moderationDecision?.reason?.startsWith('tagr:') ?? false)
+  const contentWarning = event ? parseContentWarning(event) : null
 
   // First image attachment URL — used as og:image
   const ogImageUrl = useMemo(() => {
@@ -432,7 +436,13 @@ export default function NotePage() {
                   />
                 )}
                 {attachments.length > 0 && (
-                  <NoteMediaAttachments attachments={attachments} className="mt-5" />
+                  <NoteMediaAttachments
+                    attachments={attachments}
+                    className="mt-5"
+                    isSensitive={contentWarning !== null}
+                    sensitiveReason={contentWarning?.reason ?? null}
+                    isUnfollowed={followStatus === false}
+                  />
                 )}
                 <QuotePreviewList event={event} showHeader={false} className="mt-5" compact />
               </>

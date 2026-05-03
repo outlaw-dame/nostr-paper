@@ -7,6 +7,7 @@ import { QuotePreviewList } from '@/components/nostr/QuotePreviewList'
 import { NoteContent } from '@/components/cards/NoteContent'
 import { SyndicationExportBar } from '@/components/syndication/SyndicationExportBar'
 import { TwemojiText } from '@/components/ui/TwemojiText'
+import { MediaRevealGate, getMediaRevealReason } from '@/components/media/MediaRevealGate'
 import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
 import { recordMediaUrlFailure, recordMediaUrlSuccess, shouldAttemptMediaUrl } from '@/lib/media/failureBackoff'
@@ -99,7 +100,6 @@ export function VideoBody({ event, profile, className = '' }: VideoBodyProps) {
   const { blocked: mediaBlocked, loading: mediaModerationLoading } = useMediaModerationDocument(mediaModerationDocument)
   const preferredVariant = variantPlans[0]?.candidate ?? null
   const [selectedUrl, setSelectedUrl] = useState<string | null>(preferredVariant?.url ?? null)
-  const [revealed, setRevealed] = useState(false)
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
   const followStatus = useFollowStatus(event.pubkey)
   const contentWarning = parseContentWarning(event)
@@ -107,10 +107,6 @@ export function VideoBody({ event, profile, className = '' }: VideoBodyProps) {
   useEffect(() => {
     setSelectedUrl(preferredVariant?.url ?? null)
   }, [preferredVariant?.url, event.id])
-
-  useEffect(() => {
-    setRevealed(contentWarning === null && followStatus !== false)
-  }, [contentWarning, followStatus, event.id])
 
   const selectedPlan = variantPlans.find((plan) => plan.candidate.url === selectedUrl) ?? variantPlans[0] ?? null
   const selectedVariant = selectedPlan?.candidate ?? null
@@ -120,27 +116,13 @@ export function VideoBody({ event, profile, className = '' }: VideoBodyProps) {
   )
 
   if (!video) return null
-  if (mediaModerationDocument && (mediaModerationLoading || mediaBlocked)) {
-    return (
-      <article className={`space-y-6 ${className}`}>
-        <header className="space-y-4">
-          <AuthorRow
-            pubkey={event.pubkey}
-            profile={profile}
-            timestamp={event.created_at}
-            large
-          />
-        </header>
-        <section className="overflow-hidden rounded-ios-2xl bg-[rgb(var(--color-bg-secondary))] card-elevated p-6">
-          <p className="text-[16px] font-medium text-[rgb(var(--color-label))]">
-            {mediaModerationLoading ? 'Loading video…' : 'Video unavailable'}
-          </p>
-        </section>
-      </article>
-    )
-  }
-  const requiresReveal = contentWarning !== null || followStatus === false
   const isAudioVariant = (selectedVariant?.mimeType ?? '').startsWith('audio/')
+  const revealReason = getMediaRevealReason({
+    blocked: mediaModerationDocument !== null && mediaBlocked,
+    loading: mediaModerationDocument !== null && mediaModerationLoading,
+    isSensitive: contentWarning !== null,
+    isUnfollowed: followStatus === false,
+  })
   const trackSources = video.textTracks.filter(track => isSafeURL(track.reference))
   const playbackBadge = selectedPlan
     ? getCompactPlaybackLabel(getMediaPlaybackProfileLabel(selectedPlan.profile), selectedPlan.playability)
@@ -219,112 +201,85 @@ export function VideoBody({ event, profile, className = '' }: VideoBodyProps) {
           <div className="flex aspect-video items-center justify-center px-6 text-center text-[15px] text-white/70">
             No compatible video source is available for this browser.
           </div>
-        ) : requiresReveal && !revealed ? (
-          <button
-            type="button"
-            onClick={() => setRevealed(true)}
-            className="relative block w-full overflow-hidden text-left"
-          >
-            {previewImage ? (
-              <img
-                src={previewImage}
-                alt={video.alt ?? ''}
-                loading="lazy"
-                decoding="async"
-                referrerPolicy="no-referrer"
-                onLoad={() => {
-                  recordMediaUrlSuccess(previewImage)
-                }}
-                onError={() => {
-                  recordMediaUrlFailure(previewImage)
-                }}
-                className="aspect-video h-full w-full object-cover blur-2xl brightness-[0.55]"
-              />
-            ) : (
-              <div className="aspect-video bg-[linear-gradient(145deg,#172033,#0b1017)]" />
-            )}
-
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center text-white">
-              <div className="rounded-full bg-black/45 px-4 py-2 text-[13px] font-semibold uppercase tracking-[0.08em]">
-                {contentWarning ? 'Sensitive Video' : 'Unknown Author'}
-              </div>
-              <p className="max-w-[34rem] text-[15px] leading-7 text-white/86">
-                {contentWarning?.reason
-                  ? `Content warning: ${contentWarning.reason}`
-                  : followStatus === false
-                    ? 'This video is from an account you do not follow.'
-                    : 'Reveal video'}
-              </p>
-              <span className="rounded-full border border-white/22 bg-white/12 px-4 py-2 text-[14px] font-medium">
-                Tap to reveal
-              </span>
-            </div>
-          </button>
         ) : isAudioVariant ? (
-          <div className="space-y-4 p-4">
-            {previewImage && (
-              <img
-                src={previewImage}
-                alt={video.alt ?? ''}
-                loading="lazy"
-                decoding="async"
-                referrerPolicy="no-referrer"
-                onLoad={() => {
-                  recordMediaUrlSuccess(previewImage)
+          <MediaRevealGate
+            reason={revealReason}
+            resetKey={`${event.id}:${selectedVariant.url}:${revealReason ?? 'none'}:${contentWarning?.reason ?? ''}`}
+            details={contentWarning?.reason}
+            className="w-full"
+          >
+            <div className="space-y-4 p-4">
+              {previewImage && (
+                <img
+                  src={previewImage}
+                  alt={video.alt ?? ''}
+                  loading="lazy"
+                  decoding="async"
+                  referrerPolicy="no-referrer"
+                  onLoad={() => {
+                    recordMediaUrlSuccess(previewImage)
+                  }}
+                  onError={() => {
+                    recordMediaUrlFailure(previewImage)
+                  }}
+                  className="aspect-video w-full rounded-[18px] object-cover"
+                />
+              )}
+              <audio
+                key={selectedVariant.url}
+                ref={mediaRef as MutableRefObject<HTMLAudioElement | null>}
+                controls
+                preload="metadata"
+                onLoadedData={() => {
+                  selectedSources.forEach((source) => recordMediaUrlSuccess(source.url))
                 }}
                 onError={() => {
-                  recordMediaUrlFailure(previewImage)
+                  selectedSources.forEach((source) => recordMediaUrlFailure(source.url))
                 }}
-                className="aspect-video w-full rounded-[18px] object-cover"
-              />
-            )}
-            <audio
+                className="w-full"
+              >
+                {selectedSources.map((source) => (
+                  <source key={source.url} src={source.url} {...(source.type ? { type: source.type } : {})} />
+                ))}
+              </audio>
+            </div>
+          </MediaRevealGate>
+        ) : (
+          <MediaRevealGate
+            reason={revealReason}
+            resetKey={`${event.id}:${selectedVariant.url}:${revealReason ?? 'none'}:${contentWarning?.reason ?? ''}`}
+            details={contentWarning?.reason}
+            className="aspect-video w-full"
+          >
+            <video
               key={selectedVariant.url}
-              ref={mediaRef as MutableRefObject<HTMLAudioElement | null>}
+              ref={mediaRef as MutableRefObject<HTMLVideoElement | null>}
               controls
+              playsInline
               preload="metadata"
+              poster={previewImage}
               onLoadedData={() => {
                 selectedSources.forEach((source) => recordMediaUrlSuccess(source.url))
               }}
               onError={() => {
                 selectedSources.forEach((source) => recordMediaUrlFailure(source.url))
               }}
-              className="w-full"
+              className="h-full w-full bg-black object-contain"
             >
               {selectedSources.map((source) => (
                 <source key={source.url} src={source.url} {...(source.type ? { type: source.type } : {})} />
               ))}
-            </audio>
-          </div>
-        ) : (
-          <video
-            key={selectedVariant.url}
-            ref={mediaRef as MutableRefObject<HTMLVideoElement | null>}
-            controls
-            playsInline
-            preload="metadata"
-            poster={previewImage}
-            onLoadedData={() => {
-              selectedSources.forEach((source) => recordMediaUrlSuccess(source.url))
-            }}
-            onError={() => {
-              selectedSources.forEach((source) => recordMediaUrlFailure(source.url))
-            }}
-            className="aspect-video w-full bg-black object-contain"
-          >
-            {selectedSources.map((source) => (
-              <source key={source.url} src={source.url} {...(source.type ? { type: source.type } : {})} />
-            ))}
-            {trackSources.map((track) => (
-              <track
-                key={`${track.reference}-${track.trackType ?? ''}-${track.language ?? ''}`}
-                src={track.reference}
-                kind={mapTrackKind(track.trackType)}
-                {...(track.language ? { srcLang: track.language } : {})}
-                label={track.trackType ?? track.language ?? 'Track'}
-              />
-            ))}
-          </video>
+              {trackSources.map((track) => (
+                <track
+                  key={`${track.reference}-${track.trackType ?? ''}-${track.language ?? ''}`}
+                  src={track.reference}
+                  kind={mapTrackKind(track.trackType)}
+                  {...(track.language ? { srcLang: track.language } : {})}
+                  label={track.trackType ?? track.language ?? 'Track'}
+                />
+              ))}
+            </video>
+          </MediaRevealGate>
         )}
       </section>
 

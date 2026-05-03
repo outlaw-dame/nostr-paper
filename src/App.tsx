@@ -20,6 +20,7 @@ import { MusicPresencePublisher } from '@/components/nostr/MusicPresencePublishe
 import { UpdateBanner } from '@/components/ui/UpdateBanner'
 import { ErrorScreen } from '@/components/ui/ErrorScreen'
 import { OfflineBanner } from '@/components/ui/OfflineBanner'
+import { GlobalImageLightbox } from '@/components/ui/GlobalImageLightbox'
 
 // ── Error Boundary ────────────────────────────────────────────
 
@@ -216,6 +217,7 @@ function InnerApp() {
 
       <ComposeSheet />
       <MusicPresencePublisher />
+      <GlobalImageLightbox />
     </>
   )
 }
