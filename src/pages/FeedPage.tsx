@@ -1364,7 +1364,7 @@ export default function FeedPage() {
           role="tabpanel"
           onPointerDownCapture={persistFeedPosition}
           className="
-            min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]
+            min-h-0 flex-1 overflow-y-auto [overflow-anchor:auto]
             px-4 pb-safe
           "
         >

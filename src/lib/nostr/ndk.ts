@@ -41,7 +41,7 @@ const DEFAULT_RELAYS = [
   'wss://nos.lol',
   'wss://relay.momostr.pink',
   'wss://relay.mostr.pub',
-  'wss://ditto.pub/relay',
+  'wss://relay.ditto.pub',
   'wss://nostr.wine',
   'wss://relay.snort.social',
   'wss://relay.primal.net',

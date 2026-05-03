@@ -60,7 +60,7 @@ const RECOMMENDED_RELIABLE_WRITE_RELAYS = [
   'wss://relay.snort.social',
   'wss://relay.primal.net',
   'wss://relay.momostr.pink',
-  'wss://ditto.pub/relay',
+  'wss://relay.ditto.pub',
 ] as const
 
 const CURATED_RELAY_RECOMMENDATIONS = [
@@ -85,7 +85,7 @@ const CURATED_RELAY_RECOMMENDATIONS = [
     reasonKey: 'relaysRecommendationMostrPub',
   },
   {
-    url: 'wss://ditto.pub/relay',
+    url: 'wss://relay.ditto.pub',
     reasonKey: 'relaysRecommendationDitto',
   },
   {
