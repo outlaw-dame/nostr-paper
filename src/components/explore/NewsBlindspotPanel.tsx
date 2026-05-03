@@ -8,6 +8,7 @@ type OrientationBucket = 'left' | 'center' | 'right'
 
 interface NewsBlindspotPanelProps {
   links: TrendingLinkStat[]
+  showPersonalMix?: boolean
   className?: string
 }
 
@@ -23,7 +24,11 @@ function pct(value: number, total: number): number {
   return Math.round((value / total) * 100)
 }
 
-export function NewsBlindspotPanel({ links, className = '' }: NewsBlindspotPanelProps) {
+export function NewsBlindspotPanel({
+  links,
+  showPersonalMix = true,
+  className = '',
+}: NewsBlindspotPanelProps) {
   const exposureSummary = useSourceExposureSummary(14)
 
   const trendMix = useMemo(() => {
@@ -110,7 +115,7 @@ export function NewsBlindspotPanel({ links, className = '' }: NewsBlindspotPanel
         </p>
       )}
 
-      {personalMix.total > 0 && (
+      {showPersonalMix && personalMix.total > 0 && (
         <p className="mt-2 text-[11px] text-[rgb(var(--color-label-tertiary))]">
           Your recent reading mix (14d): Left {pct(personalMix.counts.left, personalMix.total)}%,
           Center {pct(personalMix.counts.center, personalMix.total)}%,

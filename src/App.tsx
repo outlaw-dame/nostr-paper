@@ -17,6 +17,7 @@ import { useApp } from '@/contexts/app-context'
 import { ComposeSheet } from '@/components/compose/ComposeSheet'
 import { BootSplash } from '@/components/layout/BootSplash'
 import { MusicPresencePublisher } from '@/components/nostr/MusicPresencePublisher'
+import { RuntimeFeatureFlagSync } from '@/components/system/RuntimeFeatureFlagSync'
 import { UpdateBanner } from '@/components/ui/UpdateBanner'
 import { ErrorScreen } from '@/components/ui/ErrorScreen'
 import { OfflineBanner } from '@/components/ui/OfflineBanner'
@@ -216,6 +217,7 @@ function InnerApp() {
       </Suspense>
 
       <ComposeSheet />
+      <RuntimeFeatureFlagSync />
       <MusicPresencePublisher />
       <GlobalImageLightbox />
     </>

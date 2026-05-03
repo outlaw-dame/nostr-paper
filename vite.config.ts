@@ -72,6 +72,7 @@ const DEV_SERVER_PORT = Number.parseInt(process.env.VITE_DEV_PORT ?? '5173', 10)
 const ENABLE_LOCAL_CROSS_ORIGIN_ISOLATION = process.env.VITE_ENABLE_LOCAL_COI !== 'false'
 const SAFE_BROWSING_BACKEND_ORIGIN = (process.env.SAFE_BROWSING_BACKEND_ORIGIN ?? 'http://127.0.0.1:7080').trim()
 const FACT_CHECK_BACKEND_ORIGIN = (process.env.FACT_CHECK_BACKEND_ORIGIN ?? 'http://127.0.0.1:7080').trim()
+const FEATURE_FLAGS_BACKEND_ORIGIN = (process.env.FEATURE_FLAGS_BACKEND_ORIGIN ?? FACT_CHECK_BACKEND_ORIGIN).trim()
 const LOCAL_CROSS_ORIGIN_ISOLATION_HEADERS = ENABLE_LOCAL_CROSS_ORIGIN_ISOLATION
   ? {
       'Cross-Origin-Opener-Policy': 'same-origin',
@@ -1665,6 +1666,11 @@ export default defineConfig(({ mode }) => {
           target: FACT_CHECK_BACKEND_ORIGIN,
           changeOrigin: true,
           rewrite: (path) => path.replace('/api/fact-check/search', '/fact-check/search'),
+        },
+        '/api/feature-flags': {
+          target: FEATURE_FLAGS_BACKEND_ORIGIN,
+          changeOrigin: true,
+          rewrite: (path) => path.replace('/api/feature-flags', '/feature-flags'),
         },
       },
       fs: {

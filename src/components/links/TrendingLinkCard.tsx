@@ -16,6 +16,7 @@
 import React, { useMemo } from 'react'
 import { useLinkPreview } from '@/hooks/useLinkPreview'
 import { useMediaModerationDocument } from '@/hooks/useMediaModeration'
+import { useRuntimeFeatureFlags } from '@/hooks/useRuntimeFeatureFlags'
 import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import { recordSourceExposure } from '@/lib/media/sourceExposure'
 import { SourceLensBadge } from '@/components/links/SourceLensBadge'
@@ -28,6 +29,7 @@ interface TrendingLinkCardProps {
 }
 
 export function TrendingLinkCard({ stat, onClick }: TrendingLinkCardProps) {
+  const flags = useRuntimeFeatureFlags()
   const { data: og, loading: ogLoading } = useLinkPreview(stat.url)
   const [thumbFailed, setThumbFailed] = React.useState(false)
 
@@ -63,7 +65,9 @@ export function TrendingLinkCard({ stat, onClick }: TrendingLinkCardProps) {
   const domain = stat.domain
 
   const handlePress = () => {
-    recordSourceExposure(stat.domain || stat.url, 'trending-link')
+    if (flags.phase4MediaDietTracking) {
+      recordSourceExposure(stat.domain || stat.url, 'trending-link')
+    }
     onClick(stat.url)
   }
 
@@ -123,9 +127,11 @@ export function TrendingLinkCard({ stat, onClick }: TrendingLinkCardProps) {
         <p className="text-[11px] text-[rgb(var(--color-label-tertiary))]">
           {tApp('exploreNewsDiscussing', { count: String(stat.uniqueAuthorCount) })}
         </p>
-        <div className="pt-0.5">
-          <SourceLensBadge domainOrUrl={domain} compact />
-        </div>
+        {flags.phase3SourceLensBadges && (
+          <div className="pt-0.5">
+            <SourceLensBadge domainOrUrl={domain} compact />
+          </div>
+        )}
       </div>
 
       {/* Chevron */}

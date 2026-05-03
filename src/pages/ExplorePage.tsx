@@ -37,6 +37,7 @@ import { usePopularProfiles } from '@/hooks/usePopularProfiles'
 import { useSuggestedProfiles } from '@/hooks/useSuggestedProfiles'
 import { useSemanticFollowPacks } from '@/hooks/useSemanticFollowPacks'
 import { useFollowStatus } from '@/hooks/useFollowStatus'
+import { useRuntimeFeatureFlags } from '@/hooks/useRuntimeFeatureFlags'
 import { TrendingLinkCard } from '@/components/links/TrendingLinkCard'
 import { NewsBlindspotPanel } from '@/components/explore/NewsBlindspotPanel'
 import type { TrendingLinkStat } from '@/lib/explore/trendingLinks'
@@ -81,6 +82,7 @@ const SEARCHABLE_KINDS = [
 ]
 
 export default function ExplorePage() {
+  const flags = useRuntimeFeatureFlags()
   const { currentUser } = useApp()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -362,6 +364,8 @@ export default function ExplorePage() {
             linksLoading={linksLoading}
             linksWindow={linksWindow}
             onLinksWindowChange={setLinksWindow}
+            showBlindspotPanel={flags.phase2BlindspotPanel}
+            showPersonalMix={flags.phase4MediaDietTracking}
             onLinkPress={handleLinkPress}
             followPacks={semanticFollowPacks}
             followPackSemanticApplied={followPackSemanticApplied}
@@ -432,6 +436,8 @@ function ExploreContent({
   linksLoading,
   linksWindow,
   onLinksWindowChange,
+  showBlindspotPanel,
+  showPersonalMix,
   onLinkPress,
   followPacks,
   followPackSemanticApplied,
@@ -451,6 +457,8 @@ function ExploreContent({
   linksLoading: boolean
   linksWindow: 'today' | 'week'
   onLinksWindowChange: (w: 'today' | 'week') => void
+  showBlindspotPanel: boolean
+  showPersonalMix: boolean
   onLinkPress: (url: string) => void
   followPacks: RankedExploreFollowPack[]
   followPackSemanticApplied: boolean
@@ -571,7 +579,12 @@ function ExploreContent({
           </div>
         ) : links.length > 0 ? (
           <div className="space-y-2">
-            <NewsBlindspotPanel links={links} />
+            {showBlindspotPanel && (
+              <NewsBlindspotPanel
+                links={links}
+                showPersonalMix={showPersonalMix}
+              />
+            )}
             {links.map((stat, i) => (
               <motion.div
                 key={stat.url}

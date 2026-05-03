@@ -41,15 +41,18 @@ import { NostrCreatorAttribution } from '@/components/links/NostrCreatorAttribut
 import { MediaRevealGate, getMediaRevealReason } from '@/components/media/MediaRevealGate'
 import { FactCheckBadge } from '@/components/security/FactCheckBadge'
 import { SourceLensBadge } from '@/components/links/SourceLensBadge'
+import { useRuntimeFeatureFlags } from '@/hooks/useRuntimeFeatureFlags'
 import { recordSourceExposure } from '@/lib/media/sourceExposure'
 import { tApp } from '@/lib/i18n/app'
 import type { OGData } from '@/lib/og/types'
 
 // ── Helpers ──────────────────────────────────────────────────
 
-function trackAndStop(e: React.MouseEvent, domainOrUrl: string) {
+function trackAndStop(e: React.MouseEvent, domainOrUrl: string, shouldTrack: boolean) {
   e.stopPropagation()
-  recordSourceExposure(domainOrUrl, 'link-preview')
+  if (shouldTrack) {
+    recordSourceExposure(domainOrUrl, 'link-preview')
+  }
 }
 
 function hostname(url: string): string | null {
@@ -75,6 +78,7 @@ export function LinkPreviewCard({
   previewLoading,
   onDiscussionsPress,
 }: LinkPreviewCardProps) {
+  const flags = useRuntimeFeatureFlags()
   const previewState = useLinkPreview(
     previewData === undefined && previewLoading === undefined ? url : null,
   )
@@ -143,7 +147,7 @@ export function LinkPreviewCard({
         href={url}
         target="_blank"
         rel="noopener noreferrer nofollow"
-        onClick={(event) => trackAndStop(event, host ?? data.url)}
+        onClick={(event) => trackAndStop(event, host ?? data.url, flags.phase4MediaDietTracking)}
         className="block transition-opacity active:opacity-70"
       >
         {/* OG Image — warning-gated while moderation is pending or flagged. */}
@@ -208,13 +212,13 @@ export function LinkPreviewCard({
           )}
 
           {/* Google Fact Check Tools rating, if any */}
-          {data.title && (
+          {flags.phase1FactCheckContext && data.title && (
             <div className="pt-1">
               <FactCheckBadge query={data.title} compact />
             </div>
           )}
 
-          {host && (
+          {flags.phase3SourceLensBadges && host && (
             <div className="pt-1">
               <SourceLensBadge domainOrUrl={host} compact />
             </div>

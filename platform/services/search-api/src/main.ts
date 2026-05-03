@@ -18,6 +18,63 @@ const MODERATION_OPS_TOKEN = typeof process.env.MODERATION_OPS_TOKEN === 'string
   ? process.env.MODERATION_OPS_TOKEN.trim()
   : '';
 
+interface RuntimeFeatureFlags {
+  phase1FactCheckContext: boolean;
+  phase2BlindspotPanel: boolean;
+  phase3SourceLensBadges: boolean;
+  phase4MediaDietTracking: boolean;
+}
+
+const DEFAULT_RUNTIME_FEATURE_FLAGS: RuntimeFeatureFlags = {
+  phase1FactCheckContext: true,
+  phase2BlindspotPanel: true,
+  phase3SourceLensBadges: true,
+  phase4MediaDietTracking: true,
+};
+
+function parseBooleanLike(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+    if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+  }
+  if (typeof value === 'number') {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+  return fallback;
+}
+
+function loadInitialRuntimeFeatureFlags(): RuntimeFeatureFlags {
+  const fromEnv = process.env.RUNTIME_FEATURE_FLAGS_JSON ?? process.env.FEATURE_FLAGS_JSON ?? '';
+  if (!fromEnv.trim()) {
+    return {
+      ...DEFAULT_RUNTIME_FEATURE_FLAGS,
+      phase1FactCheckContext: parseBooleanLike(process.env.FEATURE_PHASE1_FACTCHECK, DEFAULT_RUNTIME_FEATURE_FLAGS.phase1FactCheckContext),
+      phase2BlindspotPanel: parseBooleanLike(process.env.FEATURE_PHASE2_BLINDSPOT, DEFAULT_RUNTIME_FEATURE_FLAGS.phase2BlindspotPanel),
+      phase3SourceLensBadges: parseBooleanLike(process.env.FEATURE_PHASE3_SOURCE_LENS, DEFAULT_RUNTIME_FEATURE_FLAGS.phase3SourceLensBadges),
+      phase4MediaDietTracking: parseBooleanLike(process.env.FEATURE_PHASE4_MEDIA_DIET, DEFAULT_RUNTIME_FEATURE_FLAGS.phase4MediaDietTracking),
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(fromEnv) as Partial<RuntimeFeatureFlags>;
+    return {
+      phase1FactCheckContext: parseBooleanLike(parsed.phase1FactCheckContext, DEFAULT_RUNTIME_FEATURE_FLAGS.phase1FactCheckContext),
+      phase2BlindspotPanel: parseBooleanLike(parsed.phase2BlindspotPanel, DEFAULT_RUNTIME_FEATURE_FLAGS.phase2BlindspotPanel),
+      phase3SourceLensBadges: parseBooleanLike(parsed.phase3SourceLensBadges, DEFAULT_RUNTIME_FEATURE_FLAGS.phase3SourceLensBadges),
+      phase4MediaDietTracking: parseBooleanLike(parsed.phase4MediaDietTracking, DEFAULT_RUNTIME_FEATURE_FLAGS.phase4MediaDietTracking),
+    };
+  } catch (error) {
+    log.warn({ err: error }, 'invalid runtime feature flags JSON; using defaults');
+    return { ...DEFAULT_RUNTIME_FEATURE_FLAGS };
+  }
+}
+
+let runtimeFeatureFlags: RuntimeFeatureFlags = loadInitialRuntimeFeatureFlags();
+let runtimeFeatureFlagsUpdatedAt = new Date().toISOString();
+
 function sanitizeLimit(rawLimit: unknown): number {
   const parsed = safeNumber(rawLimit);
   if (!Number.isFinite(parsed)) {
@@ -83,6 +140,112 @@ function isOpsAuthorized(req: IncomingMessage): boolean {
     : authHeader.trim();
 
   return token === MODERATION_OPS_TOKEN;
+}
+
+function setReadCorsHeaders(res: ServerResponse, origin: string | undefined): void {
+  res.setHeader('Access-Control-Allow-Origin', origin ?? '*');
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
+}
+
+async function handleFeatureFlagsRequest(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const url = parseUrl(req);
+  if (url.pathname !== '/feature-flags' && url.pathname !== '/v1/feature-flags') {
+    return false;
+  }
+
+  const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
+  setReadCorsHeaders(res, origin);
+
+  if (req.method === 'OPTIONS') {
+    res.statusCode = 204;
+    res.end();
+    return true;
+  }
+
+  if (req.method !== 'GET') {
+    sendJson(res, 405, { error: 'method_not_allowed' });
+    return true;
+  }
+
+  sendJson(res, 200, {
+    flags: runtimeFeatureFlags,
+    updatedAt: runtimeFeatureFlagsUpdatedAt,
+  });
+  return true;
+}
+
+async function handleFeatureFlagsOpsRequest(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const url = parseUrl(req);
+  if (!url.pathname.startsWith('/ops/feature-flags')) {
+    return false;
+  }
+
+  if (!isOpsAuthorized(req)) {
+    sendJson(res, 401, { error: 'unauthorized' });
+    return true;
+  }
+
+  const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
+  setReadCorsHeaders(res, origin);
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+
+  if (req.method === 'OPTIONS') {
+    res.statusCode = 204;
+    res.end();
+    return true;
+  }
+
+  if (req.method === 'GET') {
+    sendJson(res, 200, {
+      flags: runtimeFeatureFlags,
+      updatedAt: runtimeFeatureFlagsUpdatedAt,
+    });
+    return true;
+  }
+
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { error: 'method_not_allowed' });
+    return true;
+  }
+
+  let body: unknown;
+  try {
+    const raw = await readBody(req);
+    body = raw ? JSON.parse(raw) : {};
+  } catch (error) {
+    if (error instanceof Error && error.message === 'payload_too_large') {
+      sendJson(res, 413, { error: 'payload_too_large' });
+      return true;
+    }
+    sendJson(res, 400, { error: 'invalid_json' });
+    return true;
+  }
+
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    sendJson(res, 400, { error: 'invalid_payload' });
+    return true;
+  }
+
+  const payload = body as { flags?: Partial<RuntimeFeatureFlags> };
+  const flags = payload.flags && typeof payload.flags === 'object' ? payload.flags : {};
+
+  runtimeFeatureFlags = {
+    phase1FactCheckContext: parseBooleanLike(flags.phase1FactCheckContext, runtimeFeatureFlags.phase1FactCheckContext),
+    phase2BlindspotPanel: parseBooleanLike(flags.phase2BlindspotPanel, runtimeFeatureFlags.phase2BlindspotPanel),
+    phase3SourceLensBadges: parseBooleanLike(flags.phase3SourceLensBadges, runtimeFeatureFlags.phase3SourceLensBadges),
+    phase4MediaDietTracking: parseBooleanLike(flags.phase4MediaDietTracking, runtimeFeatureFlags.phase4MediaDietTracking),
+  };
+  runtimeFeatureFlagsUpdatedAt = new Date().toISOString();
+
+  log.info({ flags: runtimeFeatureFlags }, 'runtime feature flags updated');
+  sendJson(res, 200, {
+    ok: true,
+    flags: runtimeFeatureFlags,
+    updatedAt: runtimeFeatureFlagsUpdatedAt,
+  });
+  return true;
 }
 
 async function queryModerationStats() {
@@ -516,10 +679,18 @@ function setupWebSocketServer() {
       return;
     }
 
-    void handleOpsRequest(req, res).then((handled) => {
-      if (!handled) {
-        sendJson(res, 404, { error: 'not_found' });
-      }
+    void handleFeatureFlagsRequest(req, res).then((handledFeatureFlags) => {
+      if (handledFeatureFlags) return;
+
+      void handleFeatureFlagsOpsRequest(req, res).then((handledFeatureFlagOps) => {
+        if (handledFeatureFlagOps) return;
+
+        void handleOpsRequest(req, res).then((handled) => {
+          if (!handled) {
+            sendJson(res, 404, { error: 'not_found' });
+          }
+        });
+      });
     });
   });
 

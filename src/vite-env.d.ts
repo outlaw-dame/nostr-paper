@@ -9,6 +9,11 @@ interface ImportMetaEnv {
    */
   readonly VITE_FACT_CHECK_PROXY_URL?: string
   /**
+   * Optional override for runtime feature flags endpoint.
+   * Defaults to /api/feature-flags.
+   */
+  readonly VITE_FEATURE_FLAGS_URL?: string
+  /**
    * Path or URL to the Gemma 4 E2B model file (.task).
    * Download from: https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm
    * Place in public/models/ and set to e.g. /models/gemma-4-E2B-it-web.task
