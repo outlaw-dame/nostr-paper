@@ -2,13 +2,16 @@ import Redis from 'ioredis';
 import { Pool } from 'pg';
 import pino from 'pino';
 import { buildEventSearchText, mergeEventUrls } from './mediaIndex.js';
+import { scoreInternalModerationRisk } from '@nostr-paper/content-policy';
 import {
+  applyTrustedModerationSignals,
   ensureModerationStateSchema,
   evaluateKeywordBlock,
   normalizeTagrReason,
-  reconcileSearchDocModerationState,
+  reconcileSearchDocModerationStateForEvents,
+  resolveTrustedModerationFeed,
   upsertKeywordBlock,
-  upsertTagrBlocks,
+  upsertShadowModerationScore,
 } from './moderationState.js';
 
 const log = pino({ level: process.env.LOG_LEVEL || 'info' });
@@ -21,9 +24,12 @@ const EMBED_STREAM = process.env.EMBED_STREAM || 'events.embed';
 const DLQ_STREAM = process.env.LEXICAL_DLQ_STREAM || 'events.ingest.dlq';
 const GROUP = 'lexical-index';
 const CONSUMER = `worker-${Math.random().toString(36).slice(2)}`;
+const SHADOW_MODEL_SCORING_ENABLED = process.env.SHADOW_MODEL_SCORING_ENABLED !== 'false';
+const SHADOW_MODEL_NAME = process.env.SHADOW_MODEL_NAME || 'internal-shadow-v1';
+const SHADOW_MODEL_VERSION = process.env.SHADOW_MODEL_VERSION || 'v1';
+const SHADOW_MODEL_ENDPOINT = process.env.SHADOW_MODEL_ENDPOINT || '';
 const MAX_RETRIES = Number(process.env.LEXICAL_MAX_RETRIES || 5);
 const METRICS_LOG_INTERVAL_MS = Number(process.env.METRICS_LOG_INTERVAL_MS || 60000);
-const TAGR_BOT_PUBKEY = (process.env.TAGR_BOT_PUBKEY || '56d4b3d6310fadb7294b7f041aab469c5ffc8991b1b1b331981b96a246f6ae65').toLowerCase();
 
 let processedMessages = 0;
 let failedMessages = 0;
@@ -146,8 +152,9 @@ function isValidHex64(value: string | undefined): value is string {
   return typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value);
 }
 
-function isTagrModerationEvent(event: { pubkey: string; kind: number; tags?: string[][] }): boolean {
-  if ((event.pubkey || '').toLowerCase() !== TAGR_BOT_PUBKEY) return false;
+function isTrustedModerationEvent(event: { pubkey: string; kind: number; tags?: string[][]; source?: { relay_url?: string | null } | null }): boolean {
+  const trustedFeed = resolveTrustedModerationFeed(event);
+  if (!trustedFeed) return false;
   if (!TAGR_KINDS.has(event.kind)) return false;
   const tags = event.tags || [];
   return tags.some((tag) => tag[0] === 'e' && isValidHex64(tag[1]));
@@ -159,7 +166,7 @@ function parseTagrReason(event: { kind: number; tags?: string[][] }): string {
     if (tag[0] !== 'l' || !tag[1]) continue;
     if (tag[1].startsWith('MOD>')) {
       const code = tag[1].slice(4).trim();
-      if (code) return code;
+      if (code) return normalizeTagrReason(code);
     }
   }
 
@@ -181,28 +188,136 @@ function extractTagrTargetEventIds(tags: string[][]): string[] {
   return [...out];
 }
 
-async function applyTagrBlocks(event: {
+async function applyTrustedModerationBlocks(event: {
   event_id: string;
   pubkey: string;
   created_at: number;
   kind: number;
   tags?: string[][];
+  source?: { relay_url?: string | null } | null;
 }) {
+  const trustedFeed = resolveTrustedModerationFeed(event);
+  if (!trustedFeed) return;
+
   const targetEventIds = extractTagrTargetEventIds(event.tags || []);
   if (targetEventIds.length === 0) return;
 
   const reason = parseTagrReason(event);
   const blockedAtIso = new Date(event.created_at * 1000).toISOString();
 
-  await upsertTagrBlocks(pg, {
+  await applyTrustedModerationSignals(pg, {
     targetEventIds,
     reason,
     sourceEventId: event.event_id,
     sourcePubkey: event.pubkey,
+    sourceRelayUrl: event.source?.relay_url || null,
     blockedAtIso,
+    feed: trustedFeed,
   });
 
-  await reconcileSearchDocModerationState(pg);
+  await reconcileSearchDocModerationStateForEvents(pg, targetEventIds);
+}
+
+function shadowFallbackModel(input: { content: string; title: string | null; summary: string | null; alt: string | null; hashtags: string[] }) {
+  const risk = scoreInternalModerationRisk(input);
+  return {
+    modelName: SHADOW_MODEL_NAME,
+    modelVersion: SHADOW_MODEL_VERSION,
+    score: risk.score,
+    recommendedAction: risk.score >= risk.threshold ? 'block' : 'allow',
+    reasons: [...risk.flags, ...risk.matchedTerms, ...risk.matchedDomains].slice(0, 20),
+    meta: {
+      normalizedText: risk.normalizedText.slice(0, 400),
+      threshold: risk.threshold,
+    },
+  } as const;
+}
+
+async function scoreWithRemoteModel(input: {
+  content: string;
+  title: string | null;
+  summary: string | null;
+  alt: string | null;
+  hashtags: string[];
+}) {
+  if (!SHADOW_MODEL_ENDPOINT) return null;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+
+  try {
+    const response = await fetch(SHADOW_MODEL_ENDPOINT, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) return null;
+    const parsed = await response.json() as {
+      score?: number;
+      recommendedAction?: string;
+      reasons?: string[];
+      modelName?: string;
+      modelVersion?: string;
+      meta?: Record<string, unknown>;
+    };
+
+    if (!Number.isFinite(parsed.score ?? Number.NaN)) return null;
+
+    return {
+      modelName: parsed.modelName || SHADOW_MODEL_NAME,
+      modelVersion: parsed.modelVersion || SHADOW_MODEL_VERSION,
+      score: Math.max(0, Math.min(1, Number(parsed.score))),
+      recommendedAction: parsed.recommendedAction === 'block' ? 'block' : 'allow',
+      reasons: Array.isArray(parsed.reasons) ? parsed.reasons.slice(0, 20) : [],
+      meta: parsed.meta || {},
+    } as const;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function runShadowModerationScore(event: {
+  event_id: string;
+  content?: string;
+  tags?: string[][];
+}, context: {
+  title: string | null;
+  summary: string | null;
+  alt: string | null;
+  hashtags: string[];
+  policyAction: 'allow' | 'block';
+}) {
+  if (!SHADOW_MODEL_SCORING_ENABLED) return;
+
+  const payload = {
+    content: event.content || '',
+    title: context.title,
+    summary: context.summary,
+    alt: context.alt,
+    hashtags: context.hashtags,
+  };
+
+  void (async () => {
+    const remote = await scoreWithRemoteModel(payload);
+    const modelResult = remote || shadowFallbackModel(payload);
+
+    await upsertShadowModerationScore(pg, {
+      eventId: event.event_id,
+      modelName: modelResult.modelName,
+      modelVersion: modelResult.modelVersion,
+      score: modelResult.score,
+      recommendedAction: modelResult.recommendedAction,
+      policyAction: context.policyAction,
+      reasons: modelResult.reasons,
+      meta: modelResult.meta,
+    });
+  })().catch((err) => {
+    log.warn({ err, eventId: event.event_id }, 'shadow moderation scoring failed');
+  });
 }
 
 interface ThreadRefs {
@@ -347,9 +462,9 @@ async function upsertSocialMetrics(event: { kind: number; content?: string; crea
 
 async function processMessage(payload: string) {
   const event = JSON.parse(payload);
-  const tagrModerationEvent = isTagrModerationEvent(event);
+  const trustedModerationEvent = isTrustedModerationEvent(event);
 
-  if (!SUPPORTED_KINDS.has(event.kind) && !tagrModerationEvent) {
+  if (!SUPPORTED_KINDS.has(event.kind) && !trustedModerationEvent) {
     return;
   }
 
@@ -416,7 +531,7 @@ async function processMessage(payload: string) {
       await upsertKeywordBlock(pg, event.event_id, keywordDecision);
     }
 
-    if (!SOCIAL_KINDS.has(event.kind) && !tagrModerationEvent) {
+    if (!SOCIAL_KINDS.has(event.kind) && !trustedModerationEvent) {
       await pg.query(
         `
         INSERT INTO search_docs (
@@ -503,8 +618,8 @@ async function processMessage(payload: string) {
       );
     }
 
-    if (tagrModerationEvent) {
-      await applyTagrBlocks(event);
+    if (trustedModerationEvent) {
+      await applyTrustedModerationBlocks(event);
     }
 
     await pg.query(
@@ -526,7 +641,7 @@ async function processMessage(payload: string) {
       `,
       [
         event.pubkey,
-        SOCIAL_KINDS.has(event.kind) ? 0 : 1,
+        SOCIAL_KINDS.has(event.kind) || trustedModerationEvent ? 0 : 1,
         Buffer.byteLength(JSON.stringify(event.raw ?? event), 'utf8'),
         event.created_at,
       ]
@@ -534,7 +649,17 @@ async function processMessage(payload: string) {
 
     await pg.query('COMMIT');
 
-    if (!SOCIAL_KINDS.has(event.kind) && !tagrModerationEvent && !keywordBlocked && searchText.trim()) {
+    if (!SOCIAL_KINDS.has(event.kind) && !trustedModerationEvent) {
+      runShadowModerationScore(event, {
+        title,
+        summary,
+        alt,
+        hashtags,
+        policyAction: keywordBlocked ? 'block' : 'allow',
+      });
+    }
+
+    if (!SOCIAL_KINDS.has(event.kind) && !trustedModerationEvent && !keywordBlocked && searchText.trim()) {
       await enqueueEmbeddingJob(event.event_id, searchText);
     }
   } catch (err) {
