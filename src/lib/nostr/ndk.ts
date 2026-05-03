@@ -65,7 +65,7 @@ function getConfiguredDefaultRelays(): string[] {
     .filter((url: string) => isUsableRelayUrl(url))
 }
 
-function useExclusiveConfiguredRelays(): boolean {
+function getExclusiveConfiguredRelays(): boolean {
   return import.meta.env.VITE_DEFAULT_RELAYS_EXCLUSIVE === 'true'
 }
 
@@ -114,7 +114,7 @@ export function getDefaultRelayUrls(): string[] {
   const configuredRelays = getConfiguredDefaultRelays()
   if (configuredRelays.length === 0) return [...DEFAULT_RELAYS]
 
-  if (useExclusiveConfiguredRelays()) {
+  if (getExclusiveConfiguredRelays()) {
     return configuredRelays
   }
 
