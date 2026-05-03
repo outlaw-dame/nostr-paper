@@ -2,6 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { moderateContentDocuments } from '@/lib/moderation/client'
 import { resolveTagrModerationDecisions } from '@/lib/moderation/tagr'
 import {
+  DEFAULT_MODERATION_MODEL_ID,
+  MODERATION_POLICY_VERSION,
+  emptyModerationScores,
+  evaluateModerationScores,
+} from '@/lib/moderation/policy'
+import {
   buildEventModerationDocument,
   buildProfileModerationDocument,
   buildSyndicationEntryModerationDocument,
@@ -57,10 +63,11 @@ function getAllowedIds(
 
 export function useModerationDocuments(
   documents: ModerationDocument[],
-  options: { enabled?: boolean; failClosed?: boolean } = {},
+  options: { enabled?: boolean; failClosed?: boolean; failOpenOnError?: boolean } = {},
 ): UseModerationDocumentsResult {
   const enabled = options.enabled ?? true
   const failClosed = options.failClosed ?? false
+  const failOpenOnError = options.failOpenOnError ?? true
   const [decisions, setDecisions] = useState<Map<string, ModerationDecision>>(new Map())
   // Start loading:true so consumers don't render undecided events before
   // the first decision batch arrives (prevents feed flicker).
@@ -143,6 +150,23 @@ export function useModerationDocuments(
           merged.set(decision.id, decision)
         }
 
+        for (const document of missing) {
+          if (merged.has(document.id)) continue
+
+          const decision = evaluateModerationScores(
+            document.id,
+            emptyModerationScores(),
+            `${DEFAULT_MODERATION_MODEL_ID}:fallback-allow`,
+          )
+          const fallbackDecision = {
+            ...decision,
+            policyVersion: `${MODERATION_POLICY_VERSION}+missing-result`,
+          }
+          const cacheKey = getModerationDocumentCacheKey(document)
+          cacheSetModeration(cacheKey, fallbackDecision)
+          merged.set(decision.id, fallbackDecision)
+        }
+
         for (const [id, tagrDecision] of tagrDecisions) {
           const existing = merged.get(id)
           if (!existing || existing.action !== 'block') {
@@ -167,13 +191,13 @@ export function useModerationDocuments(
   }, [enabled, signature])
 
   const allowedIds = useMemo(
-    () => getAllowedIds(documents, decisions, !failClosed && (loading || error !== null)),
-    [documents, decisions, loading, error, failClosed],
+    () => getAllowedIds(documents, decisions, (!failClosed && loading) || (error !== null && failOpenOnError)),
+    [documents, decisions, loading, error, failClosed, failOpenOnError],
   )
 
   const blockedIds = useMemo(() => {
     const blocked = new Set<string>()
-    const failOpen = !failClosed && (loading || error !== null)
+    const failOpen = (!failClosed && loading) || (error !== null && failOpenOnError)
 
     for (const document of documents) {
       const decision = decisions.get(document.id)
@@ -186,7 +210,7 @@ export function useModerationDocuments(
     }
 
     return blocked
-  }, [documents, decisions, loading, error, failClosed])
+  }, [documents, decisions, loading, error, failClosed, failOpenOnError])
 
   return {
     decisions,

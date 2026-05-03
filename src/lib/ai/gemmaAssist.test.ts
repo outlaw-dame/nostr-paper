@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const generateText = vi.fn()
 const isGemmaAvailable = vi.fn()
 const loadTranslationSecrets = vi.fn()
+const moderateContent = vi.fn()
 
 vi.mock('@/lib/gemma/client', () => ({
   generateText,
@@ -11,6 +12,10 @@ vi.mock('@/lib/gemma/client', () => ({
 
 vi.mock('@/lib/translation/storage', () => ({
   loadTranslationSecrets,
+}))
+
+vi.mock('@/lib/moderation/cloudflareModeration', () => ({
+  moderateContent,
 }))
 
 const {
@@ -51,6 +56,12 @@ describe('gemmaAssist quality routing', () => {
       deeplAuthKey: '',
       libreApiKey: '',
       geminiApiKey: 'AIza-test-key',
+    })
+    moderateContent.mockResolvedValue({
+      isSafe: true,
+      labels: [],
+      confidence: 0,
+      source: 'rule_based',
     })
 
     setFetchMock(async () => ({

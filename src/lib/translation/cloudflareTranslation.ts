@@ -200,37 +200,38 @@ export async function translateTextBatch(
 export function detectLanguageSimple(text: string): SupportedLanguage {
   const lowerText = text.toLowerCase()
 
-  // Very basic character-based detection
-  const patterns: Record<SupportedLanguage, RegExp> = {
-    zh: /[\u4E00-\u9FFF]/,
-    ja: /[\u3040-\u309F\u30A0-\u30FF]/,
-    ar: /[\u0600-\u06FF]/,
-    ru: /[\u0400-\u04FF]/,
-    el: /[\u0370-\u03FF]/,
-    ko: /[\uAC00-\uD7AF]/,
-    en: /[a-zA-Z]/,
-    es: /ñáéíóú/i,
-    fr: /àâäéèêëïîôùûüçœæ/i,
-    de: /äöüß/i,
-    it: /àèéìòù/i,
-    pt: /ãõáéíóú/i,
-    pl: /ąćęłńóśźż/i,
-    cs: /čřšťůžď/i,
-    hu: /áéíóöőúü/i,
-    tr: /ğışüç/i,
-    vi: /àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ/i,
-    nl: /àáâãäå/i,
-    sv: /åäö/i,
-    da: /åäø/i,
-    no: /åäø/i,
-    fi: /åäö/i,
-    uk: /ґєї/i,
-    hi: /[\u0900-\u097F]/,
-  }
+  // Very basic character-based detection. Check Latin languages before the
+  // generic English fallback so accented text is not swallowed by /[a-z]/.
+  const patterns: Array<[SupportedLanguage, RegExp]> = [
+    ['zh', /[\u4E00-\u9FFF]/],
+    ['ja', /[\u3040-\u309F\u30A0-\u30FF]/],
+    ['ar', /[\u0600-\u06FF]/],
+    ['ru', /[\u0400-\u04FF]/],
+    ['el', /[\u0370-\u03FF]/],
+    ['ko', /[\uAC00-\uD7AF]/],
+    ['es', /[ñáéíóú¿¡]/i],
+    ['fr', /[àâäéèêëïîôùûüçœæ]/i],
+    ['de', /[äöüß]/i],
+    ['it', /[àèéìòù]/i],
+    ['pt', /[ãõáéíóú]/i],
+    ['pl', /[ąćęłńóśźż]/i],
+    ['cs', /[čřšťůžď]/i],
+    ['hu', /[áéíóöőúü]/i],
+    ['tr', /[ğışüç]/i],
+    ['vi', /[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i],
+    ['nl', /[àáâãäå]/i],
+    ['sv', /[åäö]/i],
+    ['da', /[åäø]/i],
+    ['no', /[åäø]/i],
+    ['fi', /[åäö]/i],
+    ['uk', /[ґєї]/i],
+    ['hi', /[\u0900-\u097F]/],
+    ['en', /[a-zA-Z]/],
+  ]
 
-  for (const [lang, pattern] of Object.entries(patterns)) {
+  for (const [lang, pattern] of patterns) {
     if (pattern.test(lowerText)) {
-      return lang as SupportedLanguage
+      return lang
     }
   }
 

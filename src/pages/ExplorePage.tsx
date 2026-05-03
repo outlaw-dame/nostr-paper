@@ -177,12 +177,11 @@ export default function ExplorePage() {
     [followPackModerationDocuments],
   )
 
-  const { allowedIds: allowedEventIds } = useModerationDocuments(eventModerationDocuments, { failClosed: true })
-  const { allowedIds: allowedProfileIds } = useModerationDocuments(profileModerationDocuments, { failClosed: true })
+  const { allowedIds: allowedEventIds } = useModerationDocuments(eventModerationDocuments)
+  const { allowedIds: allowedProfileIds } = useModerationDocuments(profileModerationDocuments)
   const {
     allowedIds: allowedFollowPackIds,
-    loading: followPackModerationLoading,
-  } = useModerationDocuments(followPackModerationDocuments, { failClosed: true })
+  } = useModerationDocuments(followPackModerationDocuments)
 
   const visibleEvents = useMemo(
     () => filterNsfwTaggedEvents(
@@ -363,7 +362,7 @@ export default function ExplorePage() {
             onLinkPress={handleLinkPress}
             followPacks={semanticFollowPacks}
             followPackSemanticApplied={followPackSemanticApplied}
-            followPacksLoading={followPackLoading || followPackModerationLoading}
+            followPacksLoading={followPackLoading}
             canBulkFollow={Boolean(currentUser)}
             onFollowPack={handleFollowPack}
             suggestedProfiles={suggestedProfiles}

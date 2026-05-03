@@ -757,8 +757,7 @@ export default function FeedPage() {
   )
   const {
     allowedIds: allowedModerationIds,
-    loading: moderationLoading,
-  } = useModerationDocuments(moderationDocuments, { failClosed: true })
+  } = useModerationDocuments(moderationDocuments)
 
   const pullY     = useMotionValue(0)
   const pullHint  = useTransform(pullY, [0, COMPOSE_TRIGGER_OFFSET], [0, 1])
@@ -841,7 +840,7 @@ export default function FeedPage() {
 
   const heroEvent = topicFilteredEvents[0] ?? null
   const secondaryEvents = topicFilteredEvents.slice(1)
-  const feedSurfaceLoading = loading || moderationLoading
+  const feedSurfaceLoading = loading
 
   useEffect(() => {
     warmSelfThreadIndexCache(visibleEvents)
@@ -1518,7 +1517,7 @@ export default function FeedPage() {
                     <HeroCard event={heroEvent} index={0} />
                   </FilteredGate>
                 </div>
-              ) : eose && !moderationLoading ? (
+              ) : eose ? (
                 <EmptyState
                   isTagMix={Boolean(activeTagTimelineDetails && (activeTagTimelineDetails.includeTags.length > 1 || activeTagTimelineDetails.excludeTags.length > 0))}
                   tag={activeTagTimelineDetails && activeTagTimelineDetails.includeTags.length === 1
