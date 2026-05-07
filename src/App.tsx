@@ -9,7 +9,7 @@
  * - Global error boundary
  */
 
-import React, { useEffect, useState, Suspense, lazy, Component, type ReactNode, type ErrorInfo } from 'react'
+import { useEffect, useState, Suspense, lazy, Component, type ReactNode, type ErrorInfo } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { App as KonstaApp } from 'konsta/react'
 import { AppProvider } from '@/contexts/AppContext'
@@ -46,7 +46,7 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryS
     console.error('[AppErrorBoundary] Render error caught:', error, info.componentStack)
   }
 
-  override render() {
+  override render(): ReactNode {
     if (this.state.error) {
       return (
         <ErrorScreen
