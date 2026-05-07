@@ -129,6 +129,10 @@ vi.mock('@/components/nostr/EventMetricsRow', () => ({
   EventMetricsRow: () => null,
 }))
 
+vi.mock('@/components/nostr/PostOverflowMenu', () => ({
+  PostOverflowMenu: () => null,
+}))
+
 // Mock fetch for OG data
 global.fetch = vi.fn()
 

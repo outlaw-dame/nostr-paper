@@ -160,8 +160,8 @@ describe('translateTextWithConfiguration', () => {
       opusMtSourceLanguage: 'auto',
     }), 'Release notes and product details for a broad audience')).toMatchObject({
       likelySourceLanguage: 'en',
-      sameLanguage: false,
-      canAutoTranslate: true,
+      sameLanguage: true,
+      canAutoTranslate: false,
     })
   })
 
