@@ -5,6 +5,19 @@ import { resolve } from 'path'
 import { visualizer } from 'rollup-plugin-visualizer'
 import * as net from 'node:net'
 import * as tls from 'node:tls'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+
+type DevNext = (err?: unknown) => void
+type DevMiddleware = (req: IncomingMessage, res: ServerResponse, next: DevNext) => void | Promise<void>
+type DevServer = {
+  middlewares: {
+    use: (middleware: DevMiddleware) => void
+  }
+  httpServer?: {
+    on: (event: string, listener: (...args: any[]) => void) => void
+  }
+}
+type PreviewServer = DevServer
 
 const DEV_NIP05_PROXY_PATH = '/__dev/nip05'
 const DEV_NIP05_PROXY_TIMEOUT_MS = 8_000
@@ -377,7 +390,7 @@ function parseOGFromHtml(html: string, pageUrl: string): OGResult {
 function ogDevProxyPlugin() {
   return {
     name: 'og-dev-proxy',
-    configureServer(server: import('vite').ViteDevServer) {
+    configureServer(server: DevServer) {
       server.middlewares.use(async (req, res, next) => {
         if (!req.url?.startsWith(DEV_OG_PROXY_PATH)) {
           next()
@@ -493,7 +506,7 @@ function ogDevProxyPlugin() {
 function safeBrowsingDevProxyPlugin() {
   return {
     name: 'safe-browsing-dev-proxy',
-    configureServer(server: import('vite').ViteDevServer) {
+    configureServer(server: DevServer) {
       server.middlewares.use(async (req, res, next) => {
         if (!req.url?.startsWith(DEV_SAFE_BROWSING_PROXY_PATH)) {
           next()
@@ -661,7 +674,7 @@ function factCheckDevProxyPlugin() {
 
   return {
     name: 'fact-check-dev-proxy',
-    configureServer(server: import('vite').ViteDevServer) {
+    configureServer(server: DevServer) {
       server.middlewares.use(async (req, res, next) => {
         if (!req.url?.startsWith(DEV_FACT_CHECK_PROXY_PATH)) {
           next()
@@ -765,7 +778,7 @@ function factCheckDevProxyPlugin() {
 }
 
 function mediaFetchDevProxyPlugin() {
-  function makeMiddleware(): Parameters<import('vite').ViteDevServer['middlewares']['use']>[0] {
+  function makeMiddleware(): DevMiddleware {
     return async (req, res, next) => {
       if (!req.url?.startsWith(DEV_MEDIA_PROXY_PATH)) {
         next()
@@ -869,10 +882,10 @@ function mediaFetchDevProxyPlugin() {
 
   return {
     name: 'media-fetch-dev-proxy',
-    configureServer(server: import('vite').ViteDevServer) {
+    configureServer(server: DevServer) {
       server.middlewares.use(makeMiddleware())
     },
-    configurePreviewServer(server: import('vite').PreviewServer) {
+    configurePreviewServer(server: PreviewServer) {
       server.middlewares.use(makeMiddleware())
     },
   }
@@ -880,7 +893,7 @@ function mediaFetchDevProxyPlugin() {
 function feedDevProxyPlugin() {
   return {
     name: 'feed-dev-proxy',
-    configureServer(server: import('vite').ViteDevServer) {
+    configureServer(server: DevServer) {
       server.middlewares.use(async (req, res, next) => {
         if (!req.url?.startsWith(DEV_FEED_PROXY_PATH)) {
           next()
@@ -1030,7 +1043,7 @@ function isValidDevProxyName(name: string): boolean {
 function tenorDevProxyPlugin() {
   return {
     name: 'tenor-dev-proxy',
-    configureServer(server: import('vite').ViteDevServer) {
+    configureServer(server: DevServer) {
       server.middlewares.use(async (req, res, next) => {
         if (!req.url?.startsWith(DEV_TENOR_PROXY_PATH)) {
           next()
@@ -1096,7 +1109,7 @@ function tenorDevProxyPlugin() {
 function translationDevProxyPlugin() {
   return {
     name: 'translation-dev-proxy',
-    configureServer(server: import('vite').ViteDevServer) {
+    configureServer(server: DevServer) {
       server.middlewares.use(async (req, res, next) => {
         if (
           !req.url?.startsWith(DEV_DEEPL_PROXY_PATH) &&
@@ -1326,7 +1339,7 @@ function translationDevProxyPlugin() {
 function lingvaDevProxyPlugin() {
   return {
     name: 'lingva-dev-proxy',
-    configureServer(server: import('vite').ViteDevServer) {
+    configureServer(server: DevServer) {
       server.middlewares.use(async (req, res, next) => {
         if (!req.url?.startsWith(DEV_LINGVA_PROXY_PATH)) {
           next()
@@ -1372,7 +1385,7 @@ function lingvaDevProxyPlugin() {
 function relayDevProxyPlugin() {
   return {
     name: 'relay-dev-proxy',
-    configureServer(server: import('vite').ViteDevServer) {
+    configureServer(server: DevServer) {
       if (!server.httpServer) return
 
       server.httpServer.on(
@@ -1466,7 +1479,7 @@ function relayDevProxyPlugin() {
 function nip05DevProxyPlugin() {
   return {
     name: 'nip05-dev-proxy',
-    configureServer(server: import('vite').ViteDevServer) {
+    configureServer(server: DevServer) {
       server.middlewares.use(async (req, res, next) => {
         if (!req.url?.startsWith(DEV_NIP05_PROXY_PATH)) {
           next()
@@ -1552,7 +1565,7 @@ function nip05DevProxyPlugin() {
 function wasmMimePlugin() {
   return {
     name: 'wasm-mime',
-    configureServer(server: import('vite').ViteDevServer) {
+    configureServer(server: DevServer) {
       server.middlewares.use((req, res, next) => {
         if (req.url && req.url.endsWith('.wasm')) {
           res.setHeader('Content-Type', 'application/wasm')
@@ -1567,7 +1580,7 @@ function wasmMimePlugin() {
   }
 }
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode }: { mode: string }) => {
   return {
     plugins: [
       wasmMimePlugin(),
@@ -1655,22 +1668,23 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port: DEV_SERVER_PORT,
       strictPort: true,
+      allowedHosts: ['localhost', '127.0.0.1', '.trycloudflare.com'],
       headers: LOCAL_CROSS_ORIGIN_ISOLATION_HEADERS,
       proxy: {
         '/api/safe-browsing/check': {
           target: SAFE_BROWSING_BACKEND_ORIGIN,
           changeOrigin: true,
-          rewrite: (path) => path.replace('/api/safe-browsing/check', '/safe-browsing/check'),
+          rewrite: (path: string) => path.replace('/api/safe-browsing/check', '/safe-browsing/check'),
         },
         '/api/fact-check/search': {
           target: FACT_CHECK_BACKEND_ORIGIN,
           changeOrigin: true,
-          rewrite: (path) => path.replace('/api/fact-check/search', '/fact-check/search'),
+          rewrite: (path: string) => path.replace('/api/fact-check/search', '/fact-check/search'),
         },
         '/api/feature-flags': {
           target: FEATURE_FLAGS_BACKEND_ORIGIN,
           changeOrigin: true,
-          rewrite: (path) => path.replace('/api/feature-flags', '/feature-flags'),
+          rewrite: (path: string) => path.replace('/api/feature-flags', '/feature-flags'),
         },
       },
       fs: {

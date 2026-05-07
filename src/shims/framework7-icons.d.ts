@@ -1,0 +1,43 @@
+declare module 'framework7-icons/react' {
+  import type { ComponentType, SVGProps } from 'react'
+  type F7IconComponent = ComponentType<SVGProps<SVGSVGElement> & { className?: string }>
+  export const House: F7IconComponent
+  export const HouseFill: F7IconComponent
+  export const Search: F7IconComponent
+  export const Bell: F7IconComponent
+  export const BellFill: F7IconComponent
+  export const PersonCircle: F7IconComponent
+  export const PersonCircleFill: F7IconComponent
+  export const Bookmark: F7IconComponent
+  export const BookmarkFill: F7IconComponent
+  export const Heart: F7IconComponent
+  export const HeartFill: F7IconComponent
+  export const ChatBubble: F7IconComponent
+  export const Arrow2Squarepath: F7IconComponent
+  export const EllipsisCircle: F7IconComponent
+  export const Gear: F7IconComponent
+  export const Plus: F7IconComponent
+  export const PlusCircle: F7IconComponent
+  export const PlusCircleFill: F7IconComponent
+  export const Xmark: F7IconComponent
+  export const ChevronLeft: F7IconComponent
+  export const ChevronRight: F7IconComponent
+  export const Square2StackFill: F7IconComponent
+  export const Globe: F7IconComponent
+  export const Lock: F7IconComponent
+  export const LockFill: F7IconComponent
+  export const Star: F7IconComponent
+  export const StarFill: F7IconComponent
+  export const Flag: F7IconComponent
+  export const FlagFill: F7IconComponent
+  export const Share: F7IconComponent
+  export const Link: F7IconComponent
+  export const Pencil: F7IconComponent
+  export const Trash: F7IconComponent
+  export const ArrowCounterclockwise: F7IconComponent
+  export const Bolt: F7IconComponent
+  export const BoltFill: F7IconComponent
+  export const Photo: F7IconComponent
+  export const PlayCircle: F7IconComponent
+  export const PlayCircleFill: F7IconComponent
+}

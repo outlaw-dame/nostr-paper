@@ -10,6 +10,29 @@
 /* ── Design Tokens ─────────────────────────────────────────── */
 :root {
   /* Light mode — warm editorial palette instead of pure system white */
+
+  /* ── Konsta UI brand tokens (--color-brand- prefix required) ── */
+  --color-brand-primary:    #007aff;
+  --color-brand-red:        #ff3b30;
+  --color-brand-orange:     #ff9500;
+  --color-brand-yellow:     #ffcc00;
+  --color-brand-green:      #34c759;
+  --color-brand-mint:       #00c7be;
+  --color-brand-teal:       #30b0c7;
+  --color-brand-cyan:       #32ade6;
+  --color-brand-blue:       #007aff;
+  --color-brand-indigo:     #5856d6;
+  --color-brand-purple:     #af52de;
+  --color-brand-pink:       #ff2d55;
+
+  /* ── iOS HIG semantic label / background tokens ─────────────── */
+  --color-secondary-label:  rgba(60, 60, 67, 0.60);
+  --color-tertiary-label:   rgba(60, 60, 67, 0.30);
+  --color-system-background:         #ffffff;
+  --color-secondary-system-background: #f2f2f7;
+  --color-grouped-background:        #f2f2f7;
+  --color-separator:        rgba(60, 60, 67, 0.29);
+
   --color-bg:               244 240 232;
   --color-bg-secondary:     252 248 241;
   --color-bg-tertiary:      236 231 223;
@@ -90,6 +113,13 @@
     --color-fill-tertiary:    146 154 166;
 
     --color-accent:           10  132 255;
+
+    --color-secondary-label:  rgba(235, 235, 245, 0.60);
+    --color-tertiary-label:   rgba(235, 235, 245, 0.30);
+    --color-system-background:          #000000;
+    --color-secondary-system-background:#1c1c1e;
+    --color-grouped-background:         #000000;
+    --color-separator:        rgba(84, 84, 88, 0.65);
 
     --shadow-xs:   0 1px 2px rgba(0,0,0,0.30);
     --shadow-sm:   0 2px 8px rgba(0,0,0,0.40), 0 1px 2px rgba(0,0,0,0.20);

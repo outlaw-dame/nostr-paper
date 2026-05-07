@@ -159,6 +159,10 @@ vi.mock('@/components/nostr/EventMetricsRow', () => ({
   EventMetricsRow: () => null,
 }))
 
+vi.mock('@/components/nostr/PostOverflowMenu', () => ({
+  PostOverflowMenu: () => null,
+}))
+
 vi.mock('@/components/translation/TranslateTextPanel', () => ({
   TranslateTextPanel: () => null,
 }))
@@ -221,6 +225,7 @@ describe('SecondaryCard', () => {
             checkEvent={() => allowResult}
             semanticResult={allowResult}
             feedInlineAutoplayEnabled
+            activeSectionId="feed"
           />
         </MemoryRouter>,
       )

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { useKeywordFilters } from '@/hooks/useKeywordFilters'
@@ -7,6 +7,11 @@ import { useProfile } from '@/hooks/useProfile'
 import { useHideNsfwTaggedPosts } from '@/hooks/useHideNsfwTaggedPosts'
 import { tApp } from '@/lib/i18n/app'
 import { setHideNsfwTaggedPostsEnabled } from '@/lib/moderation/nsfwSettings'
+import {
+  MODERATION_WARNING_SOURCES_UPDATED_EVENT,
+  getModerationWarningSourceSettings,
+  setModerationWarningSourceSettings,
+} from '@/lib/moderation/warningSourceSettings'
 import type { FilterAction, FilterScope, KeywordFilter } from '@/lib/filters/types'
 
 function getActionLabel(action: FilterAction): string {
@@ -104,7 +109,15 @@ export default function ModerationPage() {
   const { filters, loading: filtersLoading } = useKeywordFilters()
   const { mutedPubkeys, loading: muteListLoading, unmute } = useMuteList()
   const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
+  const [warningSources, setWarningSources] = useState(() => getModerationWarningSourceSettings())
   const [busyPubkeys, setBusyPubkeys] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    const refresh = () => setWarningSources(getModerationWarningSourceSettings())
+    const handleUpdated = () => refresh()
+    window.addEventListener(MODERATION_WARNING_SOURCES_UPDATED_EVENT, handleUpdated)
+    return () => window.removeEventListener(MODERATION_WARNING_SOURCES_UPDATED_EVENT, handleUpdated)
+  }, [])
 
   const mutedList = useMemo(() => Array.from(mutedPubkeys), [mutedPubkeys])
 
@@ -267,6 +280,100 @@ export default function ModerationPage() {
                 />
               </button>
             </label>
+
+            <label className="flex items-start gap-3">
+              <div className="mt-0.5 flex-1">
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
+                  {tApp('moderationAiWarnings')}
+                </p>
+                <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
+                  {tApp('moderationAiWarningsHint')}
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={warningSources.aiLabelsEnabled}
+                onClick={() => setModerationWarningSourceSettings({ aiLabelsEnabled: !warningSources.aiLabelsEnabled })}
+                className="
+                  shrink-0 mt-0.5 w-11 h-6 rounded-full
+                  transition-colors duration-200
+                "
+                style={{
+                  backgroundColor: warningSources.aiLabelsEnabled
+                    ? 'rgb(var(--color-system-green))'
+                    : 'rgb(var(--color-fill-secondary) / 0.3)',
+                }}
+              >
+                <span
+                  className="block w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200"
+                  style={{ transform: `translateX(${warningSources.aiLabelsEnabled ? 22 : 2}px)` }}
+                />
+              </button>
+            </label>
+
+            <label className="flex items-start gap-3">
+              <div className="mt-0.5 flex-1">
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
+                  {tApp('moderationNetworkReportWarnings')}
+                </p>
+                <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
+                  {tApp('moderationNetworkReportWarningsHint')}
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={warningSources.networkReportWarningsEnabled}
+                onClick={() => setModerationWarningSourceSettings({ networkReportWarningsEnabled: !warningSources.networkReportWarningsEnabled })}
+                className="
+                  shrink-0 mt-0.5 w-11 h-6 rounded-full
+                  transition-colors duration-200
+                "
+                style={{
+                  backgroundColor: warningSources.networkReportWarningsEnabled
+                    ? 'rgb(var(--color-system-green))'
+                    : 'rgb(var(--color-fill-secondary) / 0.3)',
+                }}
+              >
+                <span
+                  className="block w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200"
+                  style={{ transform: `translateX(${warningSources.networkReportWarningsEnabled ? 22 : 2}px)` }}
+                />
+              </button>
+            </label>
+
+            <label className="flex items-start gap-3">
+              <div className="mt-0.5 flex-1">
+                <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
+                  {tApp('moderationNetworkLabelWarnings')}
+                </p>
+                <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
+                  {tApp('moderationNetworkLabelWarningsHint')}
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={warningSources.networkLabelWarningsEnabled}
+                onClick={() => setModerationWarningSourceSettings({ networkLabelWarningsEnabled: !warningSources.networkLabelWarningsEnabled })}
+                className="
+                  shrink-0 mt-0.5 w-11 h-6 rounded-full
+                  transition-colors duration-200
+                "
+                style={{
+                  backgroundColor: warningSources.networkLabelWarningsEnabled
+                    ? 'rgb(var(--color-system-green))'
+                    : 'rgb(var(--color-fill-secondary) / 0.3)',
+                }}
+              >
+                <span
+                  className="block w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200"
+                  style={{ transform: `translateX(${warningSources.networkLabelWarningsEnabled ? 22 : 2}px)` }}
+                />
+              </button>
+            </label>
+
             <p className="text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
               {tApp('moderationAutomaticSummary')}
             </p>

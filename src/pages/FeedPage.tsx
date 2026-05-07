@@ -26,6 +26,7 @@ import { FeedSkeleton } from '@/components/feed/FeedSkeleton'
 import { NoteContent } from '@/components/cards/NoteContent'
 import { SensitiveImage } from '@/components/media/SensitiveImage'
 import { NoteMediaAttachments } from '@/components/nostr/NoteMediaAttachments'
+import { PostOverflowMenu } from '@/components/nostr/PostOverflowMenu'
 import { PollPreview } from '@/components/nostr/PollPreview'
 import { QuotePreviewList } from '@/components/nostr/QuotePreviewList'
 import { RepostBody } from '@/components/nostr/RepostBody'
@@ -704,10 +705,10 @@ export default function FeedPage() {
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return true
     if (!restoreCompletedRef.current) return true
 
-    const container = scrollContainerRef.current
-    if (!container) return false
-
-    return container.scrollTop > LIVE_FEED_AUTO_INSERT_THRESHOLD_PX
+    // Always buffer live events through the pending queue so new posts are
+    // never immediately applied while the user is reading any part of the feed.
+    // Auto-apply will silently merge them once the user parks at the very top.
+    return true
   }, [])
 
   const {
@@ -1598,6 +1599,7 @@ export default function FeedPage() {
                             checkEvent={checkEvent}
                             semanticResult={semanticResults.get(event.id) ?? EMPTY_FILTER_RESULT}
                             feedInlineAutoplayEnabled={feedInlineAutoplayEnabled}
+                            activeSectionId={activeSection.id}
                           />
                         </div>
                       )
@@ -1620,9 +1622,10 @@ interface SecondaryCardProps {
   checkEvent(event: NostrEvent, profile?: Profile): FilterCheckResult
   semanticResult: FilterCheckResult
   feedInlineAutoplayEnabled: boolean
+  activeSectionId: string
 }
 
-export function SecondaryCard({ event, index, checkEvent, semanticResult, feedInlineAutoplayEnabled }: SecondaryCardProps) {
+export function SecondaryCard({ event, index, checkEvent, semanticResult, feedInlineAutoplayEnabled, activeSectionId }: SecondaryCardProps) {
   const navigate = useNavigate()
   const { profile } = useProfile(event.pubkey, { background: false })
   const threadIndex = useSelfThreadIndex(event)
@@ -1716,12 +1719,16 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
             <span>Repost</span>
           </div>
         )}
-        <AuthorRow
-          pubkey={event.pubkey}
-          profile={profile}
-          timestamp={event.created_at}
-          actions
-        />
+        <div className="mt-0.5 flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <AuthorRow
+              pubkey={event.pubkey}
+              profile={profile}
+              timestamp={event.created_at}
+            />
+          </div>
+          <PostOverflowMenu event={event} profile={profile} />
+        </div>
         {(thread || comment) && (
           <p className="mt-3 text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
             {thread ? 'Thread' : 'Comment'}
@@ -1788,6 +1795,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
                 interactive
                 isSensitive={contentWarning !== null}
                 sensitiveReason={contentWarning?.reason ?? null}
+                forceInlineVideo={activeSectionId === 'videos'}
               />
             )}
             <QuotePreviewList event={event} className="mt-3" compact linked={false} maxItems={1} showHeader={false} />

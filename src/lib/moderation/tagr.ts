@@ -92,6 +92,20 @@ interface TagrReason {
   createdAt: number
 }
 
+interface TagrResolveOptions {
+  includeReportEvents?: boolean
+  includeLabelEvents?: boolean
+}
+
+function getEnabledTagrKinds(options?: TagrResolveOptions): number[] {
+  const includeReportEvents = options?.includeReportEvents !== false
+  const includeLabelEvents = options?.includeLabelEvents !== false
+  const kinds: number[] = []
+  if (includeReportEvents) kinds.push(Kind.Report)
+  if (includeLabelEvents) kinds.push(Kind.Label)
+  return kinds
+}
+
 function parseRawEvent(raw: string): NostrEvent | null {
   try {
     const parsed = JSON.parse(raw) as NostrEvent
@@ -169,9 +183,11 @@ export function getTagrReason(event: NostrEvent): string {
 async function syncTagrEvents(
   eventIds: string[],
   profilePubkeys: string[],
+  kinds: number[],
   signal?: AbortSignal,
 ): Promise<boolean> {
   if (signal?.aborted) return false
+  if (kinds.length === 0) return true
 
   let ndk
   try {
@@ -182,7 +198,7 @@ async function syncTagrEvents(
 
   const filter: NostrFilter = {
     authors: [TAGR_BOT_PUBKEY_HEX],
-    kinds: [Kind.Report, Kind.Label],
+    kinds,
     limit: Math.min(500, Math.max(80, (eventIds.length + profilePubkeys.length) * 3)),
   }
 
@@ -220,11 +236,12 @@ async function syncTagrEvents(
   return true
 }
 
-async function loadLocalTagrEvents(eventIds: string[], profilePubkeys: string[]): Promise<NostrEvent[]> {
+async function loadLocalTagrEvents(eventIds: string[], profilePubkeys: string[], kinds: number[]): Promise<NostrEvent[]> {
   if (eventIds.length === 0 && profilePubkeys.length === 0) return []
+  if (kinds.length === 0) return []
 
   const targetClauses: string[] = []
-  const bind: unknown[] = [TAGR_BOT_PUBKEY_HEX, Kind.Report, Kind.Label]
+  const bind: unknown[] = [TAGR_BOT_PUBKEY_HEX, ...kinds]
 
   if (eventIds.length > 0) {
     targetClauses.push(`(t.name = 'e' AND t.value IN (${eventIds.map(() => '?').join(',')}))`)
@@ -243,7 +260,7 @@ async function loadLocalTagrEvents(eventIds: string[], profilePubkeys: string[])
     FROM events e
     JOIN tags t ON t.event_id = e.id
     WHERE e.pubkey = ?
-      AND e.kind IN (?, ?)
+      AND e.kind IN (${kinds.map(() => '?').join(',')})
       AND (${targetClauses.join(' OR ')})
     ORDER BY e.created_at DESC, e.id DESC
     LIMIT 1000
@@ -316,8 +333,11 @@ function buildTagrDecisionMap(
 export async function resolveTagrModerationDecisions(
   documents: ModerationDocument[],
   signal?: AbortSignal,
+  options?: TagrResolveOptions,
 ): Promise<Map<string, ModerationDecision>> {
   if (documents.length === 0) return new Map()
+  const kinds = getEnabledTagrKinds(options)
+  if (kinds.length === 0) return new Map()
 
   await initDB(signal)
 
@@ -337,12 +357,12 @@ export async function resolveTagrModerationDecisions(
 
   const syncKey = tagrSyncCacheKey(eventIdList, profilePubkeyList)
   if (!isTagrSyncFresh(syncKey)) {
-    const syncCompleted = await syncTagrEvents(eventIdList, profilePubkeyList, signal)
+    const syncCompleted = await syncTagrEvents(eventIdList, profilePubkeyList, kinds, signal)
     if (syncCompleted) {
       markTagrSynced(syncKey)
     }
   }
-  const localEvents = await loadLocalTagrEvents(eventIdList, profilePubkeyList)
+  const localEvents = await loadLocalTagrEvents(eventIdList, profilePubkeyList, kinds)
 
   return buildTagrDecisionMap(localEvents, eventIds, profilePubkeys)
 }

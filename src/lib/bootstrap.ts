@@ -19,6 +19,7 @@ import { initNDK } from '@/lib/nostr/ndk'
 import { requestPersistentStorage } from '@/lib/security/sanitize'
 import { withRetry } from '@/lib/retry'
 import { initTheme } from '@/lib/theme'
+import { isAppleMobileWebKitUserAgent } from '@/lib/runtime/platformCapabilities'
 import type { Result, AppError } from '@/types'
 import { ErrorCode } from '@/types'
 
@@ -31,8 +32,7 @@ export interface BootstrapResult {
 
 function isAppleMobileWebKit(): boolean {
   if (typeof navigator === 'undefined') return false
-  const ua = navigator.userAgent || ''
-  return /iPhone|iPad|iPod/i.test(ua) && /AppleWebKit/i.test(ua)
+  return isAppleMobileWebKitUserAgent(navigator.userAgent || '')
 }
 
 /**

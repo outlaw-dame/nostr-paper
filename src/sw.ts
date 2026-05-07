@@ -18,14 +18,14 @@
 /// <reference lib="webworker" />
 import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching'
 import { isLocalDevelopmentHost } from '@/lib/runtime/localhost'
+import { isAppleMobileWebKitUserAgent } from '@/lib/runtime/platformCapabilities'
 
 declare const self: ServiceWorkerGlobalScope
 
 const SW_VERSION = '1.0.0'
 
 function isAppleMobileWebKit(): boolean {
-  const ua = self.navigator.userAgent || ''
-  return /iPhone|iPad|iPod/i.test(ua) && /AppleWebKit/i.test(ua)
+  return isAppleMobileWebKitUserAgent(self.navigator.userAgent || '')
 }
 
 precacheAndRoute(self.__WB_MANIFEST)

@@ -8,6 +8,17 @@ interface ZenSettings {
   feedInlineMediaAutoplayEnabled?: boolean
 }
 
+type NetworkInformationLike = {
+  saveData?: boolean
+  effectiveType?: string
+}
+
+export interface FeedInlineAutoplayPolicy {
+  enabled: boolean
+  source: 'user' | 'adaptive-default'
+  reason: string | null
+}
+
 function getStorageKey(scopeId?: string | null): string {
   const scope = scopeId && scopeId.trim().length > 0 ? scopeId.trim() : 'anon'
   return `${STORAGE_KEY_PREFIX}${scope}`
@@ -70,9 +81,64 @@ export function setRepostCarouselVisible(visible: boolean, scopeId?: string | nu
 }
 
 export function getFeedInlineMediaAutoplayEnabled(scopeId?: string | null): boolean {
+  return getFeedInlineMediaAutoplayPolicy(scopeId).enabled
+}
+
+export function getFeedInlineMediaAutoplayPolicy(scopeId?: string | null): FeedInlineAutoplayPolicy {
   const enabled = readZenSettings(scopeId).feedInlineMediaAutoplayEnabled
-  // Default to disabled to avoid aggressive inline video churn on dense feeds.
-  return enabled === true
+  if (enabled === true || enabled === false) {
+    return {
+      enabled,
+      source: 'user',
+      reason: null,
+    }
+  }
+
+  if (typeof window === 'undefined') {
+    return {
+      enabled: false,
+      source: 'adaptive-default',
+      reason: 'disabled-server-default',
+    }
+  }
+
+  const navigatorWithConnection = window.navigator as Navigator & { connection?: NetworkInformationLike }
+  const ua = window.navigator.userAgent ?? ''
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(ua)
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const saveData = navigatorWithConnection.connection?.saveData === true
+  const effectiveType = navigatorWithConnection.connection?.effectiveType ?? ''
+  const constrainedNetwork = effectiveType === 'slow-2g' || effectiveType === '2g'
+
+  if (prefersReducedMotion) {
+    return {
+      enabled: false,
+      source: 'adaptive-default',
+      reason: 'disabled-reduced-motion',
+    }
+  }
+
+  if (saveData || constrainedNetwork) {
+    return {
+      enabled: false,
+      source: 'adaptive-default',
+      reason: 'disabled-constrained-network',
+    }
+  }
+
+  if (isMobile) {
+    return {
+      enabled: false,
+      source: 'adaptive-default',
+      reason: 'disabled-mobile-stability',
+    }
+  }
+
+  return {
+    enabled: true,
+    source: 'adaptive-default',
+    reason: 'enabled-desktop-default',
+  }
 }
 
 export function setFeedInlineMediaAutoplayEnabled(enabled: boolean, scopeId?: string | null): void {

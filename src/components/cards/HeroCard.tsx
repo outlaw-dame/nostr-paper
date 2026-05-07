@@ -25,6 +25,7 @@ import { useStoryCardPreview } from '@/hooks/useStoryCardPreview'
 import { NostrCreatorAttribution } from '@/components/links/NostrCreatorAttribution'
 import { SensitiveImage } from '@/components/media/SensitiveImage'
 import { EventMetricsRow } from '@/components/nostr/EventMetricsRow'
+import { PostOverflowMenu } from '@/components/nostr/PostOverflowMenu'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { TwemojiText } from '@/components/ui/TwemojiText'
 import { ExpandedNote } from './ExpandedNote'
@@ -326,12 +327,17 @@ export function HeroCard({ event, index = 0 }: HeroCardProps) {
           </motion.div>
 
           <div className="mt-2 rounded-[16px] border border-white/14 bg-black/68 px-3 py-3 backdrop-blur-md">
-            <AuthorRow
-              pubkey={event.pubkey}
-              profile={profile}
-              timestamp={event.created_at}
-              light
-            />
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <AuthorRow
+                  pubkey={event.pubkey}
+                  profile={profile}
+                  timestamp={event.created_at}
+                  light
+                />
+              </div>
+              <PostOverflowMenu event={event} profile={profile} tone="inverse" />
+            </div>
 
             {(storyAuthor || storySiteName) && (
               <p className="mt-1 text-[13px] leading-5 text-white/90 [text-shadow:0_1px_3px_rgba(0,0,0,0.6)]">

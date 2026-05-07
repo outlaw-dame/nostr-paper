@@ -5,11 +5,16 @@ import { useApp } from '@/contexts/app-context'
 import { useProfile } from '@/hooks/useProfile'
 import { useSavedTagFeeds } from '@/hooks/useSavedTagFeeds'
 import { useUserStatus } from '@/hooks/useUserStatus'
+import { usePlatformCapabilities } from '@/hooks/usePlatformCapabilities'
+import { usePwaInstallPrompt } from '@/hooks/usePwaInstallPrompt'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { UserStatusBody } from '@/components/nostr/UserStatusBody'
 import { BlossomServerManager } from '@/components/blossom/BlossomServerManager'
 import { getFeedResumeEnabled, setFeedResumeEnabled } from '@/lib/feed/resumeSettings'
-import { getFeedInlineMediaAutoplayEnabled, setFeedInlineMediaAutoplayEnabled } from '@/lib/ui/zenSettings'
+import {
+  getFeedInlineMediaAutoplayEnabled,
+  setFeedInlineMediaAutoplayEnabled,
+} from '@/lib/ui/zenSettings'
 import {
   MUSIC_PRESENCE_SETTINGS_UPDATED_EVENT,
   getMusicPresenceAutopublishEnabled,
@@ -85,6 +90,9 @@ export default function SettingsPage() {
   const [translationHealthLabel, setTranslationHealthLabel] = useState('Checking…')
   const [translationHealthDetail, setTranslationHealthDetail] = useState('Inspecting translation provider configuration.')
   const [translationHealthTone, setTranslationHealthTone] = useState<TranslationHealthTone>('ok')
+  const [installState, setInstallState] = useState<'idle' | 'accepted' | 'dismissed' | 'unavailable'>('idle')
+  const platformCapabilities = usePlatformCapabilities()
+  const { canPromptInstall, isStandalone, promptInstall } = usePwaInstallPrompt()
   const { profile: currentProfile } = useProfile(currentUser?.pubkey, { background: false })
   
   // Load current music status to show it
@@ -420,6 +428,21 @@ export default function SettingsPage() {
       setMusicServicesError('Apple Music disconnect failed. Please retry.')
     }
   }
+
+  const handleInstallApp = async () => {
+    const outcome = await promptInstall()
+    setInstallState(outcome)
+  }
+
+  const capabilityRows: Array<{ label: string; enabled: boolean }> = [
+    { label: 'Service Worker', enabled: platformCapabilities.supportsServiceWorker },
+    { label: 'Push Notifications', enabled: platformCapabilities.supportsPush && platformCapabilities.supportsNotifications },
+    { label: 'Share API', enabled: platformCapabilities.supportsShare },
+    { label: 'File Share', enabled: platformCapabilities.supportsFileShare },
+    { label: 'Clipboard Write', enabled: platformCapabilities.supportsClipboardWrite },
+    { label: 'App Badging', enabled: platformCapabilities.supportsBadging },
+    { label: 'Contacts Picker', enabled: platformCapabilities.supportsContactPicker },
+  ]
 
   return (
     <div className="min-h-dvh bg-[rgb(var(--color-bg))] px-4 pb-safe">
@@ -939,6 +962,66 @@ export default function SettingsPage() {
                 <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </button>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="section-kicker px-1 mb-3">Device & PWA</h2>
+          <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-4">
+            <div className="rounded-[14px] bg-[rgb(var(--color-bg-secondary))] p-3">
+              <p className="text-[14px] font-medium text-[rgb(var(--color-label))]">
+                Platform: <span className="capitalize">{platformCapabilities.platform}</span>
+              </p>
+              <p className="mt-1 text-[13px] text-[rgb(var(--color-label-secondary))]">
+                Mode: {isStandalone ? 'Installed / Standalone' : 'Browser tab'}
+              </p>
+              <p className="mt-1 text-[12px] text-[rgb(var(--color-label-tertiary))]">
+                Emoji style: Native platform emoji
+              </p>
+            </div>
+
+            {canPromptInstall ? (
+              <button
+                type="button"
+                onClick={() => void handleInstallApp()}
+                className="w-full rounded-[14px] border border-[rgb(var(--color-system-blue)/0.28)] bg-[rgb(var(--color-system-blue)/0.1)] px-4 py-3 text-[15px] font-medium text-[rgb(var(--color-system-blue))] transition-opacity active:opacity-75"
+              >
+                Install Paper App
+              </button>
+            ) : platformCapabilities.shouldShowInstallHint ? (
+              <p className="rounded-[12px] bg-[rgb(var(--color-fill)/0.08)] px-3 py-2 text-[13px] text-[rgb(var(--color-label-secondary))]">
+                On this device, installation may be available through your browser menu (for example, Add to Home Screen).
+              </p>
+            ) : null}
+
+            {installState !== 'idle' && (
+              <p className="text-[13px] text-[rgb(var(--color-label-secondary))]">
+                {installState === 'accepted'
+                  ? 'Install prompt accepted.'
+                  : installState === 'dismissed'
+                    ? 'Install prompt dismissed.'
+                    : 'Install prompt unavailable in this context.'}
+              </p>
+            )}
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {capabilityRows.map((row) => (
+                <div
+                  key={row.label}
+                  className="flex items-center justify-between rounded-[12px] bg-[rgb(var(--color-bg-secondary))] px-3 py-2"
+                >
+                  <span className="text-[13px] text-[rgb(var(--color-label-secondary))]">{row.label}</span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${row.enabled
+                      ? 'bg-[rgb(var(--color-system-green)/0.14)] text-[rgb(var(--color-system-green))]'
+                      : 'bg-[rgb(var(--color-fill)/0.15)] text-[rgb(var(--color-label-tertiary))]'
+                    }`}
+                  >
+                    {row.enabled ? 'Supported' : 'Not available'}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
 

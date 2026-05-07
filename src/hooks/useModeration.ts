@@ -19,6 +19,10 @@ import {
   getPersistedModerationDecisions,
   savePersistedModerationDecisions,
 } from '@/lib/db/caches'
+import {
+  MODERATION_WARNING_SOURCES_UPDATED_EVENT,
+  getModerationWarningSourceSettings,
+} from '@/lib/moderation/warningSourceSettings'
 import type { ModerationDecision, ModerationDocument, NostrEvent, Profile } from '@/types'
 import type { SyndicationEntry, SyndicationFeed } from '@/lib/syndication/types'
 
@@ -63,6 +67,28 @@ interface UseModerationDocumentsResult {
   error: string | null
 }
 
+function useModerationWarningSources(scopeId?: string | null) {
+  const [settings, setSettings] = useState(() => getModerationWarningSourceSettings(scopeId))
+
+  useEffect(() => {
+    const refresh = () => setSettings(getModerationWarningSourceSettings(scopeId))
+    refresh()
+
+    const handleUpdated = (event: Event) => {
+      const customEvent = event as CustomEvent<{ scopeId?: string }>
+      const changedScope = customEvent.detail?.scopeId ?? 'anon'
+      const currentScope = scopeId && scopeId.trim().length > 0 ? scopeId.trim() : 'anon'
+      if (changedScope !== currentScope) return
+      refresh()
+    }
+
+    window.addEventListener(MODERATION_WARNING_SOURCES_UPDATED_EVENT, handleUpdated)
+    return () => window.removeEventListener(MODERATION_WARNING_SOURCES_UPDATED_EVENT, handleUpdated)
+  }, [scopeId])
+
+  return settings
+}
+
 function getAllowedIds(
   documents: ModerationDocument[],
   decisions: Map<string, ModerationDecision>,
@@ -86,11 +112,20 @@ function getAllowedIds(
 
 export function useModerationDocuments(
   documents: ModerationDocument[],
-  options: { enabled?: boolean; failClosed?: boolean; failOpenOnError?: boolean } = {},
+  options: {
+    enabled?: boolean
+    failClosed?: boolean
+    failOpenOnError?: boolean
+    moderationScopeId?: string | null
+  } = {},
 ): UseModerationDocumentsResult {
   const enabled = options.enabled ?? true
   const failClosed = options.failClosed ?? false
   const failOpenOnError = options.failOpenOnError ?? true
+  const warningSources = useModerationWarningSources(options.moderationScopeId)
+  const aiLabelsEnabled = warningSources.aiLabelsEnabled
+  const networkReportWarningsEnabled = warningSources.networkReportWarningsEnabled
+  const networkLabelWarningsEnabled = warningSources.networkLabelWarningsEnabled
   const [decisions, setDecisions] = useState<Map<string, ModerationDecision>>(new Map())
   // Start loading:true so consumers don't render undecided events before
   // the first decision batch arrives (prevents feed flicker).
@@ -165,7 +200,15 @@ export function useModerationDocuments(
       setLoading(false)
       // Run Tagr in the background to pick up any relay-sourced blocks without
       // gating the feed on the result (avoids loading oscillation for cached batches).
-      resolveTagrModerationDecisions(documents, controller.signal)
+      if (!networkReportWarningsEnabled && !networkLabelWarningsEnabled) return
+      resolveTagrModerationDecisions(
+        documents,
+        controller.signal,
+        {
+          includeReportEvents: networkReportWarningsEnabled,
+          includeLabelEvents: networkLabelWarningsEnabled,
+        },
+      )
         .then((tagrDecisions) => {
           if (controller.signal.aborted || tagrDecisions.size === 0) return
           setDecisions((previous) => {
@@ -186,8 +229,26 @@ export function useModerationDocuments(
     setLoading(true)
 
     Promise.all([
-      moderateContentDocuments(missing, controller.signal),
-      resolveTagrModerationDecisions(documents, controller.signal).catch(() => new Map<string, ModerationDecision>()),
+      aiLabelsEnabled
+        ? moderateContentDocuments(missing, controller.signal)
+        : Promise.resolve(missing.map((document) => ({
+            ...evaluateModerationScores(
+              document.id,
+              emptyModerationScores(),
+              `${DEFAULT_MODERATION_MODEL_ID}:disabled-allow`,
+            ),
+            policyVersion: `${MODERATION_POLICY_VERSION}+ai-disabled`,
+          }))),
+      (networkReportWarningsEnabled || networkLabelWarningsEnabled)
+        ? resolveTagrModerationDecisions(
+            documents,
+            controller.signal,
+            {
+              includeReportEvents: networkReportWarningsEnabled,
+              includeLabelEvents: networkLabelWarningsEnabled,
+            },
+          ).catch(() => new Map<string, ModerationDecision>())
+        : Promise.resolve(new Map<string, ModerationDecision>()),
     ])
       .then(([results, tagrDecisions]) => {
         if (controller.signal.aborted) return
@@ -255,7 +316,7 @@ export function useModerationDocuments(
     // content, so reference-only changes (same array content, new object) do not
     // re-trigger a relay fetch. Including `documents` caused a Tagr relay query
     // on every parent re-render.
-  }, [enabled, signature])
+  }, [enabled, signature, aiLabelsEnabled, networkReportWarningsEnabled, networkLabelWarningsEnabled])
 
   const allowedIds = useMemo(
     () => getAllowedIds(documents, decisions, (!failClosed && loading) || (error !== null && failOpenOnError)),

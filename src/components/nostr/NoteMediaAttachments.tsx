@@ -16,6 +16,7 @@ interface NoteMediaAttachmentsProps {
   isSensitive?: boolean
   sensitiveReason?: string | null
   isUnfollowed?: boolean
+  forceInlineVideo?: boolean
 }
 
 function formatByteSize(bytes?: number): string | null {
@@ -127,6 +128,7 @@ function AttachmentTile({
   isSensitive = false,
   sensitiveReason,
   isUnfollowed = false,
+  forceInlineVideo = false,
 }: {
   attachment: Nip92MediaAttachment
   compact?: boolean
@@ -134,6 +136,7 @@ function AttachmentTile({
   isSensitive?: boolean
   sensitiveReason?: string | null
   isUnfollowed?: boolean
+  forceInlineVideo?: boolean
 }) {
   const kind = getMediaAttachmentKind(attachment)
   const previewCandidates = useMemo(() => buildPreviewCandidates(attachment), [attachment])
@@ -313,7 +316,7 @@ function AttachmentTile({
       // Only render a raw video in compact mode when a moderation document
       // exists (meaning the preview was classified). Without a classifiable
       // preview thumbnail we cannot screen the video — show a file card instead.
-      if (moderationDocument && sourceUrl && !playbackFailed && canRenderInlinePlayback) {
+      if ((moderationDocument || forceInlineVideo) && sourceUrl && !playbackFailed && canRenderInlinePlayback) {
         return (
           <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))]">
             <MediaRevealGate
@@ -350,7 +353,7 @@ function AttachmentTile({
     if (sourceUrl && !playbackFailed && canRenderInlinePlayback) {
       // Require a moderationDocument (thumbnail scan) before rendering the video.
       // Without a classifiable thumbnail we cannot screen the content — show a file card instead.
-      if (!moderationDocument) {
+      if (!moderationDocument && !forceInlineVideo) {
         return <GenericFileCard attachment={attachment} compact={false} interactive={interactive} />
       }
 
@@ -563,6 +566,7 @@ export function NoteMediaAttachments({
   isSensitive = false,
   sensitiveReason,
   isUnfollowed = false,
+  forceInlineVideo = false,
 }: NoteMediaAttachmentsProps) {
   const renderableAttachments = useMemo(
     () => attachments.filter((attachment) => canRenderMediaAttachmentInline(attachment)),
@@ -586,6 +590,7 @@ export function NoteMediaAttachments({
           isSensitive={isSensitive}
           sensitiveReason={sensitiveReason ?? null}
           isUnfollowed={isUnfollowed}
+          forceInlineVideo={forceInlineVideo}
         />
       ))}
     </div>

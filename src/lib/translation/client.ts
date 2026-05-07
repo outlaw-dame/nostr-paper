@@ -21,6 +21,7 @@ import {
   languagesProbablyMatch,
   looksLikeShortAsciiSnippet,
   normalizeLanguageCode,
+  getBrowserLanguage,
 } from '@/lib/translation/detect'
 import { listLingvaLanguages, translateWithLingva } from '@/lib/translation/engines/lingva'
 import { getGemmaTransportSummary, listGemmaLanguages, translateWithGemma } from '@/lib/translation/engines/gemma'
@@ -227,11 +228,16 @@ export function inspectTranslationWithConfiguration(
   const likelySourceLanguage = configuredSourceLanguage === 'auto'
     ? (hintedSourceLanguage ?? detectLikelyLanguage(normalizedText))
     : configuredSourceLanguage
+  const browserLanguage = getBrowserLanguage()
   const sameLanguage = !meaningfulText ||
     languagesProbablyMatch(likelySourceLanguage, targetLanguage) ||
+    // Also treat as same language when the post matches the user's browser/device
+    // language — even if the configured target is different (e.g. translator set
+    // to ES but user reads English and the post is English).
+    languagesProbablyMatch(likelySourceLanguage, browserLanguage) ||
     (
       likelySourceLanguage === null &&
-      normalizeLanguageCode(targetLanguage) === 'en' &&
+      (normalizeLanguageCode(targetLanguage) === 'en' || normalizeLanguageCode(browserLanguage) === 'en') &&
       looksLikeShortAsciiSnippet(normalizedText)
     )
   const canAutoTranslate = meaningfulText && !sameLanguage && !(

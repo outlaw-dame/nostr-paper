@@ -1844,9 +1844,13 @@ export default function ProfilePage() {
         open={reportSheetOpen}
         target={{ type: 'profile', pubkey: pubkey ?? '' }}
         onClose={() => setReportSheetOpen(false)}
-        onPublished={() => {
+        onPublished={(_event, details) => {
           setReported(true)
-          setMessage('Kind-1984 report published to your write relays.')
+          const destinationMessage = details.destination === 'private'
+            ? 'Private report published to your configured relay list.'
+            : 'Kind-1984 report published to your write relays.'
+          const mutedMessage = details.mutedAuthor ? ' Author muted locally.' : ''
+          setMessage(`${destinationMessage}${mutedMessage}`)
           setError(null)
         }}
       />

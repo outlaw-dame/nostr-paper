@@ -1,5 +1,6 @@
-import { NDKEvent } from '@nostr-dev-kit/ndk'
+import { NDKEvent, NDKRelaySet } from '@nostr-dev-kit/ndk'
 import { insertEvent } from '@/lib/db/nostr'
+import type { ReportPublishDestination } from '@/lib/moderation/reportingSettings'
 import { withOptionalClientTag } from '@/lib/nostr/appHandlers'
 import { parseFileMetadataEvent } from '@/lib/nostr/fileMetadata'
 import { getNDK } from '@/lib/nostr/ndk'
@@ -7,6 +8,7 @@ import { publishEventWithNip65Outbox } from '@/lib/nostr/outbox'
 import {
   isSafeURL,
   isValidHex32,
+  isValidRelayURL,
   sanitizeText,
 } from '@/lib/security/sanitize'
 import type { NostrEvent } from '@/types'
@@ -79,6 +81,8 @@ export interface PublishReportOptions {
   reportType: ReportType
   reason?: string
   labels?: ReportLabel[]
+  destination?: ReportPublishDestination
+  privateRelayUrls?: string[]
 }
 
 export interface ReportDraft {
@@ -451,7 +455,20 @@ export async function publishReport(
   await event.sign()
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-  await publishEventWithNip65Outbox(event, signal)
+  if (options.destination === 'private') {
+    const privateRelayUrls = [...new Set((options.privateRelayUrls ?? [])
+      .map((url) => url.trim())
+      .filter((url) => isValidRelayURL(url)))]
+
+    if (privateRelayUrls.length === 0) {
+      throw new Error('Add at least one valid private relay URL before publishing privately.')
+    }
+
+    const relaySet = NDKRelaySet.fromRelayUrls(privateRelayUrls, ndk, true)
+    await event.publish(relaySet)
+  } else {
+    await publishEventWithNip65Outbox(event, signal)
+  }
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent
   await insertEvent(rawEvent)

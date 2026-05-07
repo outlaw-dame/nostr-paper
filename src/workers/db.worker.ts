@@ -11,6 +11,7 @@
  */
 
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm'
+import { detectPlatformFromUserAgent } from '@/lib/runtime/platformCapabilities'
 import type { DBWorkerRequest, DBWorkerResponse } from '@/types'
 
 // ── Schema ───────────────────────────────────────────────────
@@ -19,9 +20,10 @@ const SCHEMA_VERSION = 1
 
 // Detect mobile/iOS to apply conservative memory settings.
 // iOS Safari kills Web Workers that allocate too much memory (e.g. 256MB mmap).
-const IS_MOBILE = /iPhone|iPad|iPod|Android/i.test(
+const DETECTED_PLATFORM = detectPlatformFromUserAgent(
   (self as unknown as { navigator: Navigator }).navigator?.userAgent ?? ''
 )
+const IS_MOBILE = DETECTED_PLATFORM === 'ios' || DETECTED_PLATFORM === 'android'
 const CACHE_SIZE  = IS_MOBILE ? -4000  : -16000   // 4MB mobile, 16MB desktop
 const MMAP_SIZE   = IS_MOBILE ? 0      : 67108864 // disabled mobile, 64MB desktop
 

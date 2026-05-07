@@ -4,7 +4,13 @@ import { Sheet } from 'konsta/react'
 import { EventPreviewCard } from '@/components/nostr/EventPreviewCard'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { useApp } from '@/contexts/app-context'
+import { useMuteList } from '@/hooks/useMuteList'
 import { useProfile } from '@/hooks/useProfile'
+import {
+  getReportingSettings,
+  setReportingSettings,
+  type ReportPublishDestination,
+} from '@/lib/moderation/reportingSettings'
 import {
   REPORT_TYPES,
   formatReportType,
@@ -19,7 +25,7 @@ interface ReportSheetProps {
   open: boolean
   target: ReportPublishTarget
   onClose: () => void
-  onPublished?: (event: NostrEvent) => void
+  onPublished?: (event: NostrEvent, details: { destination: ReportPublishDestination; mutedAuthor: boolean }) => void
 }
 
 export function ReportSheet({
@@ -29,15 +35,22 @@ export function ReportSheet({
   onPublished,
 }: ReportSheetProps) {
   const { currentUser } = useApp()
+  const { isMuted, mute } = useMuteList()
   const [reportType, setReportType] = useState<ReportType | null>(null)
   const [reason, setReason] = useState('')
   const [labelNamespace, setLabelNamespace] = useState('')
   const [labelsInput, setLabelsInput] = useState('')
+  const [destination, setDestination] = useState<ReportPublishDestination>('public')
+  const [privateRelayInput, setPrivateRelayInput] = useState('')
+  const [muteAuthorAfterReport, setMuteAuthorAfterReport] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
   const profilePubkey = target.type === 'profile' ? target.pubkey : target.event.pubkey
+  const isSelfTarget = currentUser?.pubkey === profilePubkey
+  const targetAlreadyMuted = isMuted(profilePubkey)
+  const canMuteTarget = Boolean(currentUser && !isSelfTarget)
   const targetResetKey = target.type === 'profile'
     ? `profile:${target.pubkey}`
     : `event:${target.event.id}`
@@ -56,6 +69,10 @@ export function ReportSheet({
     setReason('')
     setLabelNamespace('')
     setLabelsInput('')
+    const reportingSettings = getReportingSettings()
+    setDestination(reportingSettings.destination)
+    setPrivateRelayInput(reportingSettings.privateRelayUrls.join('\n'))
+    setMuteAuthorAfterReport(false)
     setPublishing(false)
     setError(null)
   }, [open, targetResetKey])
@@ -105,13 +122,40 @@ export function ReportSheet({
           reportType,
           reason,
           labels,
+          destination,
+          ...(destination === 'private'
+            ? {
+                privateRelayUrls: privateRelayInput
+                  .split(/[\n,]/)
+                  .map((value) => value.trim())
+                  .filter((value) => value.length > 0),
+              }
+            : {}),
         },
         controller.signal,
       )
 
+      let mutedAuthor = false
+      if (canMuteTarget && !targetAlreadyMuted && muteAuthorAfterReport) {
+        try {
+          await mute(profilePubkey)
+          mutedAuthor = true
+        } catch (muteError) {
+          console.warn('Failed to mute author after report publish', muteError)
+        }
+      }
+
+      setReportingSettings({
+        destination,
+        privateRelayUrls: privateRelayInput
+          .split(/[\n,]/)
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0),
+      })
+
       abortRef.current = null
       setPublishing(false)
-      onPublished?.(published)
+      onPublished?.(published, { destination, mutedAuthor })
       onClose()
     } catch (publishError: unknown) {
       if (publishError instanceof DOMException && publishError.name === 'AbortError') {
@@ -203,6 +247,89 @@ export function ReportSheet({
               "
             />
           </label>
+
+          <div className="space-y-2">
+            <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+              Visibility
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setDestination('public')}
+                className={`
+                  rounded-[12px] border px-3 py-2.5 text-[13px] font-medium transition-opacity active:opacity-80
+                  ${destination === 'public'
+                    ? 'border-[#007AFF] bg-[#007AFF]/10 text-[#007AFF]'
+                    : 'border-[rgb(var(--color-fill)/0.18)] text-[rgb(var(--color-label-secondary))]'
+                  }
+                `}
+              >
+                Public to relays
+              </button>
+              <button
+                type="button"
+                onClick={() => setDestination('private')}
+                className={`
+                  rounded-[12px] border px-3 py-2.5 text-[13px] font-medium transition-opacity active:opacity-80
+                  ${destination === 'private'
+                    ? 'border-[#007AFF] bg-[#007AFF]/10 text-[#007AFF]'
+                    : 'border-[rgb(var(--color-fill)/0.18)] text-[rgb(var(--color-label-secondary))]'
+                  }
+                `}
+              >
+                Private relay list
+              </button>
+            </div>
+            <p className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
+              Public uses your normal write/outbox relays. Private only publishes to the relay URLs listed below.
+            </p>
+          </div>
+
+          {destination === 'private' && (
+            <label className="block">
+              <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+                Private Relay URLs
+              </span>
+              <textarea
+                value={privateRelayInput}
+                onChange={(event) => setPrivateRelayInput(event.target.value)}
+                placeholder="wss://relay.nos.social"
+                rows={3}
+                className="
+                  mt-2 w-full resize-y rounded-[14px] border border-[rgb(var(--color-fill)/0.18)]
+                  bg-[rgb(var(--color-bg-secondary))] px-3 py-2.5
+                  text-[14px] leading-6 text-[rgb(var(--color-label))]
+                  placeholder:text-[rgb(var(--color-label-tertiary))]
+                  outline-none
+                "
+              />
+              <p className="mt-1 text-[12px] text-[rgb(var(--color-label-tertiary))]">
+                One URL per line (or comma-separated). Invalid relay URLs are ignored.
+              </p>
+            </label>
+          )}
+
+          {canMuteTarget && (
+            <label className="flex items-start gap-3 rounded-[14px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg-secondary))] px-3 py-3">
+              <input
+                type="checkbox"
+                checked={muteAuthorAfterReport}
+                disabled={targetAlreadyMuted}
+                onChange={(event) => setMuteAuthorAfterReport(event.target.checked)}
+                className="mt-0.5 h-4 w-4"
+              />
+              <div>
+                <p className="text-[14px] font-medium text-[rgb(var(--color-label))]">
+                  Mute author after publish
+                </p>
+                <p className="mt-0.5 text-[12px] text-[rgb(var(--color-label-secondary))]">
+                  {targetAlreadyMuted
+                    ? 'This author is already muted.'
+                    : 'Applies your local mute list immediately after the report is published.'}
+                </p>
+              </div>
+            </label>
+          )}
 
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">

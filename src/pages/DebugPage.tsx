@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { usePlatformCapabilities } from '@/hooks/usePlatformCapabilities'
 import { tApp } from '@/lib/i18n/app'
 import {
   clearBootDiagnosticsForDebug,
@@ -68,6 +69,7 @@ async function shareOrDownloadDiagnostics(payload: string): Promise<'shared' | '
 
 export default function DebugPage() {
   const navigate = useNavigate()
+  const platformCapabilities = usePlatformCapabilities()
   const [refreshTick, setRefreshTick] = useState(0)
   const [threadInspectorEnabled, setThreadInspectorState] = useState(() => isThreadInspectorEnabled())
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
@@ -100,11 +102,18 @@ export default function DebugPage() {
         session: diagnostics.session,
         lastFailure: diagnostics.lastFailure,
         lastSuccess: diagnostics.lastSuccess,
+        capabilities: {
+          platform: platformCapabilities.platform,
+          isStandalone: platformCapabilities.isStandalone,
+          supportsShare: platformCapabilities.supportsShare,
+          supportsFileShare: platformCapabilities.supportsFileShare,
+          supportsClipboardWrite: platformCapabilities.supportsClipboardWrite,
+        },
       },
       null,
       2,
     )
-  }, [diagnostics])
+  }, [diagnostics, platformCapabilities.isStandalone, platformCapabilities.platform, platformCapabilities.supportsClipboardWrite, platformCapabilities.supportsFileShare, platformCapabilities.supportsShare])
 
   return (
     <div className="min-h-dvh bg-[rgb(var(--color-bg))] px-4 pb-safe">

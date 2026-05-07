@@ -22,6 +22,9 @@ import { UpdateBanner } from '@/components/ui/UpdateBanner'
 import { ErrorScreen } from '@/components/ui/ErrorScreen'
 import { OfflineBanner } from '@/components/ui/OfflineBanner'
 import { GlobalImageLightbox } from '@/components/ui/GlobalImageLightbox'
+import { usePlatformCapabilities } from '@/hooks/usePlatformCapabilities'
+import { resolvePlatformTheme } from '@/design/platform/resolveTheme'
+import { detectRuntimePlatform } from '@/lib/runtime/platformCapabilities'
 
 // ── Error Boundary ────────────────────────────────────────────
 
@@ -96,8 +99,15 @@ const COMPOSE_SHEET_ROUTE = {
 
 function InnerApp() {
   const { status, errors, isOnline } = useApp()
+  const platformCapabilities = usePlatformCapabilities()
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [applyUpdate, setApplyUpdate] = useState<(() => Promise<void>) | null>(null)
+
+  useEffect(() => {
+    document.documentElement.dataset.platform = platformCapabilities.platform
+    document.documentElement.dataset.displayMode = platformCapabilities.displayMode
+    document.documentElement.dataset.pwa = platformCapabilities.isStandalone ? 'standalone' : 'browser'
+  }, [platformCapabilities.displayMode, platformCapabilities.isStandalone, platformCapabilities.platform])
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -227,9 +237,12 @@ function InnerApp() {
 // ── Root App ─────────────────────────────────────────────────
 
 export default function App() {
+  const konstaTheme = resolvePlatformTheme({
+    detectedPlatform: typeof navigator !== 'undefined' ? detectRuntimePlatform(navigator) : 'unknown',
+  })
   return (
     <AppProvider>
-      <KonstaApp theme="ios" dark={false} safeAreas>
+      <KonstaApp theme={konstaTheme} dark={false} safeAreas iosHoverHighlight materialTouchRipple>
         <AppErrorBoundary>
           <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <InnerApp />

@@ -10,6 +10,7 @@
 
 import React from 'react'
 import { parse } from 'twemoji-parser'
+import { getCachedPlatformCapabilities } from '@/lib/runtime/platformCapabilities'
 
 // Prefer the jsdelivr CDN mirror (no maxcdn dependency)
 function buildUrl(codepoints: string): string {
@@ -18,9 +19,20 @@ function buildUrl(codepoints: string): string {
 
 interface TwemojiTextProps {
   text: string
+  mode?: 'auto' | 'native' | 'twemoji'
 }
 
-export function TwemojiText({ text }: TwemojiTextProps) {
+export function TwemojiText({ text, mode = 'auto' }: TwemojiTextProps) {
+  const shouldUseNativeEmoji = React.useMemo(() => {
+    if (mode === 'native') return true
+    if (mode === 'twemoji') return false
+    return getCachedPlatformCapabilities().preferNativeEmoji
+  }, [mode])
+
+  if (shouldUseNativeEmoji) {
+    return <>{text}</>
+  }
+
   const entities = React.useMemo(
     () => parse(text, { buildUrl }),
     [text]
