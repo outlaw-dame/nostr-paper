@@ -408,7 +408,7 @@ export function TranslateTextPanel({
     )
   }
 
-  const requestTranslation = (broadcastSync = true) => {
+  const requestTranslation = (broadcastSync: boolean = true) => {
     pendingRequestIsAutoRef.current = false
     setRequested(true)
     setAutoAttempted(true)
@@ -439,7 +439,7 @@ export function TranslateTextPanel({
           {preflight && (
             <button
               type="button"
-              onClick={requestTranslation}
+              onClick={() => requestTranslation()}
               onPointerDownCapture={stopPropagation}
               className="inline-flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.01em] text-[#007AFF]"
             >
@@ -487,7 +487,7 @@ export function TranslateTextPanel({
           </span>
           <button
             type="button"
-            onClick={requestTranslation}
+            onClick={() => requestTranslation()}
             onPointerDownCapture={stopPropagation}
             className="text-[12px] font-medium text-[rgb(var(--color-system-red))] underline underline-offset-2"
           >
@@ -536,7 +536,7 @@ export function TranslateTextPanel({
             <span>·</span>
             <button
               type="button"
-              onClick={requestTranslation}
+              onClick={() => requestTranslation()}
               onPointerDownCapture={stopPropagation}
               className="font-medium text-[#007AFF]"
             >
