@@ -153,7 +153,9 @@ function AttachmentTile({
     () => (playbackPlan?.sources ?? []).filter((source) => shouldAttemptMediaUrl(source.url)),
     [playbackPlan],
   )
-  const canRenderInlinePlayback = playbackPlan?.playability !== 'unsupported' && playbackSources.length > 0
+  const canRenderInlinePlayback = playbackSources.length > 0 && (
+    kind === 'video' || playbackPlan?.playability !== 'unsupported'
+  )
   const [previewIndex, setPreviewIndex] = useState(0)
   const [previewFailed, setPreviewFailed] = useState(previewCandidates.length === 0)
   const [playbackFailed, setPlaybackFailed] = useState(false)
@@ -181,96 +183,174 @@ function AttachmentTile({
     setShowAlt((v) => !v)
   }
 
-  if (kind === 'image' && previewUrl && !previewFailed) {
-    // Build the ranked source list for <picture> — sources before previewIndex
-    // have already failed so we skip them.  The <img> fallback carries the
-    // current previewUrl so the JS retry loop still works for CDN errors.
-    const pictureSources = getOrderedImageCandidates(attachment).filter(
-      (c) => previewCandidates.indexOf(c.url) >= previewIndex,
-    )
+  if (kind === 'image') {
+    if (previewUrl && !previewFailed) {
+      // Build the ranked source list for <picture> — sources before previewIndex
+      // have already failed so we skip them.  The <img> fallback carries the
+      // current previewUrl so the JS retry loop still works for CDN errors.
+      const pictureSources = getOrderedImageCandidates(attachment).filter(
+        (c) => previewCandidates.indexOf(c.url) >= previewIndex,
+      )
 
-    return (
-      <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))]">
-        <div className="relative overflow-hidden" style={getAttachmentAspectStyle(attachment, kind)}>
-          <MediaRevealGate
-            reason={revealReason}
-            resetKey={revealResetKey}
-            details={sensitiveReason}
-            className="h-full w-full"
-          >
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation()
-                if (revealReason === null && previewUrl) {
-                  openImageLightbox(previewUrl, attachment.alt ?? '')
-                }
-              }}
-              className="block h-full w-full cursor-zoom-in p-0"
-              aria-label={attachment.alt ? `Open image: ${attachment.alt}` : 'Open image'}
+      return (
+        <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))]">
+          <div className="relative overflow-hidden" style={getAttachmentAspectStyle(attachment, kind)}>
+            <MediaRevealGate
+              reason={revealReason}
+              resetKey={revealResetKey}
+              details={sensitiveReason}
+              className="h-full w-full"
             >
-            <picture>
-              {pictureSources.map((source) =>
-                source.type ? (
-                  <source key={source.url} srcSet={source.url} type={source.type} />
-                ) : null,
-              )}
-              <img
-                src={previewUrl}
-                alt={attachment.alt ?? ''}
-                loading="lazy"
-                decoding="async"
-                referrerPolicy="no-referrer"
-                onLoad={() => {
-                  recordMediaUrlSuccess(previewUrl)
-                }}
-                onError={() => {
-                  recordMediaUrlFailure(previewUrl)
-                  if (previewIndex < previewCandidates.length - 1) {
-                    setPreviewIndex(previewIndex + 1)
-                  } else {
-                    setPreviewFailed(true)
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  if (revealReason === null && previewUrl) {
+                    openImageLightbox(previewUrl, attachment.alt ?? '')
                   }
                 }}
-                className="h-full w-full object-cover"
-              />
-            </picture>
-            </button>
-            {attachment.alt && (
-              <AltBadge alt={attachment.alt} show={showAlt} onToggle={handleAltToggle} />
-            )}
-          </MediaRevealGate>
-        </div>
+                className="block h-full w-full cursor-zoom-in p-0"
+                aria-label={attachment.alt ? `Open image: ${attachment.alt}` : 'Open image'}
+              >
+              <picture>
+                {pictureSources.map((source) =>
+                  source.type ? (
+                    <source key={source.url} srcSet={source.url} type={source.type} />
+                  ) : null,
+                )}
+                <img
+                  src={previewUrl}
+                  alt={attachment.alt ?? ''}
+                  loading="lazy"
+                  decoding="async"
+                  referrerPolicy="no-referrer"
+                  onLoad={() => {
+                    recordMediaUrlSuccess(previewUrl)
+                  }}
+                  onError={() => {
+                    recordMediaUrlFailure(previewUrl)
+                    if (previewIndex < previewCandidates.length - 1) {
+                      setPreviewIndex(previewIndex + 1)
+                    } else {
+                      setPreviewFailed(true)
+                    }
+                  }}
+                  className="h-full w-full object-cover"
+                />
+              </picture>
+              </button>
+              {attachment.alt && (
+                <AltBadge alt={attachment.alt} show={showAlt} onToggle={handleAltToggle} />
+              )}
+            </MediaRevealGate>
+          </div>
 
-        {!compact && (
-          <div className="space-y-2 px-3 py-3">
-            <div className="flex flex-wrap gap-2 text-[12px] text-[rgb(var(--color-label-secondary))]">
-              {attachment.mimeType && (
-                <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1">
-                  {attachment.mimeType}
-                </span>
-              )}
-              {sizeLabel && (
-                <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1">
-                  {sizeLabel}
-                </span>
-              )}
-              {attachment.dim && (
-                <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1">
-                  {attachment.dim}
-                </span>
+          {!compact && (
+            <div className="space-y-2 px-3 py-3">
+              <div className="flex flex-wrap gap-2 text-[12px] text-[rgb(var(--color-label-secondary))]">
+                {attachment.mimeType && (
+                  <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1">
+                    {attachment.mimeType}
+                  </span>
+                )}
+                {sizeLabel && (
+                  <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1">
+                    {sizeLabel}
+                  </span>
+                )}
+                {attachment.dim && (
+                  <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1">
+                    {attachment.dim}
+                  </span>
+                )}
+              </div>
+
+              {(attachment.alt || attachment.summary) && (
+                <p className="text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
+                  {summary}
+                </p>
               )}
             </div>
+          )}
+        </div>
+      )
+    }
 
-            {(attachment.alt || attachment.summary) && (
-              <p className="text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
-                {summary}
-              </p>
-            )}
+    // Fallback: if preview failed or unavailable, but we have a source URL, render it directly
+    const sourceUrl = buildSourceCandidates(attachment)[0]
+    if (sourceUrl && !previewFailed) {
+      return (
+        <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))]">
+          <div className="relative overflow-hidden" style={getAttachmentAspectStyle(attachment, kind)}>
+            <MediaRevealGate
+              reason={revealReason}
+              resetKey={revealResetKey}
+              details={sensitiveReason}
+              className="h-full w-full"
+            >
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  if (revealReason === null && sourceUrl) {
+                    openImageLightbox(sourceUrl, attachment.alt ?? '')
+                  }
+                }}
+                className="block h-full w-full cursor-zoom-in p-0"
+                aria-label={attachment.alt ? `Open image: ${attachment.alt}` : 'Open image'}
+              >
+                <img
+                  src={sourceUrl}
+                  alt={attachment.alt ?? ''}
+                  loading="lazy"
+                  decoding="async"
+                  referrerPolicy="no-referrer"
+                  onLoad={() => {
+                    recordMediaUrlSuccess(sourceUrl)
+                  }}
+                  onError={() => {
+                    recordMediaUrlFailure(sourceUrl)
+                    setPreviewFailed(true)
+                  }}
+                  className="h-full w-full object-cover"
+                />
+              </button>
+              {attachment.alt && (
+                <AltBadge alt={attachment.alt} show={showAlt} onToggle={handleAltToggle} />
+              )}
+            </MediaRevealGate>
           </div>
-        )}
-      </div>
-    )
+
+          {!compact && (
+            <div className="space-y-2 px-3 py-3">
+              <div className="flex flex-wrap gap-2 text-[12px] text-[rgb(var(--color-label-secondary))]">
+                {attachment.mimeType && (
+                  <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1">
+                    {attachment.mimeType}
+                  </span>
+                )}
+                {sizeLabel && (
+                  <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1">
+                    {sizeLabel}
+                  </span>
+                )}
+                {attachment.dim && (
+                  <span className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2.5 py-1">
+                    {attachment.dim}
+                  </span>
+                )}
+              </div>
+
+              {(attachment.alt || attachment.summary) && (
+                <p className="text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
+                  {summary}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )
+    }
   }
 
   if (kind === 'video') {
@@ -313,10 +393,12 @@ function AttachmentTile({
         )
       }
 
-      // Only render a raw video in compact mode when a moderation document
-      // exists (meaning the preview was classified). Without a classifiable
-      // preview thumbnail we cannot screen the video — show a file card instead.
-      if ((moderationDocument || forceInlineVideo) && sourceUrl && !playbackFailed && canRenderInlinePlayback) {
+      if (sourceUrl && !playbackFailed && (canRenderInlinePlayback || playbackSources.length === 0)) {
+        // Either we have valid playback sources, or we should try inline playback directly from sourceUrl
+        const videoSources = playbackSources.length > 0
+          ? playbackSources
+          : [{ url: sourceUrl, type: attachment.mimeType }]
+
         return (
           <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))]">
             <MediaRevealGate
@@ -330,15 +412,15 @@ function AttachmentTile({
                 playsInline
                 preload="metadata"
                 onLoadedData={() => {
-                  playbackSources.forEach((source) => recordMediaUrlSuccess(source.url))
+                  videoSources.forEach((source) => recordMediaUrlSuccess(source.url))
                 }}
                 onError={() => {
-                  playbackSources.forEach((source) => recordMediaUrlFailure(source.url))
+                  videoSources.forEach((source) => recordMediaUrlFailure(source.url))
                   setPlaybackFailed(true)
                 }}
                 className="h-full w-full object-cover"
               >
-                {playbackSources.map((source) => (
+                {videoSources.map((source) => (
                   <source key={source.url} src={source.url} {...(source.type ? { type: source.type } : {})} />
                 ))}
               </video>
@@ -350,12 +432,11 @@ function AttachmentTile({
       return <GenericFileCard attachment={attachment} compact interactive={interactive} />
     }
 
-    if (sourceUrl && !playbackFailed && canRenderInlinePlayback) {
-      // Require a moderationDocument (thumbnail scan) before rendering the video.
-      // Without a classifiable thumbnail we cannot screen the content — show a file card instead.
-      if (!moderationDocument && !forceInlineVideo) {
-        return <GenericFileCard attachment={attachment} compact={false} interactive={interactive} />
-      }
+    if (sourceUrl && !playbackFailed && (canRenderInlinePlayback || playbackSources.length === 0)) {
+      // Either we have valid playback sources, or we should try inline playback directly from sourceUrl
+      const videoSources = playbackSources.length > 0
+        ? playbackSources
+        : [{ url: sourceUrl, type: attachment.mimeType }]
 
       return (
         <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))]">
@@ -371,15 +452,15 @@ function AttachmentTile({
               playsInline
               preload="metadata"
               onLoadedData={() => {
-                playbackSources.forEach((source) => recordMediaUrlSuccess(source.url))
+                videoSources.forEach((source) => recordMediaUrlSuccess(source.url))
               }}
               onError={() => {
-                playbackSources.forEach((source) => recordMediaUrlFailure(source.url))
+                videoSources.forEach((source) => recordMediaUrlFailure(source.url))
                 setPlaybackFailed(true)
               }}
               className="h-full max-h-[70vh] w-full bg-black object-contain"
             >
-              {playbackSources.map((source) => (
+              {videoSources.map((source) => (
                 <source key={source.url} src={source.url} {...(source.type ? { type: source.type } : {})} />
               ))}
             </video>
@@ -423,23 +504,28 @@ function AttachmentTile({
     !compact &&
     sourceUrl &&
     !playbackFailed &&
-    canRenderInlinePlayback
+    (canRenderInlinePlayback || playbackSources.length === 0)
   ) {
+    // Either we have valid playback sources, or we should try inline playback directly from sourceUrl
+    const audioSources = playbackSources.length > 0
+      ? playbackSources
+      : [{ url: sourceUrl, type: attachment.mimeType }]
+
     return (
       <div className="rounded-[18px] bg-[rgb(var(--color-bg-secondary))] p-4">
         <audio
           controls
           preload="metadata"
           onLoadedData={() => {
-            playbackSources.forEach((source) => recordMediaUrlSuccess(source.url))
+            audioSources.forEach((source) => recordMediaUrlSuccess(source.url))
           }}
           onError={() => {
-            playbackSources.forEach((source) => recordMediaUrlFailure(source.url))
+            audioSources.forEach((source) => recordMediaUrlFailure(source.url))
             setPlaybackFailed(true)
           }}
           className="w-full"
         >
-          {playbackSources.map((source) => (
+          {audioSources.map((source) => (
             <source key={source.url} src={source.url} {...(source.type ? { type: source.type } : {})} />
           ))}
         </audio>
@@ -485,6 +571,9 @@ function GenericFileCard({
   const previewUrlCandidate = getMediaAttachmentPreviewUrl(attachment)
   const previewUrl = previewUrlCandidate && shouldAttemptMediaUrl(previewUrlCandidate) ? previewUrlCandidate : null
   const kind = getMediaAttachmentKind(attachment)
+  const imagePreviewUrl = previewUrl
+    ?? (kind === 'image' && sourceUrl && shouldAttemptMediaUrl(sourceUrl) ? sourceUrl : null)
+  const shouldShowPreview = kind === 'image' ? imagePreviewUrl !== null : previewUrl !== null && !compact
   const openLabel = kind === 'image'
     ? 'Open image'
     : kind === 'video'
@@ -495,20 +584,20 @@ function GenericFileCard({
 
   const content = (
     <div className="overflow-hidden rounded-[18px] bg-[rgb(var(--color-bg-secondary))]">
-      {previewUrl && !compact && (
+      {shouldShowPreview && (
         <img
-          src={previewUrl}
+          src={kind === 'image' ? imagePreviewUrl ?? '' : previewUrl ?? ''}
           alt={attachment.alt ?? ''}
           loading="lazy"
           decoding="async"
           referrerPolicy="no-referrer"
           onLoad={() => {
-            recordMediaUrlSuccess(previewUrl)
+            recordMediaUrlSuccess(kind === 'image' ? imagePreviewUrl : previewUrl)
           }}
           onError={() => {
-            recordMediaUrlFailure(previewUrl)
+            recordMediaUrlFailure(kind === 'image' ? imagePreviewUrl : previewUrl)
           }}
-          className="max-h-[18rem] w-full object-cover"
+          className={`${compact ? 'max-h-[12rem]' : 'max-h-[18rem]'} w-full object-cover`}
         />
       )}
 

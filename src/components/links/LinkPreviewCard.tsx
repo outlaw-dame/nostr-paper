@@ -185,7 +185,7 @@ export function LinkPreviewCard({
 
           {data.author && (
             <p className="text-[13px] text-[rgb(var(--color-label-secondary))] leading-snug">
-              By {data.author}
+              {tApp('linkPreviewBy', { author: data.author })}
             </p>
           )}
 

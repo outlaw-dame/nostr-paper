@@ -29,6 +29,7 @@ vi.mock('@/lib/nostr/relayHealth', () => ({
 
 vi.mock('@/lib/nostr/ndk', () => ({
   getDefaultRelayUrls: () => ['wss://relay.damus.io'],
+  getPrimaryConfiguredRelayUrl: () => null,
   getNDK: () => ({
     pool: {
       relays: new Map([

@@ -23,6 +23,12 @@ const imageAttachment: Nip92MediaAttachment = {
   source: 'url',
 }
 
+const videoAttachment: Nip92MediaAttachment = {
+  url: 'https://cdn.example.com/clip.mp4',
+  mimeType: 'video/mp4',
+  source: 'imeta',
+}
+
 describe('NoteMediaAttachments', () => {
   let container: HTMLDivElement
   let root: Root
@@ -86,5 +92,20 @@ describe('NoteMediaAttachments', () => {
 
     expect(container.textContent).toContain('Media warning')
     expect(container.querySelector('img')).toBeNull()
+  })
+
+  it('renders inline video for playable video/mp4 attachments', async () => {
+    const canPlaySpy = vi.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockReturnValue('probably')
+
+    await act(async () => {
+      root.render(
+        <NoteMediaAttachments attachments={[videoAttachment]} />,
+      )
+    })
+
+    expect(container.querySelector('video')).not.toBeNull()
+    expect(container.textContent).not.toContain('Open video')
+
+    canPlaySpy.mockRestore()
   })
 })

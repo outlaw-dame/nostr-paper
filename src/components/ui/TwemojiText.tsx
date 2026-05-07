@@ -29,14 +29,14 @@ export function TwemojiText({ text, mode = 'auto' }: TwemojiTextProps) {
     return getCachedPlatformCapabilities().preferNativeEmoji
   }, [mode])
 
+  const entities = React.useMemo(
+    () => (shouldUseNativeEmoji ? [] : parse(text, { buildUrl })),
+    [shouldUseNativeEmoji, text]
+  )
+
   if (shouldUseNativeEmoji) {
     return <>{text}</>
   }
-
-  const entities = React.useMemo(
-    () => parse(text, { buildUrl }),
-    [text]
-  )
 
   if (entities.length === 0) {
     return <>{text}</>

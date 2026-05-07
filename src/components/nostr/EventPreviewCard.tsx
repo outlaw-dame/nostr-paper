@@ -9,6 +9,7 @@ import { useSelfThreadIndex } from '@/hooks/useSelfThreadIndex'
 import { useEventModeration } from '@/hooks/useModeration'
 import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { useProfile } from '@/hooks/useProfile'
+import { tApp } from '@/lib/i18n/app'
 import {
   getHandlerDisplayName,
   getHandlerRecommendationSummary,
@@ -38,6 +39,7 @@ import { getQuotePostBody, getRepostPreviewText, parseQuoteTags, parseRepostEven
 import { getUserStatusExternalHref, getUserStatusLabel, parseUserStatusEvent } from '@/lib/nostr/status'
 import { parseCommentEvent, parseNumberedThreadMarker, parseTextNoteReply, parseThreadEvent } from '@/lib/nostr/thread'
 import { parseContentWarning } from '@/lib/nostr/contentWarning'
+import { extractEventLanguageTag } from '@/lib/nostr/language'
 import { parseVideoEvent } from '@/lib/nostr/video'
 import { parseHighlightEvent } from '@/lib/nostr/highlight'
 import { isThreadInspectorEnabled } from '@/lib/runtime/debugSettings'
@@ -48,6 +50,8 @@ interface EventPreviewCardProps {
   className?: string
   compact?: boolean
   linked?: boolean
+  allowTranslation?: boolean
+  translationSyncGroup?: string
 }
 
 function getHref(event: NostrEvent): string {
@@ -84,8 +88,21 @@ function getKindLabel(event: NostrEvent): string | null {
   return null
 }
 
-function PreviewBody({ event, compact = false, interactive = true }: { event: NostrEvent; compact?: boolean; interactive?: boolean }) {
+function PreviewBody({
+  event,
+  compact = false,
+  interactive = true,
+  allowTranslation = false,
+  translationSyncGroup,
+}: {
+  event: NostrEvent
+  compact?: boolean
+  interactive?: boolean
+  allowTranslation?: boolean
+  translationSyncGroup?: string
+}) {
   const followStatus = useFollowStatus(event.pubkey)
+  const eventLanguage = extractEventLanguageTag(event)
   const contentWarning = parseContentWarning(event)
   const list = parseNip51ListEvent(event)
   if (list) {
@@ -345,7 +362,7 @@ function PreviewBody({ event, compact = false, interactive = true }: { event: No
   if (quoteBody.trim().length === 0 && parseQuoteTags(event).length > 0) {
     return (
       <p className="mt-3 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))] line-clamp-3">
-        <TwemojiText text="Quoted an event." />
+        <TwemojiText text={tApp('quoteFallbackLabel')} />
       </p>
     )
   }
@@ -370,6 +387,9 @@ function PreviewBody({ event, compact = false, interactive = true }: { event: No
         className="mt-3"
         hiddenUrls={hiddenUrls}
         interactive={interactive}
+        allowTranslation={allowTranslation}
+        {...(eventLanguage !== null ? { sourceLanguage: eventLanguage } : {})}
+        {...(translationSyncGroup !== undefined ? { translationSyncGroup } : {})}
       />
       {attachments.length > 0 && (
         <NoteMediaAttachments
@@ -391,6 +411,8 @@ export function EventPreviewCard({
   className = '',
   compact = false,
   linked = true,
+  allowTranslation = false,
+  translationSyncGroup,
 }: EventPreviewCardProps) {
   const threadIndex = useSelfThreadIndex(event)
   const threadInspectorEnabled = isThreadInspectorEnabled()
@@ -448,7 +470,13 @@ export function EventPreviewCard({
         </div>
       )}
 
-      <PreviewBody event={event} compact={compact} interactive={!linked} />
+      <PreviewBody
+        event={event}
+        compact={compact}
+        interactive={!linked}
+        allowTranslation={allowTranslation}
+        {...(translationSyncGroup !== undefined ? { translationSyncGroup } : {})}
+      />
     </div>
   )
 

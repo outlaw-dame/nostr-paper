@@ -22,7 +22,10 @@ interface TranslateTextPanelProps {
   autoStart?: boolean
   mini?: boolean
   sourceLanguage?: string | null
+  translationSyncGroup?: string
 }
+
+const TRANSLATION_SYNC_EVENT = 'paper:translation-sync'
 
 const MAX_AUTO_TRANSLATE_CHARS = 2_800
 const AUTO_RETRY_COOLDOWN_MS = 30_000
@@ -98,6 +101,7 @@ export function TranslateTextPanel({
   autoStart = true,
   mini = false,
   sourceLanguage,
+  translationSyncGroup,
 }: TranslateTextPanelProps) {
   const [result, setResult] = useState<TranslationResult | null>(null)
   const [hidden, setHidden] = useState(false)
@@ -189,6 +193,38 @@ export function TranslateTextPanel({
       }
     }
   }, [])
+
+  useEffect(() => {
+    const browserWindow = typeof globalThis.window === 'undefined' ? null : globalThis.window
+    if (!browserWindow || !translationSyncGroup) return
+
+    const onSync = (event: Event) => {
+      const customEvent = event as CustomEvent<{ group?: string }>
+      if (customEvent.detail?.group !== translationSyncGroup) return
+      if (!trimmedText || !hasMeaningfulText) return
+      if (requested || loading || result) return
+
+      pendingRequestIsAutoRef.current = false
+      setRequested(true)
+      setAutoAttempted(true)
+      setAutoBlockedUntil(0)
+      setError(null)
+      setErrorCode(null)
+      setRequestVersion(version => version + 1)
+    }
+
+    browserWindow.addEventListener(TRANSLATION_SYNC_EVENT, onSync as EventListener)
+    return () => {
+      browserWindow.removeEventListener(TRANSLATION_SYNC_EVENT, onSync as EventListener)
+    }
+  }, [
+    hasMeaningfulText,
+    loading,
+    requested,
+    result,
+    translationSyncGroup,
+    trimmedText,
+  ])
 
   useEffect(() => {
     if (!trimmedText || !hasMeaningfulText) {
@@ -372,7 +408,7 @@ export function TranslateTextPanel({
     )
   }
 
-  const requestTranslation = () => {
+  const requestTranslation = (broadcastSync = true) => {
     pendingRequestIsAutoRef.current = false
     setRequested(true)
     setAutoAttempted(true)
@@ -380,6 +416,12 @@ export function TranslateTextPanel({
     setError(null)
     setErrorCode(null)
     setRequestVersion(version => version + 1)
+
+    if (broadcastSync && translationSyncGroup && typeof globalThis.window !== 'undefined') {
+      globalThis.window.dispatchEvent(new CustomEvent(TRANSLATION_SYNC_EVENT, {
+        detail: { group: translationSyncGroup },
+      }))
+    }
   }
 
   const autoBlocked = autoBlockedUntil > now

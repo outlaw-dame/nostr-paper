@@ -6,7 +6,8 @@
  * (VITE_OG_PROXY_URL env var).
  *
  * Results are cached in a bounded in-memory LRU-style map so the same
- * URL is never fetched twice within a session.  No SQLite persistence —
+ * URL is never fetched twice within a session when successful. Failed/null
+ * lookups are cached briefly and retried later. No SQLite persistence —
  * previews are ephemeral UI state.
  *
  * Gracefully returns null when no proxy is reachable, so the app works
@@ -36,8 +37,14 @@ const PROXY_BASE = import.meta.env.DEV ? DEV_PROXY : (PROD_PROXY ?? null)
 // ── Cache ─────────────────────────────────────────────────────
 
 const MAX_CACHE = 200
+const NEGATIVE_CACHE_TTL_MS = 2 * 60 * 1000
 
-const cache    = new Map<string, OGData | null>()
+interface OgCacheEntry {
+  value: OGData | null
+  expiresAt?: number
+}
+
+const cache    = new Map<string, OgCacheEntry>()
 const inflight = new Map<string, Promise<OGData | null>>()
 
 function evictIfNeeded(): void {
@@ -110,8 +117,15 @@ async function doFetch(url: string): Promise<OGData | null> {
 }
 
 export function peekOGData(url: string): OGData | null | undefined {
-  if (!cache.has(url)) return undefined
-  return cache.get(url) ?? null
+  const entry = cache.get(url)
+  if (!entry) return undefined
+
+  if (entry.expiresAt !== undefined && entry.expiresAt <= Date.now()) {
+    cache.delete(url)
+    return undefined
+  }
+
+  return entry.value
 }
 
 /**
@@ -122,28 +136,34 @@ export function peekOGData(url: string): OGData | null | undefined {
  * - Caches the result (including null) for the lifetime of the session.
  */
 export async function fetchOGData(url: string): Promise<OGData | null> {
+  const normalizedUrl = url.trim()
+  if (!normalizedUrl) return null
   if (!PROXY_BASE) return null
 
-  if (cache.has(url)) return cache.get(url) ?? null
+  const cached = peekOGData(normalizedUrl)
+  if (cached !== undefined) return cached
 
   // Deduplicate concurrent requests
-  const existing = inflight.get(url)
+  const existing = inflight.get(normalizedUrl)
   if (existing) return existing
 
   const promise = (async () => {
-    const safe = await checkSafeBrowsingURL(url)
+    const safe = await checkSafeBrowsingURL(normalizedUrl)
     if (!safe) return null
-    return doFetch(url)
+    return doFetch(normalizedUrl)
   })().then(result => {
-    inflight.delete(url)
+    inflight.delete(normalizedUrl)
 
     // Cache both positive and negative lookups to prevent repeated retries.
-    cache.set(url, result)
+    cache.set(normalizedUrl, {
+      value: result,
+      ...(result === null ? { expiresAt: Date.now() + NEGATIVE_CACHE_TTL_MS } : {}),
+    })
     evictIfNeeded()
 
     return result
   })
 
-  inflight.set(url, promise)
+  inflight.set(normalizedUrl, promise)
   return promise
 }

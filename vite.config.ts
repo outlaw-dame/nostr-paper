@@ -15,7 +15,7 @@ type DevServer = {
   }
   httpServer?: {
     on: (event: string, listener: (...args: any[]) => void) => void
-  }
+  } | null
 }
 type PreviewServer = DevServer
 
@@ -1580,7 +1580,7 @@ function wasmMimePlugin() {
   }
 }
 
-export default defineConfig(({ mode }: { mode: string }) => {
+export default defineConfig(({ mode }) => {
   return {
     plugins: [
       wasmMimePlugin(),

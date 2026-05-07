@@ -32,6 +32,7 @@ interface NoteContentProps {
   allowTranslation?: boolean
   autoStartTranslation?: boolean
   sourceLanguage?: string | null
+  translationSyncGroup?: string
   enableMarkdown?: boolean
   showEntityPreviews?: boolean
 }
@@ -507,6 +508,7 @@ export function NoteContent({
   allowTranslation = false,
   autoStartTranslation = true,
   sourceLanguage,
+  translationSyncGroup,
   enableMarkdown = false,
   showEntityPreviews = true,
 }: NoteContentProps) {
@@ -563,6 +565,7 @@ export function NoteContent({
             autoStart={inlineAutoTranslate}
             mini={inlineAutoTranslate}
             {...(sourceLanguage !== undefined ? { sourceLanguage } : {})}
+            {...(translationSyncGroup !== undefined ? { translationSyncGroup } : {})}
           />
         )}
       </>
@@ -582,6 +585,7 @@ export function NoteContent({
             autoStart={inlineAutoTranslate}
             mini={inlineAutoTranslate}
             {...(sourceLanguage !== undefined ? { sourceLanguage } : {})}
+            {...(translationSyncGroup !== undefined ? { translationSyncGroup } : {})}
           />
         )}
       </>
@@ -605,6 +609,7 @@ export function NoteContent({
           autoStart={inlineAutoTranslate}
           mini={inlineAutoTranslate}
           {...(sourceLanguage !== undefined ? { sourceLanguage } : {})}
+          {...(translationSyncGroup !== undefined ? { translationSyncGroup } : {})}
         />
       )}
     </>

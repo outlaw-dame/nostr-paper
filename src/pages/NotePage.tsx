@@ -412,9 +412,16 @@ export default function NotePage() {
                     allowTranslation
                     enableMarkdown
                     {...(eventLanguage !== null ? { sourceLanguage: eventLanguage } : {})}
+                    translationSyncGroup={event.id}
                   />
                 )}
-                <QuotePreviewList event={event} showHeader={false} className="mt-5" compact />
+                <QuotePreviewList
+                  event={event}
+                  showHeader={false}
+                  className="mt-5"
+                  compact
+                  translationSyncGroup={event.id}
+                />
               </>
             ) : userStatus ? (
               <UserStatusBody event={event} className="mt-4" />
@@ -434,6 +441,7 @@ export default function NotePage() {
                     allowTranslation
                     enableMarkdown
                     {...(eventLanguage !== null ? { sourceLanguage: eventLanguage } : {})}
+                    translationSyncGroup={event.id}
                   />
                 )}
                 {attachments.length > 0 && (
@@ -451,7 +459,13 @@ export default function NotePage() {
                     className="mt-5"
                   />
                 )}
-                <QuotePreviewList event={event} showHeader={false} className="mt-5" compact />
+                <QuotePreviewList
+                  event={event}
+                  showHeader={false}
+                  className="mt-5"
+                  compact
+                  translationSyncGroup={event.id}
+                />
               </>
             )}
 

@@ -1785,6 +1785,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
                 allowTranslation
                 autoStartTranslation={false}
                 {...(eventLanguage !== null ? { sourceLanguage: eventLanguage } : {})}
+                translationSyncGroup={event.id}
               />
             )}
             {attachments.length > 0 && (
@@ -1798,7 +1799,15 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
                 forceInlineVideo={activeSectionId === 'videos'}
               />
             )}
-            <QuotePreviewList event={event} className="mt-3" compact linked={false} maxItems={1} showHeader={false} />
+            <QuotePreviewList
+              event={event}
+              className="mt-3"
+              compact
+              linked={false}
+              maxItems={1}
+              showHeader={false}
+              translationSyncGroup={event.id}
+            />
           </>
         ) : null}
         <EventMetricsRow event={event} interactive />
