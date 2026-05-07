@@ -418,6 +418,7 @@ export function EventPreviewCard({
   const threadInspectorEnabled = isThreadInspectorEnabled()
   const { blocked, loading, decision } = useEventModeration(event)
   const { profile } = useProfile(event.pubkey, { background: false })
+  const contentWarning = parseContentWarning(event)
   const blockedByTagr = blocked && (decision?.reason?.startsWith('tagr:') ?? false)
 
   if (loading) return null
@@ -450,11 +451,25 @@ export function EventPreviewCard({
         timestamp={event.created_at}
       />
 
-      {kindLabel && (
-        <p className="mt-3 text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-          {kindLabel}
-        </p>
-      )}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {kindLabel && (
+          <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+            {kindLabel}
+          </p>
+        )}
+        {contentWarning && (
+          <div className="inline-flex items-center gap-1.5 rounded-full bg-[rgb(var(--color-fill)/0.12)] px-2.5 py-1 text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-system-yellow))]">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3.05h16.94a2 2 0 0 0 1.71-3.05L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+            <span>
+              Content warning{contentWarning.reason ? `: ${contentWarning.reason}` : ''}
+            </span>
+          </div>
+        )}
+      </div>
 
       <ThreadIndexBadge threadIndex={threadIndex} className="mt-3" />
 
