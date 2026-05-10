@@ -140,16 +140,19 @@ function pickManualChunk(id: string): string | undefined {
     }
   }
 
-  if (normalized.includes('/src/lib/ai/')) {
-    return 'ai-tools'
-  }
-
+  // Keep AI, translation, and moderation together to avoid circular manual chunks
+  // (ai-tools <-> translation and ai-tools <-> moderation) during Rollup splitting.
   if (
+    normalized.includes('/src/lib/ai/') ||
     normalized.includes('/src/lib/translation/') ||
     normalized.includes('/src/components/translation/') ||
-    normalized.includes('/src/lib/gemma/')
+    normalized.includes('/src/lib/gemma/') ||
+    normalized.includes('/src/lib/moderation/') ||
+    normalized.includes('/src/hooks/useModeration') ||
+    normalized.includes('/src/hooks/useMediaModeration') ||
+    normalized.includes('/src/hooks/useHideNsfwTaggedPosts')
   ) {
-    return 'translation'
+    return 'intelligence'
   }
 
   if (
@@ -158,15 +161,6 @@ function pickManualChunk(id: string): string | undefined {
     normalized.includes('/src/hooks/useTagTimelineSemanticFeed')
   ) {
     return 'semantic'
-  }
-
-  if (
-    normalized.includes('/src/lib/moderation/') ||
-    normalized.includes('/src/hooks/useModeration') ||
-    normalized.includes('/src/hooks/useMediaModeration') ||
-    normalized.includes('/src/hooks/useHideNsfwTaggedPosts')
-  ) {
-    return 'moderation'
   }
 
   if (
@@ -1622,25 +1616,69 @@ export default defineConfig(({ mode }) => {
           theme_color: '#f4f0e8',
           background_color: '#f4f0e8',
           display: 'standalone',
-          orientation: 'portrait',
           start_url: '/',
           scope: '/',
-          id: 'nostr-paper-pwa',
+          id: '/',
           icons: [
             { src: '/icons/pwa-192x192.png', sizes: '192x192', type: 'image/png' },
             { src: '/icons/pwa-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
             { src: '/icons/pwa-512x512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
           ],
           categories: ['social', 'news'],
+          screenshots: [
+            {
+              src: '/screenshots/paper-narrow.svg',
+              sizes: '390x844',
+              type: 'image/svg+xml',
+              form_factor: 'narrow',
+              label: 'Nostr Paper feed on phone',
+            },
+            {
+              src: '/screenshots/paper-wide.svg',
+              sizes: '1366x768',
+              type: 'image/svg+xml',
+              form_factor: 'wide',
+              label: 'Nostr Paper feed on desktop',
+            },
+          ],
           shortcuts: [
             {
               name: 'New Note',
               short_name: 'Compose',
               description: 'Compose a new Nostr note',
-              url: '/?compose=true',
-              icons: [{ src: '/icons/shortcut-compose.png', sizes: '96x96' }],
+              url: '/?compose=1',
+              icons: [{ src: '/icons/shortcut-compose.png', sizes: '96x96', type: 'image/png' }],
+            },
+            {
+              name: 'Search',
+              short_name: 'Search',
+              description: 'Search Nostr Paper',
+              url: '/search',
+              icons: [{ src: '/icons/pwa-192x192.png', sizes: '192x192', type: 'image/png' }],
+            },
+            {
+              name: 'Inbox',
+              short_name: 'Inbox',
+              description: 'Open direct messages',
+              url: '/dm',
+              icons: [{ src: '/icons/pwa-192x192.png', sizes: '192x192', type: 'image/png' }],
             },
           ],
+          protocol_handlers: [
+            {
+              protocol: 'web+nostr',
+              url: '/?uri=%s',
+            },
+          ],
+          share_target: {
+            action: '/',
+            method: 'GET',
+            params: {
+              title: 'title',
+              text: 'text',
+              url: 'url',
+            },
+          },
         },
       }),
       mode === 'analyze' &&
@@ -1722,12 +1760,7 @@ export default defineConfig(({ mode }) => {
       include: ['src/**/*.{test,spec}.ts', 'src/**/*.{test,spec}.tsx'],
       exclude: ['**/node_modules/**', '**/*.ui.test.ts', '**/*.ui.test.tsx'],
       pool: 'forks',
-      poolOptions: {
-        forks: {
-          minForks: 1,
-          maxForks: 1,
-        },
-      },
+      maxWorkers: 1,
       coverage: {
         provider: 'v8',
         reporter: ['text', 'json', 'html'],
