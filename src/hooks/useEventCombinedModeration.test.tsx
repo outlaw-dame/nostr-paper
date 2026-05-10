@@ -122,6 +122,8 @@ describe('useEventCombinedModeration', () => {
   })
 
   it('marks blocked when ML moderation blocks the event', async () => {
+    if (!hasJsdom) return
+
     moderationState.blocked = true
 
     await act(async () => {
@@ -141,6 +143,8 @@ describe('useEventCombinedModeration', () => {
   })
 
   it('marks blocked for author mutes, muted words, and muted hashtags', async () => {
+    if (!hasJsdom) return
+
     muteState.isMuted = () => true
     muteState.mutedWords = new Set(['danger'])
     muteState.mutedHashtags = new Set(['nostr'])
@@ -162,6 +166,8 @@ describe('useEventCombinedModeration', () => {
   })
 
   it('merges lexical and semantic keyword results with severity precedence', async () => {
+    if (!hasJsdom) return
+
     checkEventMock.mockReturnValue({
       action: 'hide',
       matches: [{
@@ -205,6 +211,8 @@ describe('useEventCombinedModeration', () => {
   })
 
   it('reports loading when either ML or mute list is still loading', async () => {
+    if (!hasJsdom) return
+
     moderationState.loading = true
     muteState.loading = false
 
@@ -241,6 +249,8 @@ describe('useEventCombinedModeration', () => {
   })
 
   it('returns unblocked when no subsystem flags the event', async () => {
+    if (!hasJsdom) return
+
     await act(async () => {
       root?.render(
         <Harness

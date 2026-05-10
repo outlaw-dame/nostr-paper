@@ -4,6 +4,25 @@
 /// <reference types="vitest/globals" />
 import { vi, beforeAll, afterAll } from 'vitest'
 
+// ── Ensure jsdom globals are available before any mocks ───────
+
+// Make sure document, window, and global are available for jsdom environment
+if (typeof globalThis.document === 'undefined' && typeof global !== 'undefined') {
+  // If running in jsdom, these will be defined; if not, we ensure they exist
+  if (typeof global.document !== 'undefined') {
+    Object.defineProperty(globalThis, 'document', {
+      value: global.document,
+      writable: true,
+    })
+  }
+  if (typeof global.window !== 'undefined') {
+    Object.defineProperty(globalThis, 'window', {
+      value: global.window,
+      writable: true,
+    })
+  }
+}
+
 // ── Mock browser APIs not available in jsdom ─────────────────
 
 // IndexedDB / OPFS — not in jsdom

@@ -692,7 +692,6 @@ function factCheckDevProxyPlugin() {
         const apiKey = (
           process.env.GOOGLE_FACT_CHECK_API_KEY ??
           process.env.GEMINI_API_KEY ??
-          process.env.VITE_GEMINI_API_KEY ??
           process.env.GOOGLE_API_KEY ??
           ''
         ).trim()
@@ -1051,7 +1050,7 @@ function tenorDevProxyPlugin() {
           return
         }
 
-        const apiKey = process.env.VITE_TENOR_API_KEY
+        const apiKey = process.env.TENOR_API_KEY
         if (!apiKey) {
           // No key configured — return empty results so the picker just shows nothing
           res.statusCode = 200
@@ -1726,7 +1725,7 @@ export default defineConfig(({ mode }) => {
         },
       },
       fs: {
-        allow: ['..'],
+        allow: [resolve(__dirname)],
       },
     },
 
