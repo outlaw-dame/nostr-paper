@@ -5,6 +5,7 @@ import { normalizeModerationText } from '@/lib/moderation/content'
 import type { ModerationDecision, ModerationDocument } from '@/types'
 
 const MAX_REVIEW_DOCUMENTS = 50
+const ALLOW_AI_DEESCALATION = import.meta.env.VITE_AI_MODERATION_ALLOW_DEESCALATION === 'true'
 
 type AiModerationVote = {
   action: 'allow' | 'block'
@@ -28,16 +29,29 @@ function clampConfidence(value: unknown): number {
 }
 
 function shouldReviewWithAi(decision: ModerationDecision): boolean {
-  if (decision.action !== 'allow') return false
+  if (decision.action === 'allow') {
+    const { scores } = decision
+    return (
+      scores.threat >= 0.42
+      || scores.identity_hate >= 0.42
+      || scores.severe_toxic >= 0.45
+      || scores.obscene >= 0.60
+      || (scores.toxic >= 0.62 && scores.insult >= 0.52)
+    )
+  }
 
+  if (!ALLOW_AI_DEESCALATION) return false
+
+  // Review only borderline blocks when explicitly enabled.
   const { scores } = decision
-  return (
-    scores.threat >= 0.42
-    || scores.identity_hate >= 0.42
-    || scores.severe_toxic >= 0.45
-    || scores.obscene >= 0.60
-    || (scores.toxic >= 0.62 && scores.insult >= 0.52)
-  )
+  const threatBorderline = scores.threat >= 0.60 && scores.threat <= 0.72
+  const identityBorderline = scores.identity_hate >= 0.60 && scores.identity_hate <= 0.74
+  const severeToxicBorderline = scores.severe_toxic >= 0.62 && scores.severe_toxic <= 0.76
+  const obsceneBorderline = scores.obscene >= 0.78 && scores.obscene <= 0.88
+  const harassmentBorderline = scores.toxic >= 0.85 && scores.toxic <= 0.92
+    && scores.insult >= 0.75 && scores.insult <= 0.90
+
+  return threatBorderline || identityBorderline || severeToxicBorderline || obsceneBorderline || harassmentBorderline
 }
 
 function buildPrompt(document: ModerationDocument): string {
@@ -105,15 +119,29 @@ function applyVote(
   vote: AiModerationVote,
   source: 'gemma' | 'gemini',
 ): ModerationDecision {
-  if (vote.action !== 'block') return decision
-  if (vote.confidence < 0.55) return decision
+  if (decision.action === 'allow') {
+    if (vote.action !== 'block') return decision
+    if (vote.confidence < 0.55) return decision
+
+    return {
+      ...decision,
+      action: 'block',
+      reason: `ai_${vote.reason}`,
+      model: `${decision.model}+${source}`,
+      policyVersion: `${decision.policyVersion}+ai-v1`,
+    }
+  }
+
+  if (!ALLOW_AI_DEESCALATION) return decision
+  if (vote.action !== 'allow') return decision
+  if (vote.confidence < 0.85) return decision
 
   return {
     ...decision,
-    action: 'block',
-    reason: `ai_${vote.reason}`,
+    action: 'allow',
+    reason: null,
     model: `${decision.model}+${source}`,
-    policyVersion: `${decision.policyVersion}+ai-v1`,
+    policyVersion: `${decision.policyVersion}+ai-v1-deescalated`,
   }
 }
 
@@ -148,6 +176,7 @@ export async function refineModerationDecisionsWithAi(
   const startedAt = performance.now()
   let attempts = 0
   let blocksApplied = 0
+  let allowsApplied = 0
 
   for (const candidate of candidates) {
     if (signal?.aborted) break
@@ -165,6 +194,9 @@ export async function refineModerationDecisionsWithAi(
       if (updated.action === 'block' && current.action !== 'block') {
         blocksApplied += 1
       }
+      if (updated.action === 'allow' && current.action === 'block') {
+        allowsApplied += 1
+      }
       byId.set(current.id, updated)
     } catch {
       // Fail open: base moderation decision remains authoritative.
@@ -180,6 +212,7 @@ export async function refineModerationDecisionsWithAi(
       candidates: candidates.length,
       attempts,
       blocksApplied,
+      allowsApplied,
     },
   })
 

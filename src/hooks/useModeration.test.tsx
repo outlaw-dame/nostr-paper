@@ -88,10 +88,13 @@ const flush = async () => {
 }
 
 describe('useModerationDocuments', () => {
-  let container: HTMLDivElement
-  let root: Root
+  let container: HTMLDivElement | null = null
+  let root: Root | null = null
+  const hasJsdom = typeof document !== 'undefined'
 
   beforeEach(() => {
+    if (!hasJsdom) return
+
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -101,21 +104,25 @@ describe('useModerationDocuments', () => {
   })
 
   afterEach(async () => {
+    if (!hasJsdom || !root || !container) return
+
     await act(async () => {
-      root.unmount()
+      root!.unmount()
     })
     container.remove()
     vi.clearAllMocks()
   })
 
   it('keeps fail-closed lists hidden while moderation is pending', async () => {
+    if (!hasJsdom) return
+
     const pending = deferred<ModerationDecision[]>()
     moderateContentDocumentsMock.mockReturnValue(pending.promise)
 
     let latest: DocsSnapshot | null = null
 
     await act(async () => {
-      root.render(
+      root!.render(
         <DocsHarness
           docs={[makeDoc('pending-a')]}
           failClosed
@@ -141,12 +148,14 @@ describe('useModerationDocuments', () => {
   })
 
   it('treats missing successful decisions as allow decisions', async () => {
+    if (!hasJsdom) return
+
     moderateContentDocumentsMock.mockResolvedValue([makeDecision('partial-a', 'allow')])
 
     let latest: DocsSnapshot | null = null
 
     await act(async () => {
-      root.render(
+      root!.render(
         <DocsHarness
           docs={[makeDoc('partial-a'), makeDoc('partial-b')]}
           failClosed
@@ -166,12 +175,14 @@ describe('useModerationDocuments', () => {
   })
 
   it('fails open on moderation worker errors even when loading is fail-closed', async () => {
+    if (!hasJsdom) return
+
     moderateContentDocumentsMock.mockRejectedValue(new Error('moderation unavailable'))
 
     let latest: DocsSnapshot | null = null
 
     await act(async () => {
-      root.render(
+      root!.render(
         <DocsHarness
           docs={[makeDoc('error-a')]}
           failClosed

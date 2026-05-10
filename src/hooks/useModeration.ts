@@ -26,6 +26,8 @@ import {
 import type { ModerationDecision, ModerationDocument, NostrEvent, Profile } from '@/types'
 import type { SyndicationEntry, SyndicationFeed } from '@/lib/syndication/types'
 
+const DEFAULT_FAIL_OPEN_ON_ERROR = import.meta.env.VITE_MODERATION_FAIL_OPEN_ON_ERROR !== 'false'
+
 // Bounded in-memory LRU cache — evict oldest when over the limit so the
 // cache doesn't grow unbounded across a long session with thousands of events.
 // The SQLite-backed `moderation_decisions` table is the durable layer; this
@@ -121,7 +123,7 @@ export function useModerationDocuments(
 ): UseModerationDocumentsResult {
   const enabled = options.enabled ?? true
   const failClosed = options.failClosed ?? false
-  const failOpenOnError = options.failOpenOnError ?? true
+  const failOpenOnError = options.failOpenOnError ?? DEFAULT_FAIL_OPEN_ON_ERROR
   const warningSources = useModerationWarningSources(options.moderationScopeId)
   const aiLabelsEnabled = warningSources.aiLabelsEnabled
   const networkReportWarningsEnabled = warningSources.networkReportWarningsEnabled

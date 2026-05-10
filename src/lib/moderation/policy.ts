@@ -3,6 +3,30 @@ import type { ModerationDecision, ModerationLabel, ModerationScores } from '@/ty
 export const DEFAULT_MODERATION_MODEL_ID = 'minuva/MiniLMv2-toxic-jigsaw-onnx'
 export const MODERATION_POLICY_VERSION = 'content-harm-v2'
 
+export interface ModerationThresholds {
+  credibleThreat: number
+  identityAttack: number
+  identityAttackToxic: number
+  severeAbuse: number
+  highObscene: number
+  obsceneAbuse: number
+  obsceneAbuseToxicOrInsult: number
+  heavyHarassmentToxic: number
+  heavyHarassmentInsult: number
+}
+
+const DEFAULT_THRESHOLDS: ModerationThresholds = {
+  credibleThreat: 0.60,
+  identityAttack: 0.60,
+  identityAttackToxic: 0.45,
+  severeAbuse: 0.62,
+  highObscene: 0.88,
+  obsceneAbuse: 0.78,
+  obsceneAbuseToxicOrInsult: 0.60,
+  heavyHarassmentToxic: 0.85,
+  heavyHarassmentInsult: 0.75,
+}
+
 const KNOWN_LABELS: readonly ModerationLabel[] = [
   'toxic',
   'severe_toxic',
@@ -63,6 +87,45 @@ function clampScore(value: unknown): number {
   return value
 }
 
+function readThreshold(name: string, fallback: number): number {
+  const raw = import.meta.env[name]
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed)) return fallback
+  if (parsed < 0 || parsed > 1) return fallback
+  return parsed
+}
+
+export function getModerationThresholds(): ModerationThresholds {
+  return {
+    credibleThreat: readThreshold('VITE_MODERATION_THRESHOLD_THREAT', DEFAULT_THRESHOLDS.credibleThreat),
+    identityAttack: readThreshold('VITE_MODERATION_THRESHOLD_IDENTITY_HATE', DEFAULT_THRESHOLDS.identityAttack),
+    identityAttackToxic: readThreshold('VITE_MODERATION_THRESHOLD_IDENTITY_HATE_TOXIC', DEFAULT_THRESHOLDS.identityAttackToxic),
+    severeAbuse: readThreshold('VITE_MODERATION_THRESHOLD_SEVERE_TOXIC', DEFAULT_THRESHOLDS.severeAbuse),
+    highObscene: readThreshold('VITE_MODERATION_THRESHOLD_HIGH_OBSCENE', DEFAULT_THRESHOLDS.highObscene),
+    obsceneAbuse: readThreshold('VITE_MODERATION_THRESHOLD_OBSCENE_ABUSE', DEFAULT_THRESHOLDS.obsceneAbuse),
+    obsceneAbuseToxicOrInsult: readThreshold('VITE_MODERATION_THRESHOLD_OBSCENE_ABUSE_SUPPORT', DEFAULT_THRESHOLDS.obsceneAbuseToxicOrInsult),
+    heavyHarassmentToxic: readThreshold('VITE_MODERATION_THRESHOLD_HEAVY_HARASSMENT_TOXIC', DEFAULT_THRESHOLDS.heavyHarassmentToxic),
+    heavyHarassmentInsult: readThreshold('VITE_MODERATION_THRESHOLD_HEAVY_HARASSMENT_INSULT', DEFAULT_THRESHOLDS.heavyHarassmentInsult),
+  }
+}
+
+export function getModerationPolicyCacheVersion(): string {
+  const modelId = import.meta.env.VITE_MODERATION_MODEL_ID ?? DEFAULT_MODERATION_MODEL_ID
+  const thresholds = getModerationThresholds()
+  const thresholdSignature = [
+    thresholds.credibleThreat,
+    thresholds.identityAttack,
+    thresholds.identityAttackToxic,
+    thresholds.severeAbuse,
+    thresholds.highObscene,
+    thresholds.obsceneAbuse,
+    thresholds.obsceneAbuseToxicOrInsult,
+    thresholds.heavyHarassmentToxic,
+    thresholds.heavyHarassmentInsult,
+  ].join(',')
+  return [MODERATION_POLICY_VERSION, modelId, thresholdSignature].join(':')
+}
+
 export function normalizeModerationScores(
   scores: ReadonlyArray<{ label: string; score: number }>,
 ): ModerationScores {
@@ -83,15 +146,18 @@ export function evaluateModerationScores(
   scores: ModerationScores,
   model: string,
 ): ModerationDecision {
+  const thresholds = getModerationThresholds()
   // Ordered from highest-confidence signals to lower — first match wins.
-  const isCredibleThreat    = scores.threat >= 0.60
-  const isIdentityAttack    = scores.identity_hate >= 0.60 && scores.toxic >= 0.45
-  const isSevereAbuse       = scores.severe_toxic >= 0.62
+  const isCredibleThreat    = scores.threat >= thresholds.credibleThreat
+  const isIdentityAttack    = scores.identity_hate >= thresholds.identityAttack && scores.toxic >= thresholds.identityAttackToxic
+  const isSevereAbuse       = scores.severe_toxic >= thresholds.severeAbuse
   // Strong standalone obscenity signal (explicit sexual content in text)
-  const isHighObscene       = scores.obscene >= 0.88
+  const isHighObscene       = scores.obscene >= thresholds.highObscene
   // Moderate obscenity combined with toxicity or insult
-  const isObsceneAbuse      = scores.obscene >= 0.78 && (scores.toxic >= 0.60 || scores.insult >= 0.60)
-  const isHeavyHarassment   = scores.toxic >= 0.85 && scores.insult >= 0.75
+  const isObsceneAbuse      = scores.obscene >= thresholds.obsceneAbuse
+    && (scores.toxic >= thresholds.obsceneAbuseToxicOrInsult || scores.insult >= thresholds.obsceneAbuseToxicOrInsult)
+  const isHeavyHarassment   = scores.toxic >= thresholds.heavyHarassmentToxic
+    && scores.insult >= thresholds.heavyHarassmentInsult
 
   let reason: string | null = null
   if (isCredibleThreat) {

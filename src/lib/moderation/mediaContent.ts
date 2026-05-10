@@ -1,4 +1,5 @@
 import { getMediaAttachmentKind, getMediaAttachmentPreviewUrl, getMediaAttachmentSourceUrl } from '@/lib/nostr/imeta'
+import { getMediaModerationCacheVersion } from '@/lib/moderation/mediaPolicy'
 import { isSafeMediaURL } from '@/lib/security/sanitize'
 import type { MediaModerationDocument, MediaModerationKind, Nip92MediaAttachment } from '@/types'
 
@@ -66,5 +67,9 @@ export function buildAttachmentMediaModerationDocument(
 }
 
 export function getMediaModerationDocumentCacheKey(document: MediaModerationDocument): string {
-  return `${document.updatedAt}:${hashMediaModerationUrl(document.url)}`
+  return [
+    getMediaModerationCacheVersion(),
+    document.updatedAt,
+    hashMediaModerationUrl(document.url),
+  ].join(':')
 }

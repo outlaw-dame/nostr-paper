@@ -3,6 +3,9 @@ import { moderateMediaDocuments } from '@/lib/moderation/mediaClient'
 import { getMediaModerationDocumentCacheKey } from '@/lib/moderation/mediaContent'
 import type { MediaModerationDecision, MediaModerationDocument } from '@/types'
 
+const DEFAULT_MEDIA_FAIL_OPEN_ON_ERROR = import.meta.env.VITE_MEDIA_MODERATION_FAIL_OPEN_ON_ERROR !== 'false'
+const BLOCK_SKIPPED_MEDIA = import.meta.env.VITE_MEDIA_MODERATION_BLOCK_SKIPPED === 'true'
+
 const MEDIA_MODERATION_CACHE_MAX = 500
 const inMemoryMediaModerationCache = new Map<string, MediaModerationDecision>()
 
@@ -35,6 +38,9 @@ function getAllowedIds(
       allowed.add(document.id)
       continue
     }
+
+    // Explicit null-safety: if decision exists and skipped flag + block-skipped config, skip it
+    if (decision && decision.skipped && BLOCK_SKIPPED_MEDIA) continue
 
     if (!decision || decision.action === 'block') continue
     allowed.add(document.id)
@@ -120,19 +126,25 @@ export function useMediaModerationDocuments(
   }, [enabled, signature])
 
   const allowedIds = useMemo(
-    () => getAllowedIds(documents, decisions, !failClosed && error !== null),
+    () => getAllowedIds(documents, decisions, !failClosed && error !== null && DEFAULT_MEDIA_FAIL_OPEN_ON_ERROR),
     [documents, decisions, error, failClosed],
   )
 
   const blockedIds = useMemo(() => {
     const blocked = new Set<string>()
     // Fail-open while loading or on error — only block after a definitive decision
-    const failOpen = !failClosed && (loading || error !== null)
+    const failOpen = !failClosed && (loading || (error !== null && DEFAULT_MEDIA_FAIL_OPEN_ON_ERROR))
 
     for (const document of documents) {
       const decision = decisions.get(document.id)
       if (!decision) {
         if (!failOpen) blocked.add(document.id)
+        continue
+      }
+
+      // Explicit null-safety: validate decision exists before accessing properties
+      if (decision.skipped && BLOCK_SKIPPED_MEDIA) {
+        blocked.add(document.id)
         continue
       }
 

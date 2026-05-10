@@ -271,6 +271,34 @@ async function queryModerationStats() {
     LIMIT 20
   `);
 
+  const sourceCoverage = await db.query<{
+    blocked_by_keyword: string;
+    blocked_by_tagr: string;
+    blocked_by_both: string;
+    blocked_docs: string;
+    drift_docs: string;
+  }>(`
+    WITH source_flags AS (
+      SELECT
+        sd.event_id,
+        sd.moderation_state,
+        EXISTS (SELECT 1 FROM keyword_blocks kb WHERE kb.event_id = sd.event_id) AS by_keyword,
+        EXISTS (SELECT 1 FROM tagr_blocks tb WHERE tb.event_id = sd.event_id) AS by_tagr
+      FROM search_docs sd
+    )
+    SELECT
+      COUNT(*) FILTER (WHERE by_keyword)::text AS blocked_by_keyword,
+      COUNT(*) FILTER (WHERE by_tagr)::text AS blocked_by_tagr,
+      COUNT(*) FILTER (WHERE by_keyword AND by_tagr)::text AS blocked_by_both,
+      COUNT(*) FILTER (WHERE moderation_state = 'blocked')::text AS blocked_docs,
+      COUNT(*) FILTER (
+        WHERE (moderation_state = 'blocked' AND NOT (by_keyword OR by_tagr))
+          OR (moderation_state <> 'blocked' AND (by_keyword OR by_tagr))
+      )::text AS drift_docs
+    FROM source_flags
+  `);
+  const sourceRow = sourceCoverage.rows[0];
+
   return {
     byState: docsResult.rows.map((row) => ({ state: row.moderation_state, count: Number(row.count) })),
     tagrTopReasons: tagrResult.rows.map((row) => ({
@@ -283,6 +311,13 @@ async function queryModerationStats() {
       policyVersion: row.policy_version,
       count: Number(row.count),
     })),
+    sourceCoverage: {
+      blockedByKeyword: Number(sourceRow?.blocked_by_keyword ?? 0),
+      blockedByTagr: Number(sourceRow?.blocked_by_tagr ?? 0),
+      blockedByBoth: Number(sourceRow?.blocked_by_both ?? 0),
+      blockedDocs: Number(sourceRow?.blocked_docs ?? 0),
+      driftDocs: Number(sourceRow?.drift_docs ?? 0),
+    },
   };
 }
 
@@ -415,7 +450,29 @@ async function reconcileModerationState() {
     END
   `);
 
-  return { updatedRows: result.rowCount ?? 0 };
+  const coverage = await db.query<{
+    blocked_by_keyword: string;
+    blocked_by_tagr: string;
+    blocked_by_both: string;
+  }>(`
+    SELECT
+      COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM keyword_blocks kb WHERE kb.event_id = sd.event_id))::text AS blocked_by_keyword,
+      COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM tagr_blocks tb WHERE tb.event_id = sd.event_id))::text AS blocked_by_tagr,
+      COUNT(*) FILTER (
+        WHERE EXISTS (SELECT 1 FROM keyword_blocks kb WHERE kb.event_id = sd.event_id)
+          AND EXISTS (SELECT 1 FROM tagr_blocks tb WHERE tb.event_id = sd.event_id)
+      )::text AS blocked_by_both
+    FROM search_docs sd
+    WHERE sd.moderation_state = 'blocked'
+  `);
+  const coverageRow = coverage.rows[0];
+
+  return {
+    updatedRows: result.rowCount ?? 0,
+    blockedByKeyword: Number(coverageRow?.blocked_by_keyword ?? 0),
+    blockedByTagr: Number(coverageRow?.blocked_by_tagr ?? 0),
+    blockedByBoth: Number(coverageRow?.blocked_by_both ?? 0),
+  };
 }
 
 async function handleOpsRequest(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
@@ -469,7 +526,6 @@ async function handleOpsRequest(req: IncomingMessage, res: ServerResponse): Prom
 const FACT_CHECK_API_KEY = (
   process.env.GOOGLE_FACT_CHECK_API_KEY ??
   process.env.GEMINI_API_KEY ??
-  process.env.VITE_GEMINI_API_KEY ??
   process.env.GOOGLE_API_KEY ??
   ''
 ).trim();

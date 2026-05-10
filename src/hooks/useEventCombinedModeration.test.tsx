@@ -82,8 +82,11 @@ describe('useEventCombinedModeration', () => {
   let container: HTMLDivElement | null = null
   let root: Root | null = null
   let latest: EventCombinedModerationResult | null = null
+  const hasJsdom = typeof document !== 'undefined'
 
   beforeEach(() => {
+    if (!hasJsdom) return
+
     moderationState = {
       blocked: false,
       loading: false,
@@ -109,14 +112,12 @@ describe('useEventCombinedModeration', () => {
   })
 
   afterEach(async () => {
-    if (root) {
-      await act(async () => {
-        root?.unmount()
-      })
-    }
-    container?.remove()
-    root = null
-    container = null
+    if (!hasJsdom || !root || !container) return
+
+    await act(async () => {
+      root!.unmount()
+    })
+    container.remove()
     vi.clearAllMocks()
   })
 

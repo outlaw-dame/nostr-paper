@@ -15,6 +15,19 @@ function resolveTagrBotPubkey(): string {
   return DEFAULT_TAGR_BOT_PUBKEY_HEX
 }
 
+function resolveTrustedTagrPubkeys(): string[] {
+  const fromList = import.meta.env.VITE_TAGR_BOT_PUBKEYS?.trim()
+  const listValues = fromList
+    ? fromList
+      .split(',')
+      .map((value: string) => value.trim().toLowerCase())
+      .filter((value: string) => /^[0-9a-f]{64}$/.test(value))
+    : []
+
+  const merged = [...new Set([resolveTagrBotPubkey(), ...listValues])]
+  return merged.length > 0 ? merged : [DEFAULT_TAGR_BOT_PUBKEY_HEX]
+}
+
 function resolveTagrRelayUrl(): string {
   const fromEnv = import.meta.env.VITE_TAGR_RELAY_URL?.trim()
   if (fromEnv) return fromEnv
@@ -53,7 +66,8 @@ function resolveTagrRelayUrls(): string[] {
   return merged.slice(0, 8)
 }
 
-const TAGR_BOT_PUBKEY_HEX = resolveTagrBotPubkey()
+const TAGR_BOT_PUBKEYS = resolveTrustedTagrPubkeys()
+const TAGR_PRIMARY_BOT_PUBKEY_HEX = TAGR_BOT_PUBKEYS[0] ?? DEFAULT_TAGR_BOT_PUBKEY_HEX
 const TAGR_RELAY_URLS = resolveTagrRelayUrls()
 
 const KNOWN_MODERATION_NAMESPACES = new Set([
@@ -144,7 +158,7 @@ function isLikelyModerationLabel(event: NostrEvent): boolean {
 }
 
 export function isTagrModerationEvent(event: NostrEvent): boolean {
-  if (event.pubkey !== TAGR_BOT_PUBKEY_HEX) return false
+  if (!TAGR_BOT_PUBKEYS.includes(event.pubkey)) return false
 
   if (event.kind === Kind.Report) {
     return event.tags.some((tag) => tag[0] === 'e' || tag[0] === 'p')
@@ -197,7 +211,7 @@ async function syncTagrEvents(
   }
 
   const filter: NostrFilter = {
-    authors: [TAGR_BOT_PUBKEY_HEX],
+    authors: TAGR_BOT_PUBKEYS,
     kinds,
     limit: Math.min(500, Math.max(80, (eventIds.length + profilePubkeys.length) * 3)),
   }
@@ -224,7 +238,7 @@ async function syncTagrEvents(
     if (signal?.aborted) return false
     const raw = ndkEvent.rawEvent() as unknown as NostrEvent
     if (!isValidEvent(raw)) continue
-    if (raw.pubkey !== TAGR_BOT_PUBKEY_HEX) continue
+    if (!TAGR_BOT_PUBKEYS.includes(raw.pubkey)) continue
 
     try {
       await insertEvent(raw)
@@ -241,7 +255,7 @@ async function loadLocalTagrEvents(eventIds: string[], profilePubkeys: string[],
   if (kinds.length === 0) return []
 
   const targetClauses: string[] = []
-  const bind: unknown[] = [TAGR_BOT_PUBKEY_HEX, ...kinds]
+  const bind: unknown[] = [...TAGR_BOT_PUBKEYS, ...kinds]
 
   if (eventIds.length > 0) {
     targetClauses.push(`(t.name = 'e' AND t.value IN (${eventIds.map(() => '?').join(',')}))`)
@@ -259,7 +273,7 @@ async function loadLocalTagrEvents(eventIds: string[], profilePubkeys: string[],
     SELECT DISTINCT e.raw
     FROM events e
     JOIN tags t ON t.event_id = e.id
-    WHERE e.pubkey = ?
+    WHERE e.pubkey IN (${TAGR_BOT_PUBKEYS.map(() => '?').join(',')})
       AND e.kind IN (${kinds.map(() => '?').join(',')})
       AND (${targetClauses.join(' OR ')})
     ORDER BY e.created_at DESC, e.id DESC
@@ -322,7 +336,7 @@ function buildTagrDecisionMap(
         insult: 0,
         identity_hate: 0,
       },
-      model: 'tagr-bot',
+      model: `tagr-bot:${TAGR_PRIMARY_BOT_PUBKEY_HEX.slice(0, 8)}`,
       policyVersion: 'nip-56+nip-32-v1',
     })
   }

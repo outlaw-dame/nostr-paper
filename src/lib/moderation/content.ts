@@ -1,8 +1,10 @@
 import { sanitizeText } from '@/lib/security/sanitize'
+import { getModerationPolicyCacheVersion } from '@/lib/moderation/policy'
 import type { ModerationDocument, NostrEvent, Profile } from '@/types'
 import type { SyndicationEntry, SyndicationFeed } from '@/lib/syndication/types'
 
-const MAX_MODERATION_CHARS = 2_000
+const MAX_MODERATION_CHARS = Math.max(512, Number(import.meta.env.VITE_MODERATION_MAX_CHARS ?? 2_000) || 2_000)
+const MODERATION_TRAILING_CHARS = Math.max(128, Number(import.meta.env.VITE_MODERATION_TRAILING_CHARS ?? 512) || 512)
 const MODERATION_TAG_NAMES = new Set(['title', 'summary', 'subject', 'alt', 'name'])
 const URL_PATTERN = /https?:\/\/\S+/gi
 const NOSTR_URI_PATTERN = /nostr:[a-z0-9]+/gi
@@ -24,7 +26,11 @@ export function normalizeModerationText(value: string): string {
     .trim()
 
   if (sanitized.length <= MAX_MODERATION_CHARS) return sanitized
-  return sanitized.slice(0, MAX_MODERATION_CHARS)
+  // Preserve both the head and tail to reduce blind spots in long-form spam/abuse payloads.
+  const trailingChars = Math.min(MODERATION_TRAILING_CHARS, Math.floor(MAX_MODERATION_CHARS / 2))
+  const leadingChars = Math.max(0, MAX_MODERATION_CHARS - trailingChars - 5)
+  if (leadingChars <= 0) return sanitized.slice(0, MAX_MODERATION_CHARS)
+  return `${sanitized.slice(0, leadingChars)} ... ${sanitized.slice(-trailingChars)}`
 }
 
 function appendUniquePart(parts: string[], rawValue: string | null | undefined): void {
@@ -84,7 +90,13 @@ export function buildProfileModerationDocument(profile: Profile): ModerationDocu
 }
 
 export function getModerationDocumentCacheKey(document: ModerationDocument): string {
-  return `${document.kind}:${document.id}:${document.updatedAt}:${hashModerationText(document.text)}`
+  return [
+    getModerationPolicyCacheVersion(),
+    document.kind,
+    document.id,
+    document.updatedAt,
+    hashModerationText(document.text),
+  ].join(':')
 }
 
 export function buildSyndicationEntryModerationDocument(

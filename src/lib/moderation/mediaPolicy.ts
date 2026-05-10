@@ -4,6 +4,16 @@ export const DEFAULT_MEDIA_NSFW_MODEL_ID = 'onnx-community/nsfw_image_detection-
 export const DEFAULT_MEDIA_VIOLENCE_MODEL_ID = 'onnx-community/vit-base-violence-detection-ONNX'
 export const MEDIA_MODERATION_POLICY_VERSION = 'media-harm-v2'
 
+export interface MediaModerationThresholds {
+  explicitAdultContent: number
+  graphicViolence: number
+}
+
+const DEFAULT_MEDIA_THRESHOLDS: MediaModerationThresholds = {
+  explicitAdultContent: 0.70,
+  graphicViolence: 0.75,
+}
+
 export function emptyMediaModerationScores(): MediaModerationScores {
   return {
     nsfw: 0,
@@ -16,6 +26,34 @@ function clampScore(value: unknown): number {
   if (value <= 0) return 0
   if (value >= 1) return 1
   return value
+}
+
+function readThreshold(name: string, fallback: number): number {
+  const raw = import.meta.env[name]
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed)) return fallback
+  if (parsed < 0 || parsed > 1) return fallback
+  return parsed
+}
+
+export function getMediaModerationThresholds(): MediaModerationThresholds {
+  return {
+    explicitAdultContent: readThreshold('VITE_MEDIA_MODERATION_THRESHOLD_NSFW', DEFAULT_MEDIA_THRESHOLDS.explicitAdultContent),
+    graphicViolence: readThreshold('VITE_MEDIA_MODERATION_THRESHOLD_VIOLENCE', DEFAULT_MEDIA_THRESHOLDS.graphicViolence),
+  }
+}
+
+export function getMediaModerationCacheVersion(): string {
+  const nsfwModel = import.meta.env.VITE_MEDIA_MODERATION_NSFW_MODEL_ID ?? DEFAULT_MEDIA_NSFW_MODEL_ID
+  const violenceModel = import.meta.env.VITE_MEDIA_MODERATION_VIOLENCE_MODEL_ID ?? DEFAULT_MEDIA_VIOLENCE_MODEL_ID
+  const thresholds = getMediaModerationThresholds()
+  return [
+    MEDIA_MODERATION_POLICY_VERSION,
+    nsfwModel,
+    violenceModel,
+    thresholds.explicitAdultContent,
+    thresholds.graphicViolence,
+  ].join(':')
 }
 
 function normalizeLabel(label: string): string {
@@ -75,8 +113,9 @@ export function evaluateMediaModerationScores(
   scores: MediaModerationScores,
   models: { nsfwModel: string | null; violenceModel: string | null },
 ): MediaModerationDecision {
-  const isExplicitAdultContent = scores.nsfw >= 0.70
-  const isGraphicViolence = scores.violence >= 0.75
+  const thresholds = getMediaModerationThresholds()
+  const isExplicitAdultContent = scores.nsfw >= thresholds.explicitAdultContent
+  const isGraphicViolence = scores.violence >= thresholds.graphicViolence
 
   let reason: MediaModerationDecision['reason'] = null
   if (isExplicitAdultContent) {
