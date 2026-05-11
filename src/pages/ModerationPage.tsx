@@ -1,11 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AuthorRow } from '@/components/profile/AuthorRow'
+import { useApp } from '@/contexts/app-context'
 import { useKeywordFilters } from '@/hooks/useKeywordFilters'
 import { useMuteList } from '@/hooks/useMuteList'
 import { useProfile } from '@/hooks/useProfile'
 import { useHideNsfwTaggedPosts } from '@/hooks/useHideNsfwTaggedPosts'
 import { tApp } from '@/lib/i18n/app'
+import {
+  dismissMonthlyReportReviewReminder,
+  generateMonthlyModerationReport,
+  getLatestGeneratedMonthlyReport,
+  getMonthlyStarterPackStats,
+  shouldShowMonthlyReportReviewReminder,
+} from '@/lib/moderation/monthlyReport'
 import { setHideNsfwTaggedPostsEnabled } from '@/lib/moderation/nsfwSettings'
 import {
   MODERATION_WARNING_SOURCES_UPDATED_EVENT,
@@ -13,6 +21,20 @@ import {
   setModerationWarningSourceSettings,
 } from '@/lib/moderation/warningSourceSettings'
 import type { FilterAction, FilterScope, KeywordFilter } from '@/lib/filters/types'
+
+interface StarterPackReportSummary {
+  evaluatedPackCount: number
+  blockedPackAuthorCount: number
+  blockedProfileCount: number
+  lastComputedAt: number | null
+}
+
+interface ModerationMonthlyReportState {
+  monthKey: string
+  generatedAt: number | null
+  reportText: string | null
+  starterPack: StarterPackReportSummary
+}
 
 function getActionLabel(action: FilterAction): string {
   switch (action) {
@@ -46,6 +68,20 @@ function formatExpiry(ts: number): string {
   const hrs = Math.floor(diff / (60 * 60 * 1_000))
   if (hrs > 0) return tApp('moderationHoursLeft', { count: hrs })
   return tApp('moderationExpiringSoon')
+}
+
+function toStarterPackSummary(input: {
+  evaluatedPackCount: number
+  blockedPackAuthorCount: number
+  blockedProfileCount: number
+  lastComputedAt: number | null
+}): StarterPackReportSummary {
+  return {
+    evaluatedPackCount: input.evaluatedPackCount,
+    blockedPackAuthorCount: input.blockedPackAuthorCount,
+    blockedProfileCount: input.blockedProfileCount,
+    lastComputedAt: input.lastComputedAt,
+  }
 }
 
 function FilterItem({ filter }: { filter: KeywordFilter }) {
@@ -106,11 +142,25 @@ function MutedUserRow({
 
 export default function ModerationPage() {
   const navigate = useNavigate()
+  const { currentUser } = useApp()
   const { filters, loading: filtersLoading } = useKeywordFilters()
   const { mutedPubkeys, loading: muteListLoading, unmute } = useMuteList()
   const hideNsfwTaggedPosts = useHideNsfwTaggedPosts()
   const [warningSources, setWarningSources] = useState(() => getModerationWarningSourceSettings())
   const [busyPubkeys, setBusyPubkeys] = useState<Set<string>>(new Set())
+  const [reportCopied, setReportCopied] = useState(false)
+  const [autoReportNotice, setAutoReportNotice] = useState<string | null>(null)
+  const [reportState, setReportState] = useState<ModerationMonthlyReportState>(() => {
+    const scopeId = currentUser?.pubkey ?? 'anon'
+    const latest = getLatestGeneratedMonthlyReport(scopeId)
+    const starterPack = getMonthlyStarterPackStats(scopeId)
+    return {
+      monthKey: latest.monthKey,
+      generatedAt: latest.generatedAt,
+      reportText: latest.reportText,
+      starterPack: toStarterPackSummary(starterPack),
+    }
+  })
 
   useEffect(() => {
     const refresh = () => setWarningSources(getModerationWarningSourceSettings())
@@ -118,6 +168,24 @@ export default function ModerationPage() {
     window.addEventListener(MODERATION_WARNING_SOURCES_UPDATED_EVENT, handleUpdated)
     return () => window.removeEventListener(MODERATION_WARNING_SOURCES_UPDATED_EVENT, handleUpdated)
   }, [])
+
+  useEffect(() => {
+    const scopeId = currentUser?.pubkey ?? 'anon'
+    const latest = getLatestGeneratedMonthlyReport(scopeId)
+    const starterPack = getMonthlyStarterPackStats(scopeId)
+    setReportState({
+      monthKey: latest.monthKey,
+      generatedAt: latest.generatedAt,
+      reportText: latest.reportText,
+      starterPack: toStarterPackSummary(starterPack),
+    })
+
+    if (shouldShowMonthlyReportReviewReminder(scopeId, latest.monthKey)) {
+      setAutoReportNotice('AI generated your first monthly moderation report. Please check it below.')
+    } else {
+      setAutoReportNotice(null)
+    }
+  }, [currentUser?.pubkey])
 
   const mutedList = useMemo(() => Array.from(mutedPubkeys), [mutedPubkeys])
 
@@ -136,6 +204,46 @@ export default function ModerationPage() {
     [filters],
   )
 
+  useEffect(() => {
+    if (filtersLoading || muteListLoading) return
+
+    const scopeId = currentUser?.pubkey ?? 'anon'
+    const latest = getLatestGeneratedMonthlyReport(scopeId)
+    if (latest.generatedAt !== null && latest.reportText) {
+      if (shouldShowMonthlyReportReviewReminder(scopeId, latest.monthKey)) {
+        setAutoReportNotice('AI generated your first monthly moderation report. Please check it below.')
+      }
+      return
+    }
+
+    const generated = generateMonthlyModerationReport({
+      scopeId,
+      activeFilterCount,
+      totalFilterCount: sortedFilters.length,
+      mutedUsersCount: mutedList.length,
+      hideNsfwTaggedPostsEnabled: hideNsfwTaggedPosts,
+      warningSources,
+    })
+
+    setReportCopied(false)
+    setReportState({
+      monthKey: generated.monthKey,
+      generatedAt: generated.generatedAt,
+      reportText: generated.reportText,
+      starterPack: toStarterPackSummary(generated.starterPack),
+    })
+    setAutoReportNotice('AI generated your first monthly moderation report. Please check it below.')
+  }, [
+    activeFilterCount,
+    currentUser?.pubkey,
+    filtersLoading,
+    hideNsfwTaggedPosts,
+    warningSources,
+    muteListLoading,
+    mutedList.length,
+    sortedFilters.length,
+  ])
+
   async function handleUnmute(pubkey: string): Promise<void> {
     setBusyPubkeys((prev) => new Set(prev).add(pubkey))
     try {
@@ -149,6 +257,48 @@ export default function ModerationPage() {
         next.delete(pubkey)
         return next
       })
+    }
+  }
+
+  function handleGenerateMonthlyReport(): void {
+    const scopeId = currentUser?.pubkey ?? 'anon'
+    const generated = generateMonthlyModerationReport({
+      scopeId,
+      activeFilterCount,
+      totalFilterCount: sortedFilters.length,
+      mutedUsersCount: mutedList.length,
+      hideNsfwTaggedPostsEnabled: hideNsfwTaggedPosts,
+      warningSources,
+    })
+
+    setReportCopied(false)
+    setReportState({
+      monthKey: generated.monthKey,
+      generatedAt: generated.generatedAt,
+      reportText: generated.reportText,
+      starterPack: toStarterPackSummary(generated.starterPack),
+    })
+
+    if (shouldShowMonthlyReportReviewReminder(scopeId, generated.monthKey)) {
+      setAutoReportNotice('AI generated your first monthly moderation report. Please check it below.')
+    }
+  }
+
+  function handleDismissMonthlyReportNotice(): void {
+    const scopeId = currentUser?.pubkey ?? 'anon'
+    dismissMonthlyReportReviewReminder(scopeId, reportState.monthKey)
+    setAutoReportNotice(null)
+  }
+
+  async function handleCopyMonthlyReport(): Promise<void> {
+    if (!reportState.reportText) return
+
+    try {
+      await navigator.clipboard.writeText(reportState.reportText)
+      setReportCopied(true)
+      window.setTimeout(() => setReportCopied(false), 2_000)
+    } catch {
+      setReportCopied(false)
     }
   }
 
@@ -377,6 +527,64 @@ export default function ModerationPage() {
             <p className="text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
               {tApp('moderationAutomaticSummary')}
             </p>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="section-kicker px-1 mb-3">Monthly moderation report</h2>
+          <div className="app-panel rounded-ios-xl p-4 card-elevated space-y-4">
+            {autoReportNotice && (
+              <div className="flex items-start justify-between gap-3 rounded-[14px] border border-[rgb(var(--color-system-yellow)/0.45)] bg-[rgb(var(--color-system-yellow)/0.12)] px-3 py-2.5">
+                <p className="text-[13px] leading-5 text-[rgb(var(--color-label))]">{autoReportNotice}</p>
+                <button
+                  type="button"
+                  onClick={handleDismissMonthlyReportNotice}
+                  className="shrink-0 rounded-full border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] px-2.5 py-1 text-[12px] font-medium text-[rgb(var(--color-label-secondary))] transition-opacity active:opacity-75"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            <p className="text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
+              Generate a comprehensive monthly report from your current moderation settings and starter pack filtering impact.
+            </p>
+
+            <div className="rounded-[14px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[13px] text-[rgb(var(--color-label-secondary))] space-y-1">
+              <p>Month: {reportState.monthKey}</p>
+              <p>
+                Last generated:{' '}
+                {reportState.generatedAt ? new Date(reportState.generatedAt).toLocaleString() : 'Not generated yet'}
+              </p>
+              <p>Starter packs evaluated: {reportState.starterPack.evaluatedPackCount}</p>
+              <p>Pack authors filtered: {reportState.starterPack.blockedPackAuthorCount}</p>
+              <p>Pack member accounts filtered: {reportState.starterPack.blockedProfileCount}</p>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleGenerateMonthlyReport}
+                className="rounded-[14px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg))] px-4 py-2 text-[14px] font-medium text-[rgb(var(--color-label))] transition-opacity active:opacity-75"
+              >
+                Generate monthly report
+              </button>
+
+              <button
+                type="button"
+                disabled={!reportState.reportText}
+                onClick={() => void handleCopyMonthlyReport()}
+                className="rounded-[14px] border border-[rgb(var(--color-fill)/0.2)] bg-[rgb(var(--color-bg-secondary))] px-4 py-2 text-[14px] font-medium text-[rgb(var(--color-label))] transition-opacity active:opacity-75 disabled:opacity-50"
+              >
+                {reportCopied ? 'Copied' : 'Copy report'}
+              </button>
+            </div>
+
+            {reportState.reportText && (
+              <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-[14px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] px-3 py-2.5 text-[12px] leading-6 text-[rgb(var(--color-label-secondary))]">
+                {reportState.reportText}
+              </pre>
+            )}
           </div>
         </section>
       </div>

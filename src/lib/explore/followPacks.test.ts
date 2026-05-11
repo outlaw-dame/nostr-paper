@@ -115,6 +115,62 @@ describe('followPacks helpers', () => {
     expect(getExploreFollowPackSummary(media!)).toBe('1 media-focused profile to follow together.')
   })
 
+  it('treats follow sets as compatible follow packs in discovery', () => {
+    const followSet = makePackEvent({
+      idSeed: '3',
+      pubkeySeed: 'f',
+      identifier: 'community-builders',
+      createdAt: 30,
+      kind: Kind.FollowSet,
+      profiles: [{ pubkeySeed: 'a' }, { pubkeySeed: 'b' }],
+    })
+
+    const candidates = buildExploreFollowPackCandidates([followSet])
+    expect(candidates).toHaveLength(1)
+    expect(candidates[0]?.parsed.kind).toBe(Kind.FollowSet)
+    expect(getExploreFollowPackSummary(candidates[0]!.parsed)).toBe('2 profiles to follow together.')
+  })
+
+  it('caps extracted follow-pack profiles to a safe upper bound', () => {
+    const parsed = parseNip51ListEvent({
+      id: '4'.repeat(64),
+      pubkey: makePubkey('a'),
+      created_at: 40,
+      kind: Kind.StarterPack,
+      tags: [
+        ['d', 'oversized-pack'],
+        ...Array.from({ length: 140 }, (_, index) => [
+          'p',
+          index.toString(16).padStart(64, '0').slice(-64),
+        ]),
+      ],
+      content: '',
+      sig: 'f'.repeat(128),
+    })
+
+    expect(parsed).not.toBeNull()
+    expect(extractFollowPackProfiles(parsed!)).toHaveLength(128)
+  })
+
+  it('does not present legacy mute follow-sets as follow-pack summaries', () => {
+    const parsed = parseNip51ListEvent({
+      id: 'f'.repeat(64),
+      pubkey: makePubkey('a'),
+      created_at: 1_700_000_000,
+      kind: Kind.FollowSet,
+      tags: [
+        ['d', 'mute'],
+        ['p', makePubkey('b')],
+        ['word', 'spoiler'],
+      ],
+      content: '',
+      sig: 'e'.repeat(128),
+    })
+
+    expect(parsed).not.toBeNull()
+    expect(getExploreFollowPackSummary(parsed!)).toBe('2 public items.')
+  })
+
   it('ranks packs by what is new to you and skips muted or self targets', () => {
     const currentUserPubkey = makePubkey('9')
     const preferred = buildExploreFollowPackCandidates([
@@ -167,5 +223,93 @@ describe('followPacks helpers', () => {
       makePubkey('f'),
     ])
     expect(ranked[1]?.reason).toBe('2 already in your network')
+  })
+
+  it('skips blocked pack authors and blocked profile targets', () => {
+    const blockedAuthor = makePubkey('a')
+    const blockedProfile = makePubkey('c')
+
+    const candidates = buildExploreFollowPackCandidates([
+      makePackEvent({
+        idSeed: '1',
+        pubkeySeed: 'a',
+        identifier: 'blocked-author',
+        createdAt: 100,
+        profiles: [{ pubkeySeed: 'b' }],
+      }),
+      makePackEvent({
+        idSeed: '2',
+        pubkeySeed: 'd',
+        identifier: 'mixed-members',
+        createdAt: 120,
+        profiles: [{ pubkeySeed: 'b' }, { pubkeySeed: 'c' }, { pubkeySeed: 'e' }],
+      }),
+    ])
+
+    const ranked = rankExploreFollowPacks(candidates, {
+      isBlockedProfile: (pubkey) => pubkey === blockedAuthor || pubkey === blockedProfile,
+    })
+
+    expect(ranked).toHaveLength(1)
+    expect(ranked[0]?.parsed.identifier).toBe('mixed-members')
+    expect(ranked[0]?.profiles.map((profile) => profile.pubkey)).toEqual([
+      makePubkey('b'),
+      makePubkey('c'),
+      makePubkey('e'),
+    ])
+    expect(ranked[0]?.missingProfiles.map((profile) => profile.pubkey)).toEqual([
+      makePubkey('b'),
+      makePubkey('e'),
+    ])
+  })
+
+  it('ignores malformed profile tags and keeps valid targets only', () => {
+    const malformedAndValid: NostrEvent = {
+      id: '6'.repeat(64),
+      pubkey: makePubkey('a'),
+      created_at: 200,
+      kind: Kind.StarterPack,
+      tags: [
+        ['d', 'mixed-quality'],
+        ['p', 'not-a-pubkey'],
+        ['p', makePubkey('b')],
+        ['p', ''],
+      ],
+      content: '',
+      sig: 'f'.repeat(128),
+    }
+
+    const candidates = buildExploreFollowPackCandidates([malformedAndValid])
+    expect(candidates).toHaveLength(1)
+    expect(candidates[0]?.profiles).toEqual([{ pubkey: makePubkey('b') }])
+  })
+
+  it('handles large candidate batches deterministically with ranking limits', () => {
+    const now = Math.floor(Date.now() / 1000)
+    const bulk: NostrEvent[] = Array.from({ length: 300 }, (_, index) => {
+      const idSeed = (index % 16).toString(16)
+      const pubkeySeed = ((index % 15) + 1).toString(16)
+      return makePackEvent({
+        idSeed,
+        pubkeySeed,
+        identifier: `pack-${index % 30}`,
+        createdAt: now - index,
+        profiles: [
+          { pubkeySeed: 'a' },
+          { pubkeySeed: 'b' },
+          { pubkeySeed: 'c' },
+        ],
+      })
+    })
+
+    const candidates = buildExploreFollowPackCandidates(bulk)
+    const ranked = rankExploreFollowPacks(candidates, {
+      followedPubkeys: new Set([makePubkey('a')]),
+      limit: 5,
+    })
+
+    expect(ranked).toHaveLength(5)
+    expect(candidates.length).toBeLessThanOrEqual(300)
+    expect(ranked.every((item) => item.missingProfiles.length <= item.totalProfiles)).toBe(true)
   })
 })

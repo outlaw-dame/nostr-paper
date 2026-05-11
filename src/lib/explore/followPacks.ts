@@ -1,6 +1,7 @@
 import type { NDKFilter } from '@nostr-dev-kit/ndk'
 import { getLatestAddressableEvent, insertEvent, queryEvents } from '@/lib/db/nostr'
 import {
+  isNip51ProfilePackKind,
   parseNip51ListEvent,
   type ParsedNip51ListEvent,
 } from '@/lib/nostr/lists'
@@ -12,10 +13,12 @@ import { Kind } from '@/types'
 const FOLLOW_PACK_FETCH_LIMIT = 24
 const FOLLOW_PACK_LOCAL_MULTIPLIER = 4
 const FOLLOW_PACK_PREVIEW_LIMIT = 3
+const FOLLOW_PACK_MAX_PROFILES_PER_PACK = 128
+const PUBKEY_HEX_32_PATTERN = /^[0-9a-f]{64}$/i
 
 const EMPTY_PUBKEY_SET = new Set<string>()
 
-export const FOLLOW_PACK_KINDS = [Kind.StarterPack, Kind.MediaStarterPack] as const
+export const FOLLOW_PACK_KINDS = [Kind.FollowSet, Kind.StarterPack, Kind.MediaStarterPack] as const
 
 export interface FollowPackProfileEntry {
   pubkey: string
@@ -42,18 +45,27 @@ export interface RankedExploreFollowPack extends ExploreFollowPackCandidate {
 }
 
 export function getExploreFollowPackLabel(kind: number): string {
+  if (kind === Kind.FollowSet) return 'Follow Pack'
   return kind === Kind.MediaStarterPack ? 'Media Pack' : 'Starter Pack'
 }
 
 export function getExploreFollowPackSummary(parsed: ParsedNip51ListEvent): string {
   if (parsed.description) return parsed.description
 
-  const itemCount = parsed.publicItems.filter((item) => item.tagName === 'p').length
-  if (parsed.kind === Kind.MediaStarterPack) {
-    return `${itemCount} media-focused profile${itemCount === 1 ? '' : 's'} to follow together.`
+  const profileCount = parsed.publicItems.filter((item) => item.tagName === 'p').length
+  if (!isNip51ProfilePackKind(parsed.kind, parsed.identifier)) {
+    const itemCount = parsed.publicItems.length
+    return `${itemCount} public item${itemCount === 1 ? '' : 's'}.`
   }
 
-  return `${itemCount} profile${itemCount === 1 ? '' : 's'} to follow together.`
+  if (parsed.kind === Kind.FollowSet) {
+    return `${profileCount} profile${profileCount === 1 ? '' : 's'} to follow together.`
+  }
+  if (parsed.kind === Kind.MediaStarterPack) {
+    return `${profileCount} media-focused profile${profileCount === 1 ? '' : 's'} to follow together.`
+  }
+
+  return `${profileCount} profile${profileCount === 1 ? '' : 's'} to follow together.`
 }
 
 function compareEventsByRecency(left: { createdAt: number; id: string }, right: { createdAt: number; id: string }): number {
@@ -65,8 +77,10 @@ export function extractFollowPackProfiles(parsed: ParsedNip51ListEvent): FollowP
   const deduped = new Map<string, FollowPackProfileEntry>()
 
   for (const item of parsed.publicItems) {
+    if (deduped.size >= FOLLOW_PACK_MAX_PROFILES_PER_PACK) break
     if (item.tagName !== 'p') continue
-    const pubkey = item.values[0]
+    const pubkey = (item.values[0] ?? '').trim()
+    if (!PUBKEY_HEX_32_PATTERN.test(pubkey)) continue
     if (!pubkey || deduped.has(pubkey)) continue
     deduped.set(pubkey, {
       pubkey,
@@ -84,6 +98,7 @@ export function buildExploreFollowPackCandidates(events: NostrEvent[]): ExploreF
     .map((event) => {
       const parsed = parseNip51ListEvent(event)
       if (!parsed) return null
+      if (!isNip51ProfilePackKind(parsed.kind, parsed.identifier)) return null
 
       const profiles = extractFollowPackProfiles(parsed)
       if (profiles.length === 0) return null
@@ -204,20 +219,23 @@ export function rankExploreFollowPacks(
     currentUserPubkey?: string | null
     followedPubkeys?: ReadonlySet<string>
     isMuted?: (pubkey: string) => boolean
+    isBlockedProfile?: (pubkey: string) => boolean
     limit?: number
   } = {},
 ): RankedExploreFollowPack[] {
   const followedPubkeys = options.followedPubkeys ?? EMPTY_PUBKEY_SET
   const isMuted = options.isMuted ?? (() => false)
+  const isBlockedProfile = options.isBlockedProfile ?? (() => false)
   const currentUserPubkey = options.currentUserPubkey ?? null
   const limit = options.limit ?? candidates.length
 
   return candidates
     .filter((candidate) => candidate.parsed.pubkey !== currentUserPubkey)
     .filter((candidate) => !isMuted(candidate.parsed.pubkey))
+    .filter((candidate) => !isBlockedProfile(candidate.parsed.pubkey))
     .map((candidate) => {
       const eligibleProfiles = candidate.profiles.filter((profile) =>
-        profile.pubkey !== currentUserPubkey && !isMuted(profile.pubkey),
+        profile.pubkey !== currentUserPubkey && !isMuted(profile.pubkey) && !isBlockedProfile(profile.pubkey),
       )
 
       if (eligibleProfiles.length === 0) return null

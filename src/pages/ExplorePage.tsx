@@ -40,6 +40,7 @@ import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { useRuntimeFeatureFlags } from '@/hooks/useRuntimeFeatureFlags'
 import { TrendingLinkCard } from '@/components/links/TrendingLinkCard'
 import { NewsBlindspotPanel } from '@/components/explore/NewsBlindspotPanel'
+import { getProfiles } from '@/lib/db/nostr'
 import type { TrendingLinkStat } from '@/lib/explore/trendingLinks'
 import {
   getExploreFollowPackLabel,
@@ -55,6 +56,7 @@ import {
   buildEventModerationDocument,
   buildProfileModerationDocument,
 } from '@/lib/moderation/content'
+import { recordStarterPackModerationStats } from '@/lib/moderation/monthlyReport'
 import { filterNsfwTaggedEvents } from '@/lib/moderation/nsfwTags'
 import { formatNip05Identifier } from '@/lib/nostr/nip05'
 import { parsePollEvent } from '@/lib/nostr/polls'
@@ -81,6 +83,12 @@ const SEARCHABLE_KINDS = [
   Kind.AddressableShortVideo,
 ]
 
+const EMPTY_FILTER_RESULT: FilterCheckResult = {
+  action: null,
+  matches: [],
+}
+const FOLLOW_PACK_ACCOUNT_PROFILE_LOOKUP_LIMIT = 256
+
 export default function ExplorePage() {
   const flags = useRuntimeFeatureFlags()
   const { currentUser } = useApp()
@@ -89,6 +97,7 @@ export default function ExplorePage() {
   const queryParam = searchParams.get('q') ?? ''
   const previousQueryParamRef = useRef(queryParam)
   const [followedPubkeys, setFollowedPubkeys] = useState<Set<string>>(new Set())
+  const [followPackAccountProfiles, setFollowPackAccountProfiles] = useState<Map<string, Profile>>(new Map())
 
   // Pre-warm relay connections so first search is fast
   useEffect(() => { warmSearchRelays() }, [])
@@ -181,12 +190,140 @@ export default function ExplorePage() {
     () => new Set(followPackModerationDocuments.map((document) => document.id)),
     [followPackModerationDocuments],
   )
+  const followPackAccountModerationDocuments = useMemo(
+    () => [...followPackAccountProfiles.values()]
+      .map((profile) => buildProfileModerationDocument(profile))
+      .filter((d): d is NonNullable<typeof d> => d !== null),
+    [followPackAccountProfiles],
+  )
+  const followPackAccountModerationIds = useMemo(
+    () => new Set(followPackAccountModerationDocuments.map((document) => document.id)),
+    [followPackAccountModerationDocuments],
+  )
 
   const { allowedIds: allowedEventIds } = useModerationDocuments(eventModerationDocuments)
   const { allowedIds: allowedProfileIds } = useModerationDocuments(profileModerationDocuments)
   const {
     allowedIds: allowedFollowPackIds,
   } = useModerationDocuments(followPackModerationDocuments)
+  const {
+    allowedIds: allowedFollowPackAccountProfileIds,
+  } = useModerationDocuments(followPackAccountModerationDocuments)
+
+  useEffect(() => {
+    if (!currentUser?.pubkey || followPackCandidates.length === 0) {
+      setFollowPackAccountProfiles(new Map())
+      return
+    }
+
+    const pubkeys = new Set<string>()
+    for (const candidate of followPackCandidates) {
+      pubkeys.add(candidate.parsed.pubkey)
+      for (const profile of candidate.profiles) {
+        pubkeys.add(profile.pubkey)
+      }
+    }
+
+    if (pubkeys.size === 0) {
+      setFollowPackAccountProfiles(new Map())
+      return
+    }
+
+    const controller = new AbortController()
+    void getProfiles([...pubkeys].slice(0, FOLLOW_PACK_ACCOUNT_PROFILE_LOOKUP_LIMIT))
+      .then((profilesMap) => {
+        if (controller.signal.aborted) return
+        setFollowPackAccountProfiles(profilesMap)
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return
+        // Preserve the previous snapshot so transient fetch failures do not
+        // temporarily unhide previously blocked pack accounts.
+      })
+
+    return () => controller.abort()
+  }, [currentUser?.pubkey, followPackCandidates])
+
+  const followPackSemanticProfileEvents = useMemo(
+    () => {
+      if (!currentUser?.pubkey) return []
+
+      return [...followPackAccountProfiles.values()].map((profile) => ({
+        id: profile.pubkey,
+        pubkey: profile.pubkey,
+        created_at: 0,
+        kind: Kind.ShortNote,
+        tags: [
+          ...(profile.display_name || profile.name ? [['title', profile.display_name ?? profile.name ?? '']] : []),
+          ...(profile.nip05 ? [['summary', profile.nip05]] : []),
+        ],
+        content: profile.about ?? '',
+        sig: '',
+      }))
+    },
+    [currentUser?.pubkey, followPackAccountProfiles],
+  )
+  const followPackSemanticProfileFilterResults = useSemanticFiltering(followPackSemanticProfileEvents)
+  const blockedFollowPackPubkeys = useMemo(
+    () => {
+      if (!currentUser?.pubkey) return new Set<string>()
+
+      const blocked = new Set<string>()
+
+      for (const profile of followPackAccountProfiles.values()) {
+        if (
+          followPackAccountModerationIds.has(profile.pubkey)
+          && !allowedFollowPackAccountProfileIds.has(profile.pubkey)
+        ) {
+          blocked.add(profile.pubkey)
+          continue
+        }
+
+        const textResult = checkProfile(profile)
+        const semanticResult = followPackSemanticProfileFilterResults.get(profile.pubkey) ?? EMPTY_FILTER_RESULT
+        const combinedResult = mergeResults(textResult, semanticResult)
+
+        if (combinedResult.action === 'block' || combinedResult.action === 'hide') {
+          blocked.add(profile.pubkey)
+        }
+      }
+
+      return blocked
+    },
+    [
+      allowedFollowPackAccountProfileIds,
+      checkProfile,
+      currentUser?.pubkey,
+      followPackAccountModerationIds,
+      followPackAccountProfiles,
+      followPackSemanticProfileFilterResults,
+    ],
+  )
+
+  useEffect(() => {
+    if (!currentUser?.pubkey || followPackCandidates.length === 0) return
+
+    const candidatePackIds = followPackCandidates.map((candidate) => candidate.parsed.id)
+    const blockedAuthorPackIds = followPackCandidates
+      .filter((candidate) => blockedFollowPackPubkeys.has(candidate.parsed.pubkey))
+      .map((candidate) => candidate.parsed.id)
+
+    const blockedProfilePubkeys = new Set<string>()
+    for (const candidate of followPackCandidates) {
+      for (const profile of candidate.profiles) {
+        if (blockedFollowPackPubkeys.has(profile.pubkey)) {
+          blockedProfilePubkeys.add(profile.pubkey)
+        }
+      }
+    }
+
+    recordStarterPackModerationStats({
+      scopeId: currentUser.pubkey,
+      candidatePackIds,
+      blockedAuthorPackIds,
+      blockedProfilePubkeys: [...blockedProfilePubkeys],
+    })
+  }, [blockedFollowPackPubkeys, currentUser?.pubkey, followPackCandidates])
 
   const visibleEvents = useMemo(
     () => filterNsfwTaggedEvents(
@@ -236,10 +373,19 @@ export default function ExplorePage() {
         currentUserPubkey: currentUser?.pubkey ?? null,
         followedPubkeys,
         isMuted,
+        isBlockedProfile: (pubkey) => blockedFollowPackPubkeys.has(pubkey),
         limit: 6,
       },
     ),
-    [allowedFollowPackIds, currentUser?.pubkey, followPackCandidates, followPackModerationIds, followedPubkeys, isMuted],
+    [
+      allowedFollowPackIds,
+      blockedFollowPackPubkeys,
+      currentUser?.pubkey,
+      followPackCandidates,
+      followPackModerationIds,
+      followedPubkeys,
+      isMuted,
+    ],
   )
   const {
     packs: semanticFollowPacks,

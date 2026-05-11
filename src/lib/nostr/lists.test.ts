@@ -2,6 +2,7 @@ import {
   canBookmarkEvent,
   getNip51ListPreviewText,
   isEventInBookmarkList,
+  normalizeNip51PublishTarget,
   parseNip51ListEvent,
 } from './lists'
 import { Kind, type NostrEvent } from '@/types'
@@ -151,6 +152,39 @@ describe('parseNip51ListEvent', () => {
 
     expect(getNip51ListPreviewText(event)).toBe('Media Starter Pack with 1 media-focused profile to follow together.')
   })
+
+  it('parses deprecated bookmark list sets on kind 30001 for interoperability', () => {
+    const event = baseEvent({
+      kind: Kind.DeprecatedListSet,
+      tags: [
+        ['d', 'bookmark'],
+        ['e', '1'.repeat(64)],
+        ['a', `${Kind.LongFormContent}:${'2'.repeat(64)}:essay`],
+      ],
+    })
+
+    expect(parseNip51ListEvent(event)).toEqual(expect.objectContaining({
+      kind: Kind.DeprecatedListSet,
+      identifier: 'bookmark',
+      publicItems: [
+        { tagName: 'e', values: ['1'.repeat(64)] },
+        { tagName: 'a', values: [`${Kind.LongFormContent}:${'2'.repeat(64)}:essay`] },
+      ],
+    }))
+  })
+
+  it('does not treat follow-set mute compatibility events as follow packs', () => {
+    const event = baseEvent({
+      kind: Kind.FollowSet,
+      tags: [
+        ['d', 'mute'],
+        ['p', '4'.repeat(64)],
+        ['word', 'spoiler'],
+      ],
+    })
+
+    expect(getNip51ListPreviewText(event)).toBe('Legacy Mute Set with 2 public items.')
+  })
 })
 
 describe('bookmark helpers', () => {
@@ -196,5 +230,41 @@ describe('bookmark helpers', () => {
 
     expect(isEventInBookmarkList(note, bookmarkList)).toBe(true)
     expect(isEventInBookmarkList(article, bookmarkList)).toBe(true)
+  })
+})
+
+describe('normalizeNip51PublishTarget', () => {
+  it('maps legacy 30001 identifiers to modern canonical list kinds', () => {
+    expect(normalizeNip51PublishTarget(Kind.DeprecatedListSet, 'pin')).toEqual({
+      kind: Kind.PinnedNotes,
+    })
+    expect(normalizeNip51PublishTarget(Kind.DeprecatedListSet, 'bookmark')).toEqual({
+      kind: Kind.Bookmarks,
+    })
+    expect(normalizeNip51PublishTarget(Kind.DeprecatedListSet, 'communities')).toEqual({
+      kind: Kind.CommunitiesList,
+    })
+  })
+
+  it('normalizes legacy identifiers before compatibility mapping', () => {
+    expect(normalizeNip51PublishTarget(Kind.DeprecatedListSet, '  BOOKMARK  ')).toEqual({
+      kind: Kind.Bookmarks,
+    })
+    expect(normalizeNip51PublishTarget(Kind.FollowSet, ' MUTE ')).toEqual({
+      kind: Kind.MuteList,
+    })
+  })
+
+  it('maps legacy follow-set mute compatibility events to mute list kind', () => {
+    expect(normalizeNip51PublishTarget(Kind.FollowSet, 'mute')).toEqual({
+      kind: Kind.MuteList,
+    })
+  })
+
+  it('passes through non-legacy kinds untouched', () => {
+    expect(normalizeNip51PublishTarget(Kind.StarterPack, 'onboarding')).toEqual({
+      kind: Kind.StarterPack,
+      identifier: 'onboarding',
+    })
   })
 })

@@ -38,6 +38,15 @@ const MAX_PRIVATE_ITEMS = 512
 const LIST_TAG_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/i
 const LIST_RESERVED_TAGS = new Set(['d', 'title', 'image', 'description', 'client'])
 const TAG_NAMES_SIMPLE_GROUPS = ['group', 'r'] as const
+const LEGACY_FOLLOW_SET_MUTE_IDENTIFIER = 'mute'
+const LEGACY_LIST_SET_PIN_IDENTIFIER = 'pin'
+const LEGACY_LIST_SET_BOOKMARK_IDENTIFIER = 'bookmark'
+const LEGACY_LIST_SET_COMMUNITIES_IDENTIFIER = 'communities'
+
+interface Nip51PublishTarget {
+  kind: number
+  identifier?: string
+}
 
 export interface Nip51ListDefinition {
   kind: number
@@ -214,6 +223,14 @@ const NIP51_LIST_DEFINITIONS: Nip51ListDefinition[] = [
     description: 'Categorized set of followed profiles.',
     addressable: true,
     expectedTagNames: ['p'],
+    identifierRule: 'required',
+  },
+  {
+    kind: Kind.DeprecatedListSet,
+    name: 'Legacy List Set',
+    description: 'Compatibility parser for deprecated NIP-51 list categories.',
+    addressable: true,
+    expectedTagNames: ['e', 'a'],
     identifierRule: 'required',
   },
   {
@@ -523,8 +540,25 @@ function isAllowedAddressItemForDefinition(
 function isAllowedListItemForDefinition(
   definition: Nip51ListDefinition,
   item: Nip51ListItem,
+  identifier?: string,
 ): boolean {
-  if (!definition.expectedTagNames.includes(item.tagName)) return false
+  let expectedTagNames = definition.expectedTagNames
+
+  if (definition.kind === Kind.FollowSet && identifier === LEGACY_FOLLOW_SET_MUTE_IDENTIFIER) {
+    expectedTagNames = ['p', 't', 'word', 'e']
+  }
+
+  if (definition.kind === Kind.DeprecatedListSet) {
+    if (identifier === LEGACY_LIST_SET_PIN_IDENTIFIER) {
+      expectedTagNames = ['e']
+    } else if (identifier === LEGACY_LIST_SET_BOOKMARK_IDENTIFIER) {
+      expectedTagNames = ['e', 'a']
+    } else if (identifier === LEGACY_LIST_SET_COMMUNITIES_IDENTIFIER) {
+      expectedTagNames = ['a']
+    }
+  }
+
+  if (!expectedTagNames.includes(item.tagName)) return false
   return isAllowedAddressItemForDefinition(definition, item)
 }
 
@@ -578,13 +612,13 @@ function getListIdentifier(event: NostrEvent, definition: Nip51ListDefinition): 
   return undefined
 }
 
-function parsePublicItems(event: NostrEvent, definition: Nip51ListDefinition): Nip51ListItem[] {
+function parsePublicItems(event: NostrEvent, definition: Nip51ListDefinition, identifier?: string): Nip51ListItem[] {
   const items: Nip51ListItem[] = []
 
   for (const tag of event.tags) {
     const item = parseListItemTag(tag)
     if (!item) continue
-    if (!isAllowedListItemForDefinition(definition, item)) continue
+    if (!isAllowedListItemForDefinition(definition, item, identifier)) continue
     items.push(item)
     if (items.length >= MAX_PUBLIC_ITEMS) break
   }
@@ -595,6 +629,7 @@ function parsePublicItems(event: NostrEvent, definition: Nip51ListDefinition): N
 function parsePrivateItemsPayload(
   payload: string,
   definition: Nip51ListDefinition,
+  identifier?: string,
 ): Nip51ListItem[] | null {
   let parsed: unknown
   try {
@@ -613,7 +648,7 @@ function parsePrivateItemsPayload(
 
     const item = parseListItemTag(rawTag as string[])
     if (!item) continue
-    if (!isAllowedListItemForDefinition(definition, item)) continue
+    if (!isAllowedListItemForDefinition(definition, item, identifier)) continue
     items.push({ ...item, isPrivate: true })
     if (items.length >= MAX_PRIVATE_ITEMS) break
   }
@@ -653,10 +688,45 @@ export function getNip51ListLabel(kind: number): string {
   return getListDefinition(kind)?.name ?? `Kind ${kind} List`
 }
 
-export function isNip51ProfilePackKind(kind: number): boolean {
+export function isNip51ProfilePackKind(kind: number, identifier?: string): boolean {
+  if (kind === Kind.FollowSet && identifier === LEGACY_FOLLOW_SET_MUTE_IDENTIFIER) {
+    return false
+  }
+
   return kind === Kind.FollowSet
     || kind === Kind.StarterPack
     || kind === Kind.MediaStarterPack
+}
+
+export function normalizeNip51PublishTarget(
+  kind: number,
+  identifier?: string,
+): Nip51PublishTarget {
+  const legacyIdentifier = typeof identifier === 'string'
+    ? identifier.trim().toLowerCase()
+    : undefined
+  const normalizedIdentifier = normalizeAddressIdentifier(identifier ?? '') ?? undefined
+
+  if (kind === Kind.DeprecatedListSet) {
+    if (legacyIdentifier === LEGACY_LIST_SET_PIN_IDENTIFIER) {
+      return { kind: Kind.PinnedNotes }
+    }
+    if (legacyIdentifier === LEGACY_LIST_SET_BOOKMARK_IDENTIFIER) {
+      return { kind: Kind.Bookmarks }
+    }
+    if (legacyIdentifier === LEGACY_LIST_SET_COMMUNITIES_IDENTIFIER) {
+      return { kind: Kind.CommunitiesList }
+    }
+  }
+
+  if (kind === Kind.FollowSet && legacyIdentifier === LEGACY_FOLLOW_SET_MUTE_IDENTIFIER) {
+    return { kind: Kind.MuteList }
+  }
+
+  return {
+    kind,
+    ...(normalizedIdentifier ? { identifier: normalizedIdentifier } : {}),
+  }
 }
 
 export function parseNip51ListEvent(event: NostrEvent): ParsedNip51ListEvent | null {
@@ -696,7 +766,7 @@ export function parseNip51ListEvent(event: NostrEvent): ParsedNip51ListEvent | n
       })()
       : {}),
     route: route || `/note/${event.id}`,
-    publicItems: parsePublicItems(event, definition),
+    publicItems: parsePublicItems(event, definition, identifier),
     hasPrivateItems: event.content.trim().length > 0,
     ...(event.content.trim().length > 0 ? { privateEncryption: detectPrivateListEncryption(event.content) } : {}),
   }
@@ -732,7 +802,7 @@ export async function decryptNip51PrivateItems(
   if (!parsed) {
     throw new Error('Event is not a supported NIP-51 list.')
   }
-  const items = parsePrivateItemsPayload(plaintext, parsed.definition)
+  const items = parsePrivateItemsPayload(plaintext, parsed.definition, parsed.identifier)
   if (!items) {
     throw new Error('Decrypted private list payload is not a valid tag array.')
   }
@@ -767,6 +837,7 @@ function normalizePublishItems(
   items: Nip51ListItem[] | undefined,
   maxItems: number,
   markPrivate: boolean,
+  identifier?: string,
 ): Nip51ListItem[] {
   if (!Array.isArray(items) || items.length === 0) return []
 
@@ -774,7 +845,7 @@ function normalizePublishItems(
   for (const item of items) {
     const candidate = normalizeListItem(item.tagName, item.values)
     if (!candidate) continue
-    if (!isAllowedListItemForDefinition(definition, candidate)) continue
+    if (!isAllowedListItemForDefinition(definition, candidate, identifier)) continue
     normalized.push(markPrivate ? { ...candidate, isPrivate: true } : candidate)
     if (normalized.length >= maxItems) break
   }
@@ -786,7 +857,8 @@ function serializePrivateItems(items: Nip51ListItem[]): string {
 }
 
 export async function publishNip51List(options: PublishNip51ListOptions): Promise<NostrEvent> {
-  const definition = getListDefinition(options.kind)
+  const normalizedTarget = normalizeNip51PublishTarget(options.kind, options.identifier)
+  const definition = getListDefinition(normalizedTarget.kind)
   if (!definition) {
     throw new Error('Unsupported NIP-51 list kind.')
   }
@@ -801,8 +873,24 @@ export async function publishNip51List(options: PublishNip51ListOptions): Promis
     throw new Error('No signer available — install and unlock a NIP-07 extension to publish NIP-51 lists.')
   }
 
-  const publicItems = normalizePublishItems(definition, options.publicItems, MAX_PUBLIC_ITEMS, false)
-  const privateItems = normalizePublishItems(definition, options.privateItems, MAX_PRIVATE_ITEMS, true)
+  const normalizedIdentifier = definition.addressable
+    ? (normalizeAddressIdentifier(normalizedTarget.identifier ?? '') ?? undefined)
+    : undefined
+
+  const publicItems = normalizePublishItems(
+    definition,
+    options.publicItems,
+    MAX_PUBLIC_ITEMS,
+    false,
+    normalizedIdentifier,
+  )
+  const privateItems = normalizePublishItems(
+    definition,
+    options.privateItems,
+    MAX_PRIVATE_ITEMS,
+    true,
+    normalizedIdentifier,
+  )
 
   let content = ''
   if (privateItems.length > 0) {
@@ -817,7 +905,7 @@ export async function publishNip51List(options: PublishNip51ListOptions): Promis
   ]
 
   const event = new NDKEvent(ndk)
-  event.kind = options.kind
+  event.kind = definition.kind
   event.content = content
   event.tags = await withOptionalClientTag(tags, options.signal)
 
@@ -1099,18 +1187,78 @@ export async function toggleGlobalBookmark(
   }
 }
 
+function getDeprecatedListSetLabel(identifier?: string): string | null {
+  if (identifier === LEGACY_LIST_SET_PIN_IDENTIFIER) return 'Legacy Pinned Notes Set'
+  if (identifier === LEGACY_LIST_SET_BOOKMARK_IDENTIFIER) return 'Legacy Bookmarks Set'
+  if (identifier === LEGACY_LIST_SET_COMMUNITIES_IDENTIFIER) return 'Legacy Communities Set'
+  return null
+}
+
+function getFollowSetLabel(identifier?: string): string | null {
+  if (identifier === LEGACY_FOLLOW_SET_MUTE_IDENTIFIER) return 'Legacy Mute Set'
+  return null
+}
+
+function getParsedListLabel(parsed: ParsedNip51ListEvent): string {
+  if (parsed.title) return parsed.title
+
+  if (parsed.kind === Kind.DeprecatedListSet) {
+    return getDeprecatedListSetLabel(parsed.identifier) ?? parsed.definition.name
+  }
+
+  if (parsed.kind === Kind.FollowSet) {
+    return getFollowSetLabel(parsed.identifier) ?? parsed.definition.name
+  }
+
+  return parsed.definition.name
+}
+
+function getParsedListDescription(parsed: ParsedNip51ListEvent): string {
+  if (parsed.description) return parsed.description
+
+  if (parsed.kind === Kind.DeprecatedListSet) {
+    if (parsed.identifier === LEGACY_LIST_SET_PIN_IDENTIFIER) {
+      return 'Compatibility view for deprecated pinned-note list sets.'
+    }
+    if (parsed.identifier === LEGACY_LIST_SET_BOOKMARK_IDENTIFIER) {
+      return 'Compatibility view for deprecated bookmark list sets.'
+    }
+    if (parsed.identifier === LEGACY_LIST_SET_COMMUNITIES_IDENTIFIER) {
+      return 'Compatibility view for deprecated communities list sets.'
+    }
+  }
+
+  if (parsed.kind === Kind.FollowSet && parsed.identifier === LEGACY_FOLLOW_SET_MUTE_IDENTIFIER) {
+    return 'Compatibility view for deprecated mute list sets.'
+  }
+
+  return parsed.definition.description
+}
+
+export function getNip51ListDisplayText(parsed: ParsedNip51ListEvent): {
+  title: string
+  description: string
+} {
+  return {
+    title: getParsedListLabel(parsed),
+    description: getParsedListDescription(parsed),
+  }
+}
+
 export function getNip51ListPreviewText(event: NostrEvent): string {
   const parsed = parseNip51ListEvent(event)
   if (!parsed) return `Shared list kind ${event.kind}.`
 
   const itemCount = parsed.publicItems.length
-  if (parsed.kind === Kind.StarterPack) {
-    return `${parsed.title ?? parsed.definition.name} with ${itemCount} profile${itemCount === 1 ? '' : 's'} to follow together.`
+  const display = getNip51ListDisplayText(parsed)
+
+  if (parsed.kind === Kind.StarterPack || (parsed.kind === Kind.FollowSet && parsed.identifier !== LEGACY_FOLLOW_SET_MUTE_IDENTIFIER)) {
+    return `${display.title} with ${itemCount} profile${itemCount === 1 ? '' : 's'} to follow together.`
   }
   if (parsed.kind === Kind.MediaStarterPack) {
-    return `${parsed.title ?? parsed.definition.name} with ${itemCount} media-focused profile${itemCount === 1 ? '' : 's'} to follow together.`
+    return `${display.title} with ${itemCount} media-focused profile${itemCount === 1 ? '' : 's'} to follow together.`
   }
-  const title = parsed.title ?? parsed.definition.name
+  const title = display.title
   const privateLabel = parsed.hasPrivateItems ? ' with encrypted private items' : ''
 
   return `${title} with ${itemCount} public item${itemCount === 1 ? '' : 's'}${privateLabel}.`
