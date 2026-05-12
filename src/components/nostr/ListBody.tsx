@@ -11,6 +11,7 @@ import { saveCurrentUserContactEntries } from '@/lib/nostr/contacts'
 import {
   canDecryptNip51PrivateItems,
   decryptNip51PrivateItems,
+  getNip51ListDisplayText,
   isNip51ProfilePackKind,
   parseNip51ListEvent,
   type Nip51ListItem,
@@ -407,7 +408,8 @@ export function ListBody({ event, className = '' }: ListBodyProps) {
   const encryptionLabel = parsed.privateEncryption === 'nip04' ? 'legacy NIP-04' : 'NIP-44'
   const visiblePublicItems = parsed.publicItems.slice(0, MAX_SPECIALIZED_ITEMS)
   const hiddenPublicItemCount = Math.max(parsed.publicItems.length - visiblePublicItems.length, 0)
-  const isProfilePack = parsed.kind === Kind.StarterPack || parsed.kind === Kind.MediaStarterPack
+  const isProfilePack = isNip51ProfilePackKind(parsed.kind, parsed.identifier)
+  const display = getNip51ListDisplayText(parsed)
 
   const handleDecrypt = async () => {
     if (decrypting || !canDecrypt) return
@@ -453,7 +455,7 @@ export function ListBody({ event, className = '' }: ListBodyProps) {
       )
     }
 
-    if (isNip51ProfilePackKind(parsed.kind)) {
+    if (isNip51ProfilePackKind(parsed.kind, parsed.identifier)) {
       return (
         <div className="mt-3 space-y-2">
           {visiblePublicItems.map((item, index) => (
@@ -490,7 +492,7 @@ export function ListBody({ event, className = '' }: ListBodyProps) {
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <h3 className="text-[20px] font-semibold tracking-[-0.02em] text-[rgb(var(--color-label))]">
-          <TwemojiText text={parsed.title ?? parsed.definition.name} />
+          <TwemojiText text={display.title} />
         </h3>
         <span className="rounded-full bg-[rgb(var(--color-fill)/0.1)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
           Kind {parsed.kind}
@@ -504,7 +506,7 @@ export function ListBody({ event, className = '' }: ListBodyProps) {
       )}
 
       <p className="mt-2 text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
-        <TwemojiText text={parsed.description ?? parsed.definition.description} />
+        <TwemojiText text={display.description} />
       </p>
 
       {isProfilePack && (

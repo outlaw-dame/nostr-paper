@@ -19,8 +19,8 @@ interface UserStatusBodyProps {
   linkedPreview?: boolean
 }
 
-function isHttpUrl(value: string): boolean {
-  return value.startsWith('http://') || value.startsWith('https://')
+function isHttpsUrl(value: string): boolean {
+  return value.startsWith('https://')
 }
 
 export function UserStatusBody({
@@ -72,7 +72,7 @@ export function UserStatusBody({
       {!status.isCleared && externalHref && (
         <a
           href={externalHref}
-          {...(isHttpUrl(externalHref) ? { target: '_blank', rel: 'noopener noreferrer nofollow' } : { rel: 'nofollow' })}
+          {...(isHttpsUrl(externalHref) ? { target: '_blank', rel: 'noopener noreferrer nofollow' } : { rel: 'nofollow' })}
           className="inline-flex items-center gap-2 rounded-full bg-[rgb(var(--color-fill)/0.09)] px-3 py-1.5 text-[13px] font-medium text-[rgb(var(--color-label))]"
         >
           Open track

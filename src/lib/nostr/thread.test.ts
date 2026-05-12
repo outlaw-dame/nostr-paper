@@ -212,6 +212,30 @@ describe('parseCommentEvent', () => {
       parentEventId: '3'.repeat(64),
     })
   })
+
+  it('parses comments on addressable video roots', () => {
+    const videoAddress = `${Kind.AddressableVideo}:${'2'.repeat(64)}:deep-dive`
+    const comment = signEvent({
+      kind: Kind.Comment,
+      created_at: 1_720_000_200,
+      tags: [
+        ['A', videoAddress, 'wss://relay.example.com'],
+        ['K', String(Kind.AddressableVideo)],
+        ['P', '2'.repeat(64), 'wss://relay.example.com'],
+        ['a', videoAddress, 'wss://relay.example.com', '2'.repeat(64)],
+        ['k', String(Kind.AddressableVideo)],
+        ['p', '2'.repeat(64), 'wss://relay.example.com'],
+      ],
+      content: 'Great walkthrough',
+    })
+
+    expect(parseCommentEvent(comment)).toMatchObject({
+      rootKind: String(Kind.AddressableVideo),
+      parentKind: String(Kind.AddressableVideo),
+      rootAddress: videoAddress,
+      parentAddress: videoAddress,
+    })
+  })
 })
 
 describe('getConversationRootReference', () => {
@@ -236,6 +260,26 @@ describe('getConversationRootReference', () => {
 
     expect(getConversationRootReference(comment)).toEqual({
       kind: Kind.LongFormContent,
+      address,
+    })
+  })
+
+  it('resolves addressable video roots for NIP-22 comments', () => {
+    const address = `${Kind.AddressableVideo}:${'2'.repeat(64)}:deep-dive`
+    const comment = signEvent({
+      kind: Kind.Comment,
+      created_at: 1_720_000_300,
+      tags: [
+        ['A', address],
+        ['K', String(Kind.AddressableVideo)],
+        ['a', address],
+        ['k', String(Kind.AddressableVideo)],
+      ],
+      content: 'Nostr video comments work here',
+    })
+
+    expect(getConversationRootReference(comment)).toEqual({
+      kind: Kind.AddressableVideo,
       address,
     })
   })

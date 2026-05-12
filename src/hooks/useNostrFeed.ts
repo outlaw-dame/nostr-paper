@@ -48,7 +48,8 @@ type FeedAction =
   | { type: 'RESET' }
 
 const MAX_FEED_SIZE = 200  // cap in-memory feed to prevent unbounded growth
-const MAX_PENDING_FEED_SIZE = 40  // cap queued live events while user is reading
+const MAX_PENDING_FEED_SIZE = 12  // cap queued live events while user is reading
+const LIVE_FEED_FLUSH_DELAY_MS = 180
 
 function mergeFeedEvents(current: NostrEvent[], incoming: NostrEvent[], maxSize = MAX_FEED_SIZE): NostrEvent[] {
   if (incoming.length === 0) return current
@@ -206,7 +207,7 @@ export function useNostrFeed({ section, enabled = true, shouldBufferNewEvents }:
         flushTimerRef.current = window.setTimeout(() => {
           flushTimerRef.current = null
           void flushPendingEvents()
-        }, 96)
+        }, LIVE_FEED_FLUSH_DELAY_MS)
       }
 
       const flushPendingEvents = async () => {

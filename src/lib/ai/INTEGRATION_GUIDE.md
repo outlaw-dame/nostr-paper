@@ -266,11 +266,9 @@ export async function semanticSearch(query: string, documents: string[]) {
 // Create .env with:
 /*
 # Cloudflare Workers AI
-VITE_CLOUDFLARE_ACCOUNT_ID=your_account_id_here
-VITE_CLOUDFLARE_API_TOKEN=your_api_token_here
+VITE_CLOUDFLARE_AI_PROXY_URL=/api/cloudflare-ai
 
-# Keep existing vars for fallbacks
-VITE_GEMINI_API_KEY=...
+# Keep provider keys server-side or enter user-owned keys at runtime.
 */
 
 // ────────────────────────────────────────────────────────────────
@@ -347,9 +345,8 @@ export function reportMetrics(metrics: ProviderMetrics[]) {
 // ────────────────────────────────────────────────────────────────
 
 /*
-1. Add credentials to .env:
-   VITE_CLOUDFLARE_ACCOUNT_ID=...
-   VITE_CLOUDFLARE_API_TOKEN=...
+1. Add a server-side proxy endpoint to .env:
+   VITE_CLOUDFLARE_AI_PROXY_URL=/api/cloudflare-ai
 
 2. Import enhanced providers:
    - Compose: import { generateComposeAssistText } from '@/lib/ai/enhancedAssist'

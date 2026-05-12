@@ -62,6 +62,10 @@ describe('normalizeStatusReferenceUri', () => {
     expect(normalizeStatusReferenceUri('https://user:pass@example.com/track?id=1#frag')).toBe('https://example.com/track?id=1')
   })
 
+  it('rejects plaintext http urls', () => {
+    expect(normalizeStatusReferenceUri('http://example.com/track?id=1')).toBeNull()
+  })
+
   it('rejects blocked URI schemes', () => {
     expect(normalizeStatusReferenceUri('javascript:alert(1)')).toBeNull()
     expect(normalizeStatusReferenceUri('data:text/plain,hi')).toBeNull()

@@ -2,7 +2,7 @@ services:
   redis:
     image: redis:7
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${PLATFORM_BIND_HOST:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -16,7 +16,7 @@ services:
       POSTGRES_PASSWORD: nostr
       POSTGRES_DB: nostr_search
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${PLATFORM_BIND_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
@@ -45,7 +45,7 @@ services:
       RELAY_FACT_CHECK_API_KEY: ${GOOGLE_API_KEY:-}
       RELAY_FACT_CHECK_FLAG_COST_MULTIPLIER: ${RELAY_FACT_CHECK_FLAG_COST_MULTIPLIER:-3}
     ports:
-      - "${STRFRY_PORT:-7777}:7777"
+      - "${PLATFORM_BIND_HOST:-127.0.0.1}:${STRFRY_PORT:-7777}:7777"
     volumes:
       - ./strfry.conf/strfry.conf:/etc/strfry.conf:ro
       - strfry_data:/app/strfry-db
@@ -107,7 +107,7 @@ services:
       EMBEDDING_MODEL_ID: Xenova/all-MiniLM-L6-v2
       EMBEDDING_VERSION: 1
     ports:
-      - "${SEARCH_PORT:-3001}:3001"
+      - "${PLATFORM_BIND_HOST:-127.0.0.1}:${SEARCH_PORT:-3001}:3001"
     depends_on:
       postgres:
         condition: service_healthy

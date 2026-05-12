@@ -102,8 +102,8 @@ describe('isSafeURL', () => {
     expect(isSafeURL('https://relay.damus.io/image.jpg')).toBe(true)
   })
 
-  it('allows http URLs', () => {
-    expect(isSafeURL('http://example.com')).toBe(true)
+  it('rejects http URLs', () => {
+    expect(isSafeURL('http://example.com')).toBe(false)
   })
 
   it('blocks javascript: scheme', () => {

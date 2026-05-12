@@ -58,17 +58,6 @@ const SECRET_KEY_KEY = 'translation-crypto-key'
 const ENCRYPTED_SECRETS_KEY = 'translation-encrypted-secrets'
 const MAX_SECRET_CHARS = 256
 const DEV_QUEUE_METRICS_PREF_KEY = 'translation-dev-queue-metrics-enabled'
-const DEFAULT_DEEPL_AUTH_KEY = sanitizeSecret(
-  typeof import.meta.env.VITE_DEEPL_AUTH_KEY === 'string'
-    ? import.meta.env.VITE_DEEPL_AUTH_KEY
-    : '',
-)
-const DEFAULT_GEMINI_API_KEY = sanitizeSecret(
-  typeof import.meta.env.VITE_GEMINI_API_KEY === 'string'
-    ? import.meta.env.VITE_GEMINI_API_KEY
-    : '',
-)
-
 export const TRANSLATION_SETTINGS_UPDATED_EVENT = 'nostr-paper:translation-settings-updated'
 
 const DEFAULT_PREFERENCES: TranslationPreferences = {
@@ -98,9 +87,9 @@ const DEFAULT_PREFERENCES: TranslationPreferences = {
 }
 
 const DEFAULT_SECRETS: TranslationSecrets = {
-  deeplAuthKey: DEFAULT_DEEPL_AUTH_KEY,
+  deeplAuthKey: '',
   libreApiKey: '',
-  geminiApiKey: DEFAULT_GEMINI_API_KEY,
+  geminiApiKey: '',
 }
 
 let memoryPreferences = { ...DEFAULT_PREFERENCES }
@@ -429,7 +418,7 @@ async function decryptSecret(record: EncryptedSecretRecord): Promise<string> {
 }
 
 export function getTranslationStorageMode(): TranslationStorageMode {
-  return canUsePersistentStorage() ? 'encrypted-indexeddb' : 'session-only'
+  return 'session-only'
 }
 
 export async function loadTranslationPreferences(): Promise<TranslationPreferences> {
@@ -466,31 +455,18 @@ export async function saveTranslationPreferences(
   return { ...normalized }
 }
 
-export async function loadTranslationSecrets(): Promise<TranslationSecrets> {
-  if (!canUsePersistentStorage()) {
-    return { ...memorySecrets }
-  }
-
+async function deletePersistedTranslationSecrets(): Promise<void> {
+  if (!canUsePersistentStorage()) return
   try {
-    const encrypted = await get<EncryptedSecretBundle>(ENCRYPTED_SECRETS_KEY, SECRETS_STORE)
-    if (!encrypted) {
-      return { ...memorySecrets }
-    }
-
-    const nextSecrets: TranslationSecrets = {
-      deeplAuthKey: encrypted.deeplAuthKey ? await decryptSecret(encrypted.deeplAuthKey) : '',
-      libreApiKey: encrypted.libreApiKey ? await decryptSecret(encrypted.libreApiKey) : '',
-      geminiApiKey: encrypted.geminiApiKey ? await decryptSecret(encrypted.geminiApiKey) : '',
-    }
-    memorySecrets = {
-      deeplAuthKey: sanitizeSecret(nextSecrets.deeplAuthKey),
-      libreApiKey: sanitizeSecret(nextSecrets.libreApiKey),
-      geminiApiKey: sanitizeSecret(nextSecrets.geminiApiKey),
-    }
-    return { ...memorySecrets }
+    await del(ENCRYPTED_SECRETS_KEY, SECRETS_STORE)
+    await del(SECRET_KEY_KEY, SECRETS_STORE)
   } catch {
-    return { ...memorySecrets }
+    // Session-only secrets are already cleared in memory.
   }
+}
+
+export async function loadTranslationSecrets(): Promise<TranslationSecrets> {
+  return { ...memorySecrets }
 }
 
 export async function saveTranslationSecrets(
@@ -505,23 +481,7 @@ export async function saveTranslationSecrets(
   memorySecrets = normalized
   cachedConfiguration = null
 
-  if (canUsePersistentStorage()) {
-    try {
-      const encrypted: EncryptedSecretBundle = {}
-      if (normalized.deeplAuthKey) {
-        encrypted.deeplAuthKey = await encryptSecret(normalized.deeplAuthKey)
-      }
-      if (normalized.libreApiKey) {
-        encrypted.libreApiKey = await encryptSecret(normalized.libreApiKey)
-      }
-      if (normalized.geminiApiKey) {
-        encrypted.geminiApiKey = await encryptSecret(normalized.geminiApiKey)
-      }
-      await set(ENCRYPTED_SECRETS_KEY, encrypted, SECRETS_STORE)
-    } catch {
-      // Fall back to memory-only secrets.
-    }
-  }
+  await deletePersistedTranslationSecrets()
 
   emitTranslationSettingsUpdated()
   return { ...normalized }
@@ -531,13 +491,7 @@ export async function clearTranslationSecrets(): Promise<void> {
   memorySecrets = { ...DEFAULT_SECRETS }
   cachedConfiguration = null
 
-  if (canUsePersistentStorage()) {
-    try {
-      await del(ENCRYPTED_SECRETS_KEY, SECRETS_STORE)
-    } catch {
-      // Keep in-memory state cleared even if persistent deletion fails.
-    }
-  }
+  await deletePersistedTranslationSecrets()
 
   emitTranslationSettingsUpdated()
 }

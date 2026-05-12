@@ -119,9 +119,42 @@ export default [
       'no-new-func':    'error',
       'prefer-const':   'error',
       'eqeqeq':        ['error', 'always'],
+      'no-restricted-imports': ['error', {
+        paths: [
+          {
+            name: 'framework7-icons/react',
+            message: 'Use @/design/icons/AppIcon and the semantic icon registry instead.',
+          },
+          {
+            name: 'lucide-react',
+            message: 'Use @/design/icons/AppIcon and the semantic icon registry instead.',
+          },
+          {
+            name: 'react-icons/md',
+            message: 'Use @/design/icons/AppIcon and the semantic icon registry instead.',
+          },
+          {
+            name: 'ionicons',
+            message: 'Use @/design/icons/AppIcon and the semantic icon registry instead.',
+          },
+        ],
+        patterns: [
+          {
+            group: ['ionicons/*', 'react-icons/*'],
+            message: 'Use @/design/icons/AppIcon and the semantic icon registry instead.',
+          },
+        ],
+      }],
     },
     settings: {
       react: { version: 'detect' },
+    },
+  },
+
+  {
+    files: ['src/design/icons/**'],
+    rules: {
+      'no-restricted-imports': 'off',
     },
   },
 

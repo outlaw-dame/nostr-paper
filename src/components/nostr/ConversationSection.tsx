@@ -3,8 +3,10 @@ import { EventPreviewCard } from '@/components/nostr/EventPreviewCard'
 import { useConversationThread } from '@/hooks/useConversationThread'
 import {
   buildReplyTree,
+  collectDefaultCompressedBranchIds,
   collectDefaultCollapsedIds,
   countDescendants,
+  getCompressedBranchPreview,
   type ReplyTreeNode,
 } from '@/lib/nostr/conversationTree'
 import {
@@ -26,19 +28,28 @@ function ReplyTreeItem({
   node,
   depth,
   collapsedIds,
+  compressedBranchIds,
   onToggleCollapsed,
+  onToggleCompressedBranch,
   parentPubkey,
 }: {
   node: ReplyTreeNode
   depth: number
   collapsedIds: Set<string>
+  compressedBranchIds: Set<string>
   onToggleCollapsed: (id: string) => void
+  onToggleCompressedBranch: (id: string) => void
   parentPubkey?: string
 }) {
   const hasChildren = node.children.length > 0
   const collapsed = hasChildren && collapsedIds.has(node.event.id)
   const totalNestedReplies = hasChildren ? countDescendants(node) : 0
   const isContinuation = depth > 0 && parentPubkey === node.event.pubkey
+  const compressedPreview = getCompressedBranchPreview(node)
+  const isBranchCompressed = Boolean(compressedPreview && compressedBranchIds.has(node.event.id))
+  const renderedChildren = isBranchCompressed && compressedPreview
+    ? [compressedPreview.tail]
+    : node.children
 
   return (
     <div className={depth > 0 ? 'ml-4 border-l border-[rgb(var(--color-fill)/0.14)] pl-3' : ''}>
@@ -64,6 +75,17 @@ function ReplyTreeItem({
 
       {hasChildren && (
         <div className="mt-2 space-y-2">
+          {compressedPreview && (
+            <button
+              type="button"
+              onClick={() => onToggleCompressedBranch(node.event.id)}
+              className="inline-flex items-center gap-2 rounded-full border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg-secondary))] px-2.5 py-1 text-[12px] font-medium text-[rgb(var(--color-label-secondary))] transition-opacity active:opacity-70"
+            >
+              <span>{isBranchCompressed ? 'Show' : 'Hide'} in-between replies</span>
+              <span>{compressedPreview.hiddenCount}</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => onToggleCollapsed(node.event.id)}
@@ -75,13 +97,15 @@ function ReplyTreeItem({
 
           {!collapsed && (
             <div className="space-y-2">
-              {node.children.map((child) => (
+              {renderedChildren.map((child) => (
                 <ReplyTreeItem
                   key={child.event.id}
                   node={child}
                   depth={depth + 1}
                   collapsedIds={collapsedIds}
+                  compressedBranchIds={compressedBranchIds}
                   onToggleCollapsed={onToggleCollapsed}
+                  onToggleCompressedBranch={onToggleCompressedBranch}
                   parentPubkey={node.event.pubkey}
                 />
               ))}
@@ -108,20 +132,32 @@ export function ConversationSection({
     [event.id, replies],
   )
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
+  const [compressedBranchIds, setCompressedBranchIds] = useState<Set<string>>(new Set())
+  const [otherBranchesExpanded, setOtherBranchesExpanded] = useState(false)
 
   useEffect(() => {
     setCollapsedIds(collectDefaultCollapsedIds(replyTree))
+    setCompressedBranchIds(collectDefaultCompressedBranchIds(replyTree))
+    setOtherBranchesExpanded(false)
   }, [replyTree])
 
-  const hasNestedReplies = useMemo(
-    () => replies.some((reply) => {
-      const parentId = reply.kind === Kind.ShortNote
-        ? parseTextNoteReply(reply)?.parentEventId
-        : parseCommentEvent(reply)?.parentEventId
-      return Boolean(parentId && reply.id !== parentId && replies.some((candidate) => candidate.id === parentId))
-    }),
-    [replies],
-  )
+  const toggleCollapsed = (id: string) => {
+    setCollapsedIds((previous) => {
+      const next = new Set(previous)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleCompressedBranch = (id: string) => {
+    setCompressedBranchIds((previous) => {
+      const next = new Set(previous)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   const isRootEvent = (
     (event.kind === Kind.ShortNote && !noteReply) ||
@@ -135,6 +171,43 @@ export function ConversationSection({
         rootReference.address !== undefined
       )
     )
+  )
+
+  const anchoredRoots = useMemo(() => {
+    if (isRootEvent) return []
+
+    return replyTree.filter((node) => {
+      const parentId = node.event.kind === Kind.ShortNote
+        ? parseTextNoteReply(node.event)?.parentEventId
+        : parseCommentEvent(node.event)?.parentEventId
+      return parentId === event.id
+    })
+  }, [event.id, isRootEvent, replyTree])
+
+  const otherBranchRoots = useMemo(() => {
+    if (isRootEvent) return []
+    const anchoredIds = new Set(anchoredRoots.map((node) => node.event.id))
+    return replyTree.filter((node) => !anchoredIds.has(node.event.id))
+  }, [anchoredRoots, isRootEvent, replyTree])
+
+  const primaryBranchRoots = useMemo(() => {
+    if (isRootEvent) return replyTree
+    return anchoredRoots.length > 0 ? anchoredRoots : replyTree
+  }, [anchoredRoots, isRootEvent, replyTree])
+
+  const visibleOtherBranchRoots = useMemo(
+    () => (otherBranchesExpanded ? otherBranchRoots : otherBranchRoots.slice(0, 3)),
+    [otherBranchRoots, otherBranchesExpanded],
+  )
+
+  const hasNestedReplies = useMemo(
+    () => replies.some((reply) => {
+      const parentId = reply.kind === Kind.ShortNote
+        ? parseTextNoteReply(reply)?.parentEventId
+        : parseCommentEvent(reply)?.parentEventId
+      return Boolean(parentId && reply.id !== parentId && replies.some((candidate) => candidate.id === parentId))
+    }),
+    [replies],
   )
 
   const label = event.kind === Kind.ShortNote
@@ -213,23 +286,54 @@ export function ConversationSection({
             )}
           </div>
 
-          {replyTree.map((node) => (
+          {primaryBranchRoots.map((node) => (
             <ReplyTreeItem
               key={node.event.id}
               node={node}
               depth={0}
               collapsedIds={collapsedIds}
-              onToggleCollapsed={(id) => {
-                setCollapsedIds((previous) => {
-                  const next = new Set(previous)
-                  if (next.has(id)) next.delete(id)
-                  else next.add(id)
-                  return next
-                })
-              }}
+              compressedBranchIds={compressedBranchIds}
+              onToggleCollapsed={toggleCollapsed}
+              onToggleCompressedBranch={toggleCompressedBranch}
               parentPubkey={event.pubkey}
             />
           ))}
+
+          {!isRootEvent && anchoredRoots.length > 0 && otherBranchRoots.length > 0 && (
+            <div className="space-y-2 rounded-[14px] border border-[rgb(var(--color-fill)/0.14)] bg-[rgb(var(--color-bg-secondary))] p-3">
+              <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+                Other Branches ({otherBranchRoots.length})
+              </p>
+              <p className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
+                Replies in the same conversation that branch away from this reply.
+              </p>
+              <div className="space-y-2">
+                {visibleOtherBranchRoots.map((node) => (
+                  <ReplyTreeItem
+                    key={`other-${node.event.id}`}
+                    node={node}
+                    depth={0}
+                    collapsedIds={collapsedIds}
+                    compressedBranchIds={compressedBranchIds}
+                    onToggleCollapsed={toggleCollapsed}
+                    onToggleCompressedBranch={toggleCompressedBranch}
+                    parentPubkey={event.pubkey}
+                  />
+                ))}
+                {otherBranchRoots.length > 3 && (
+                  <button
+                    type="button"
+                    onClick={() => setOtherBranchesExpanded((previous) => !previous)}
+                    className="text-[12px] font-medium text-[rgb(var(--color-label-secondary))] active:opacity-70"
+                  >
+                    {otherBranchesExpanded
+                      ? 'Show fewer branches'
+                      : `Show ${otherBranchRoots.length - visibleOtherBranchRoots.length} more branches`}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           {loading && (
             <div className="rounded-[18px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg-secondary))] p-3">

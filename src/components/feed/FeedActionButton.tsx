@@ -1,7 +1,7 @@
 import { memo } from 'react'
 import { motion } from 'motion/react'
-import { Icon } from 'konsta/react'
-import { appIcons, type FeedActionKey } from '@/design/icons/semanticIcons'
+import { AppIcon } from '@/design/icons/AppIcon'
+import type { FeedActionKey } from '@/design/icons/semanticIcons'
 
 type FeedActionButtonProps = {
   action: FeedActionKey
@@ -18,18 +18,6 @@ export const FeedActionButton = memo(function FeedActionButton({
   count,
   onClick,
 }: FeedActionButtonProps) {
-  const icon = appIcons[action]
-
-  let ios = 'ios' in icon ? icon.ios : null
-  let material = 'material' in icon ? icon.material : null
-
-  if ('iosActive' in icon && 'iosInactive' in icon) {
-    ios = active ? icon.iosActive : icon.iosInactive
-  }
-  if ('materialActive' in icon && 'materialInactive' in icon) {
-    material = active ? icon.materialActive : icon.materialInactive
-  }
-
   return (
     <motion.button
       type="button"
@@ -47,9 +35,7 @@ export const FeedActionButton = memo(function FeedActionButton({
         dark:active:bg-white/[0.08]
       "
     >
-      {ios !== null && material !== null && (
-        <Icon ios={ios} material={material} />
-      )}
+      <AppIcon name={action} active={active} />
       {typeof count === 'number' && count > 0 ? (
         <span className="text-[13px] leading-none tabular-nums">{count}</span>
       ) : null}

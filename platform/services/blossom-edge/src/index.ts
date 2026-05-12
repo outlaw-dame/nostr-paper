@@ -43,6 +43,8 @@ const PUBKEY_PATTERN = /^[0-9a-f]{64}$/;
 const DEFAULT_MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 const FILEBASE_ENDPOINT = 'https://s3.filebase.com';
 const FILEBASE_REGION = 'us-east-1';
+const MIRROR_FETCH_TIMEOUT_MS = 12_000;
+const MIRROR_MAX_REDIRECTS = 3;
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -152,7 +154,12 @@ async function handleUpload(
   const auth = await validateBlossomAuth(request, env, verb, { requiredSha256: declaredSha256 });
   if (auth instanceof Response) return auth;
 
-  const body = await request.arrayBuffer();
+  let body: ArrayBuffer;
+  try {
+    body = await readBodyWithLimit(request, maxUploadBytes(env));
+  } catch {
+    return problem(413, 'Request body exceeds upload size limit.');
+  }
   const bodyPolicy = validateUploadPolicy(env, type, body.byteLength);
   if (!bodyPolicy.ok) return problem(bodyPolicy.status, bodyPolicy.reason);
 
@@ -206,7 +213,12 @@ async function handleMirror(request: Request, env: Env, ctx: ExecutionContext): 
   const sourceUrl = typeof payload?.url === 'string' ? payload.url : '';
   if (!isSafeHttpUrl(sourceUrl)) return problem(400, 'Mirror request body must include an HTTPS url.');
 
-  const upstream = await fetch(sourceUrl, { redirect: 'follow' });
+  let upstream: Response;
+  try {
+    upstream = await fetchMirrorSource(sourceUrl);
+  } catch {
+    return problem(403, 'Mirror source URL is not allowed.');
+  }
   if (!upstream.ok || !upstream.body) return problem(502, 'Could not fetch mirror source.');
 
   const type = normalizeContentType(upstream.headers.get('Content-Type'));
@@ -214,7 +226,12 @@ async function handleMirror(request: Request, env: Env, ctx: ExecutionContext): 
   const policy = validateUploadPolicy(env, type, Number.isFinite(contentLength) ? contentLength : 0);
   if (!policy.ok) return problem(policy.status, policy.reason);
 
-  const body = await upstream.arrayBuffer();
+  let body: ArrayBuffer;
+  try {
+    body = await readResponseBodyWithLimit(upstream, maxUploadBytes(env));
+  } catch {
+    return problem(413, 'Mirrored media exceeds upload size limit.');
+  }
   const bodyPolicy = validateUploadPolicy(env, type, body.byteLength);
   if (!bodyPolicy.ok) return problem(bodyPolicy.status, bodyPolicy.reason);
 
@@ -524,7 +541,7 @@ function blobHeaders(object: R2Object): Headers {
 }
 
 function validateUploadPolicy(env: Env, type: string, size: number): { ok: true } | { ok: false; status: number; reason: string } {
-  const maxBytes = Number.parseInt(env.MAX_UPLOAD_BYTES ?? '', 10) || DEFAULT_MAX_UPLOAD_BYTES;
+  const maxBytes = maxUploadBytes(env);
   if (size > maxBytes) return { ok: false, status: 413, reason: `File too large. Max allowed size is ${maxBytes} bytes.` };
 
   const allowed = (env.ALLOWED_MIME_TYPES ?? 'image/*,video/*,audio/*,application/pdf,text/plain,application/octet-stream')
@@ -540,6 +557,11 @@ function validateUploadPolicy(env: Env, type: string, size: number): { ok: true 
 
   if (!accepted) return { ok: false, status: 415, reason: 'Unsupported media type.' };
   return { ok: true };
+}
+
+function maxUploadBytes(env: Env): number {
+  const parsed = Number.parseInt(env.MAX_UPLOAD_BYTES ?? '', 10);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_UPLOAD_BYTES;
 }
 
 function parseBlobPath(pathname: string): { sha256: string } | null {
@@ -646,10 +668,124 @@ function extensionForMimeType(type: string): string {
 function isSafeHttpUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === 'https:';
+    return isSafeMirrorTarget(url);
   } catch {
     return false;
   }
+}
+
+function isSafeMirrorTarget(url: URL): boolean {
+  if (url.protocol !== 'https:') return false;
+  if (url.username || url.password) return false;
+  return !isPrivateOrLocalHostname(url.hostname);
+}
+
+function isPrivateOrLocalHostname(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
+  if (!normalized) return true;
+  if (
+    normalized === 'localhost' ||
+    normalized.endsWith('.localhost') ||
+    normalized.endsWith('.local') ||
+    normalized === 'metadata.google.internal'
+  ) {
+    return true;
+  }
+
+  const ipv4 = normalized.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4) {
+    const octets = ipv4.slice(1).map((part) => Number.parseInt(part, 10));
+    if (octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+    const [a = 0, b = 0] = octets;
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      a >= 224
+    );
+  }
+
+  if (normalized.includes(':')) {
+    return (
+      normalized === '::' ||
+      normalized === '::1' ||
+      normalized.startsWith('fc') ||
+      normalized.startsWith('fd') ||
+      normalized.startsWith('fe80:') ||
+      normalized.startsWith('::ffff:127.') ||
+      normalized.startsWith('::ffff:10.') ||
+      normalized.startsWith('::ffff:192.168.')
+    );
+  }
+
+  return !normalized.includes('.');
+}
+
+async function fetchMirrorSource(sourceUrl: string): Promise<Response> {
+  let current = new URL(sourceUrl);
+  if (!isSafeMirrorTarget(current)) throw new Error('unsafe_mirror_target');
+
+  for (let redirectCount = 0; redirectCount <= MIRROR_MAX_REDIRECTS; redirectCount++) {
+    const response = await fetch(current.href, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(MIRROR_FETCH_TIMEOUT_MS),
+    });
+
+    if (response.status >= 300 && response.status <= 399) {
+      const location = response.headers.get('Location');
+      if (!location) return response;
+      current = new URL(location, current.href);
+      if (!isSafeMirrorTarget(current)) throw new Error('unsafe_mirror_redirect');
+      continue;
+    }
+
+    return response;
+  }
+
+  throw new Error('too_many_mirror_redirects');
+}
+
+async function readBodyWithLimit(request: Request, maxBytes: number): Promise<ArrayBuffer> {
+  return readStreamWithLimit(request.body, maxBytes);
+}
+
+async function readResponseBodyWithLimit(response: Response, maxBytes: number): Promise<ArrayBuffer> {
+  return readStreamWithLimit(response.body, maxBytes);
+}
+
+async function readStreamWithLimit(stream: ReadableStream<Uint8Array> | null, maxBytes: number): Promise<ArrayBuffer> {
+  if (!stream) return new ArrayBuffer(0);
+
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel();
+        throw new Error('body_too_large');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body.buffer;
 }
 
 function base64UrlDecode(value: string): string {

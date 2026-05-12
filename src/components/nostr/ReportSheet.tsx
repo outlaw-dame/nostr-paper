@@ -11,6 +11,7 @@ import {
   setReportingSettings,
   type ReportPublishDestination,
 } from '@/lib/moderation/reportingSettings'
+import { isValidModeratorPubkey } from '@/lib/moderation/reportValidation'
 import {
   REPORT_TYPES,
   formatReportType,
@@ -42,6 +43,8 @@ export function ReportSheet({
   const [labelsInput, setLabelsInput] = useState('')
   const [destination, setDestination] = useState<ReportPublishDestination>('public')
   const [privateRelayInput, setPrivateRelayInput] = useState('')
+  const [moderatorRelayInput, setModeratorRelayInput] = useState('')
+  const [moderatorPubkeyInput, setModeratorPubkeyInput] = useState('')
   const [muteAuthorAfterReport, setMuteAuthorAfterReport] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -72,6 +75,8 @@ export function ReportSheet({
     const reportingSettings = getReportingSettings()
     setDestination(reportingSettings.destination)
     setPrivateRelayInput(reportingSettings.privateRelayUrls.join('\n'))
+    setModeratorRelayInput(reportingSettings.moderatorRelayUrls.join('\n'))
+    setModeratorPubkeyInput(reportingSettings.moderatorPubkey)
     setMuteAuthorAfterReport(false)
     setPublishing(false)
     setError(null)
@@ -99,6 +104,11 @@ export function ReportSheet({
     onClose()
   }
 
+  const parseRelayInput = (value: string): string[] => value
+    .split(/[\n,]/)
+    .map((relayValue) => relayValue.trim())
+    .filter((relayValue) => relayValue.length > 0)
+
   const handlePublish = async () => {
     if (publishing) return
     if (!currentUser) {
@@ -125,10 +135,13 @@ export function ReportSheet({
           destination,
           ...(destination === 'private'
             ? {
-                privateRelayUrls: privateRelayInput
-                  .split(/[\n,]/)
-                  .map((value) => value.trim())
-                  .filter((value) => value.length > 0),
+                privateRelayUrls: parseRelayInput(privateRelayInput),
+              }
+            : {}),
+          ...(destination === 'moderator'
+            ? {
+                moderatorRelayUrls: parseRelayInput(moderatorRelayInput),
+                moderatorPubkey: moderatorPubkeyInput.trim().toLowerCase(),
               }
             : {}),
         },
@@ -147,10 +160,9 @@ export function ReportSheet({
 
       setReportingSettings({
         destination,
-        privateRelayUrls: privateRelayInput
-          .split(/[\n,]/)
-          .map((value) => value.trim())
-          .filter((value) => value.length > 0),
+        privateRelayUrls: parseRelayInput(privateRelayInput),
+        moderatorRelayUrls: parseRelayInput(moderatorRelayInput),
+        moderatorPubkey: moderatorPubkeyInput.trim().toLowerCase(),
       })
 
       abortRef.current = null
@@ -168,7 +180,11 @@ export function ReportSheet({
     }
   }
 
-  const publishDisabled = publishing || !currentUser || !reportType
+  const hasValidModeratorPubkey = isValidModeratorPubkey(moderatorPubkeyInput)
+  const publishDisabled = publishing
+    || !currentUser
+    || !reportType
+    || (destination === 'moderator' && !hasValidModeratorPubkey)
 
   const sheet = (
     <Sheet
@@ -252,7 +268,7 @@ export function ReportSheet({
             <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
               Visibility
             </p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <button
                 type="button"
                 onClick={() => setDestination('public')}
@@ -279,9 +295,22 @@ export function ReportSheet({
               >
                 Private relay list
               </button>
+              <button
+                type="button"
+                onClick={() => setDestination('moderator')}
+                className={`
+                  rounded-[12px] border px-3 py-2.5 text-[13px] font-medium transition-opacity active:opacity-80
+                  ${destination === 'moderator'
+                    ? 'border-[#007AFF] bg-[#007AFF]/10 text-[#007AFF]'
+                    : 'border-[rgb(var(--color-fill)/0.18)] text-[rgb(var(--color-label-secondary))]'
+                  }
+                `}
+              >
+                Moderator service
+              </button>
             </div>
             <p className="text-[12px] text-[rgb(var(--color-label-tertiary))]">
-              Public uses your normal write/outbox relays. Private only publishes to the relay URLs listed below.
+              Public uses your normal write/outbox relays. Private uses your relay list only. Moderator service sends an encrypted moderation request to the configured pubkey and relays.
             </p>
           </div>
 
@@ -307,6 +336,57 @@ export function ReportSheet({
                 One URL per line (or comma-separated). Invalid relay URLs are ignored.
               </p>
             </label>
+          )}
+
+          {destination === 'moderator' && (
+            <div className="space-y-3 rounded-[14px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg-secondary))] p-3">
+              <label className="block">
+                <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+                  Moderator Service Pubkey
+                </span>
+                <input
+                  type="text"
+                  value={moderatorPubkeyInput}
+                  onChange={(event) => setModeratorPubkeyInput(event.target.value)}
+                  placeholder="64-char hex pubkey"
+                  className="
+                    mt-2 w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.18)]
+                    bg-[rgb(var(--color-bg-secondary))] px-3 py-2.5
+                    text-[14px] text-[rgb(var(--color-label))]
+                    placeholder:text-[rgb(var(--color-label-tertiary))]
+                    outline-none
+                  "
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
+                <p className="mt-1 text-[12px] text-[rgb(var(--color-label-tertiary))]">
+                  This service can see your report payload and your signer pubkey for triage. Choose only services you trust.
+                </p>
+              </label>
+
+              <label className="block">
+                <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
+                  Moderator Relay URLs
+                </span>
+                <textarea
+                  value={moderatorRelayInput}
+                  onChange={(event) => setModeratorRelayInput(event.target.value)}
+                  placeholder="wss://relay.nos.social"
+                  rows={3}
+                  className="
+                    mt-2 w-full resize-y rounded-[14px] border border-[rgb(var(--color-fill)/0.18)]
+                    bg-[rgb(var(--color-bg-secondary))] px-3 py-2.5
+                    text-[14px] leading-6 text-[rgb(var(--color-label))]
+                    placeholder:text-[rgb(var(--color-label-tertiary))]
+                    outline-none
+                  "
+                />
+                <p className="mt-1 text-[12px] text-[rgb(var(--color-label-tertiary))]">
+                  One URL per line (or comma-separated). Invalid relay URLs are ignored.
+                </p>
+              </label>
+            </div>
           )}
 
           {canMuteTarget && (

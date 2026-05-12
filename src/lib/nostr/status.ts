@@ -123,7 +123,9 @@ export function normalizeStatusReferenceUri(value: string | undefined): string |
   if (!parsedScheme) return null
   if (BLOCKED_URI_SCHEMES.has(parsedScheme)) return null
 
-  if (parsedScheme === 'http' || parsedScheme === 'https') {
+  if (parsedScheme === 'http') return null
+
+  if (parsedScheme === 'https') {
     try {
       const normalized = new URL(trimmed)
       normalized.hash = ''

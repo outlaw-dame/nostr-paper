@@ -1,5 +1,9 @@
 import { finalizeEvent, generateSecretKey } from 'nostr-tools'
-import { buildReplyTree } from './conversationTree'
+import {
+  buildReplyTree,
+  collectDefaultCompressedBranchIds,
+  getCompressedBranchPreview,
+} from './conversationTree'
 import type { NostrEvent, UnsignedEvent } from '@/types'
 import { Kind } from '@/types'
 
@@ -106,5 +110,89 @@ describe('buildReplyTree', () => {
     expect(tree).toHaveLength(2)
     expect(tree.map((node) => node.event.id).sort()).toEqual([a.id, b.id].sort())
     expect(tree.every((node) => node.detached)).toBe(true)
+  })
+
+  it('creates compressed preview for long single-child chains', () => {
+    const rootId = '1'.repeat(64)
+    const a = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 1,
+      tags: [['e', rootId, '', 'root']],
+      content: 'a',
+    })
+    const b = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 2,
+      tags: [['e', rootId, '', 'root'], ['e', a.id, '', 'reply']],
+      content: 'b',
+    })
+    const c = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 3,
+      tags: [['e', rootId, '', 'root'], ['e', b.id, '', 'reply']],
+      content: 'c',
+    })
+    const d = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 4,
+      tags: [['e', rootId, '', 'root'], ['e', c.id, '', 'reply']],
+      content: 'd',
+    })
+    const e = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 5,
+      tags: [['e', rootId, '', 'root'], ['e', d.id, '', 'reply']],
+      content: 'e',
+    })
+
+    const tree = buildReplyTree([a, b, c, d, e])
+    const rootNode = tree[0]
+    expect(rootNode).toBeDefined()
+    if (!rootNode) return
+
+    const preview = getCompressedBranchPreview(rootNode, 3)
+    expect(preview).toBeTruthy()
+    expect(preview?.tail.event.id).toBe(e.id)
+    expect(preview?.hiddenCount).toBe(3)
+  })
+
+  it('collects compressed ids for nodes with deep linear chains only', () => {
+    const rootId = '1'.repeat(64)
+    const a = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 1,
+      tags: [['e', rootId, '', 'root']],
+      content: 'a',
+    })
+    const b = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 2,
+      tags: [['e', rootId, '', 'root'], ['e', a.id, '', 'reply']],
+      content: 'b',
+    })
+    const c = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 3,
+      tags: [['e', rootId, '', 'root'], ['e', b.id, '', 'reply']],
+      content: 'c',
+    })
+    const d = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 4,
+      tags: [['e', rootId, '', 'root'], ['e', c.id, '', 'reply']],
+      content: 'd',
+    })
+    const shortBranch = signEvent({
+      kind: Kind.ShortNote,
+      created_at: 5,
+      tags: [['e', rootId, '', 'root']],
+      content: 'short',
+    })
+
+    const tree = buildReplyTree([a, b, c, d, shortBranch])
+    const compressedIds = collectDefaultCompressedBranchIds(tree, 2)
+
+    expect(compressedIds.has(a.id)).toBe(true)
+    expect(compressedIds.has(shortBranch.id)).toBe(false)
   })
 })

@@ -93,6 +93,8 @@ npm run dev
 
 Open `http://localhost:5173`. The app requires HTTPS in production for full PWA features; `localhost` is treated as a secure context by all modern browsers.
 
+The dev server binds to `127.0.0.1` by default. Use `npm run dev:host` only for an intentional LAN or tunnel session, and pair it with the strict host allowlist in `vite.config.ts`.
+
 ### Google Safe Browsing (URL threat checks)
 
 This project supports Google Safe Browsing checks before fetching Open Graph previews.
@@ -168,17 +170,16 @@ The translation settings now include a Gemini cloud provider.
 3. Choose Provider = Gemini API (cloud).
 4. Enter your API key and optional model ID (default: `gemini-2.5-flash`).
 
-Optional local defaults in `.env.local`:
+Optional local model default in `.env.local`:
 
 ```bash
-VITE_GEMINI_API_KEY=<your-key>
 VITE_GEMINI_MODEL=gemini-2.5-flash
 ```
 
 Security notes:
 
-- API keys in browser apps can be extracted by users with local access.
-- Prefer a server-side proxy for production deployments.
+- Do not place Gemini, DeepL, Cloudflare, or Tenor secrets in `VITE_*` variables.
+- Browser-delivered environment variables are public. Use runtime user entry for personal keys or a server-side proxy for production deployments.
 - Restrict keys to the Generative Language API and rotate them regularly.
 
 ### Build

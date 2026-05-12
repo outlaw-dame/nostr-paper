@@ -9,14 +9,16 @@
     <title>Nostr Paper</title>
     <meta name="description"
           content="A local-first, decentralized social reader built on Nostr" />
-    <meta name="color-scheme" content="light" />
-    <meta name="theme-color" content="#f4f0e8" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f4f0e8" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f4f0e8" data-app-theme-color />
 
     <!-- PWA / iOS -->
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style"
-          content="default" />
+          content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Paper" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
 

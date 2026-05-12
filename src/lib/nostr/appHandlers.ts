@@ -80,6 +80,7 @@ export const NOSTR_PAPER_SUPPORTED_KINDS = [
   Kind.HandlerRecommendation,
   Kind.HandlerInformation,
   Kind.FollowSet,
+  Kind.DeprecatedListSet,
   Kind.RelaySet,
   Kind.BookmarkSet,
   Kind.ArticleCurationSet,

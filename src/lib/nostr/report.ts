@@ -3,8 +3,11 @@ import { insertEvent } from '@/lib/db/nostr'
 import type { ReportPublishDestination } from '@/lib/moderation/reportingSettings'
 import { withOptionalClientTag } from '@/lib/nostr/appHandlers'
 import { parseFileMetadataEvent } from '@/lib/nostr/fileMetadata'
-import { getNDK } from '@/lib/nostr/ndk'
-import { publishEventWithNip65Outbox } from '@/lib/nostr/outbox'
+import { getDefaultRelayUrls, getCurrentUser, getNDK } from '@/lib/nostr/ndk'
+import { encryptNip04, hasNip04Support } from '@/lib/nostr/nip04'
+import { encryptNip44, hasNip44Support } from '@/lib/nostr/nip44'
+import { publishEventWithNip65Outbox, shouldRetryNostrPublishError } from '@/lib/nostr/outbox'
+import { withRetry } from '@/lib/retry'
 import {
   isSafeURL,
   isValidHex32,
@@ -83,12 +86,30 @@ export interface PublishReportOptions {
   labels?: ReportLabel[]
   destination?: ReportPublishDestination
   privateRelayUrls?: string[]
+  moderatorRelayUrls?: string[]
+  moderatorPubkey?: string
 }
 
 export interface ReportDraft {
   kind: typeof Kind.Report
   content: string
   tags: string[][]
+}
+
+interface ModeratorServiceReportRequest {
+  version: 1
+  kind: 'moderation_report_request'
+  reporterPubkey: string
+  reportType: ReportType
+  reason: string
+  labels: ReportLabel[]
+  createdAt: number
+  target:
+    | { type: 'profile'; pubkey: string }
+    | {
+      type: 'event'
+      event: Pick<NostrEvent, 'id' | 'pubkey' | 'kind' | 'created_at' | 'content' | 'tags'>
+    }
 }
 
 export function normalizeReportType(value: string | undefined): ReportType | undefined {
@@ -159,6 +180,125 @@ function buildLabelTags(labels: ReportLabel[]): string[][] {
     ...namespaces.map((namespace) => ['L', namespace]),
     ...labels.map((label) => ['l', label.value, label.namespace]),
   ]
+}
+
+function buildModeratorServiceRequest(
+  target: ReportPublishTarget,
+  reporterPubkey: string,
+  options: PublishReportOptions,
+): ModeratorServiceReportRequest {
+  const normalizedReason = normalizeReportReason(options.reason)
+  const normalizedLabels = normalizePublishLabels(options.labels)
+
+  return {
+    version: 1,
+    kind: 'moderation_report_request',
+    reporterPubkey,
+    reportType: options.reportType,
+    reason: normalizedReason,
+    labels: normalizedLabels,
+    createdAt: Math.floor(Date.now() / 1000),
+    target: target.type === 'profile'
+      ? { type: 'profile', pubkey: target.pubkey }
+      : {
+          type: 'event',
+          event: {
+            id: target.event.id,
+            pubkey: target.event.pubkey,
+            kind: target.event.kind,
+            created_at: target.event.created_at,
+            content: target.event.content,
+            tags: target.event.tags,
+          },
+        },
+  }
+}
+
+async function publishModeratorServiceReport(
+  target: ReportPublishTarget,
+  options: PublishReportOptions,
+  signal?: AbortSignal,
+): Promise<NostrEvent> {
+  const ndk = getNDK()
+  if (!ndk.signer) {
+    throw new Error('No signer available — install a NIP-07 extension to publish reports.')
+  }
+
+  const currentUser = await getCurrentUser()
+  if (!currentUser?.pubkey || !isValidHex32(currentUser.pubkey)) {
+    throw new Error('Unable to resolve signer pubkey for private moderator report.')
+  }
+
+  const moderatorPubkey = options.moderatorPubkey?.trim().toLowerCase()
+  if (!moderatorPubkey || !isValidHex32(moderatorPubkey)) {
+    throw new Error('Moderator service destination requires a valid pubkey.')
+  }
+
+  const payload = JSON.stringify(buildModeratorServiceRequest(target, currentUser.pubkey, options))
+  const encryption = hasNip44Support() ? 'nip44' : hasNip04Support() ? 'nip04' : null
+  if (!encryption) {
+    throw new Error('Your signer does not expose NIP-44 or NIP-04 encryption for private moderator reports.')
+  }
+
+  const ciphertext = encryption === 'nip44'
+    ? await encryptNip44(moderatorPubkey, payload)
+    : await encryptNip04(moderatorPubkey, payload)
+
+  const event = new NDKEvent(ndk)
+  event.kind = Kind.EncryptedDm
+  event.content = ciphertext
+
+  const tags: string[][] = [
+    ['p', moderatorPubkey],
+    ['encrypted', encryption],
+    ['report', options.reportType],
+  ]
+
+  if (target.type === 'event') {
+    tags.push(['e', target.event.id])
+    tags.push(['p', target.event.pubkey])
+  } else {
+    tags.push(['p', target.pubkey])
+  }
+
+  try {
+    event.tags = await withOptionalClientTag(tags, signal)
+  } catch (error) {
+    console.warn('[report] client-tag enrichment degraded for moderator request:', error)
+    event.tags = tags
+  }
+
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+  await event.sign()
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+
+  const relayUrls = [...new Set([...(options.moderatorRelayUrls ?? []), ...getDefaultRelayUrls()]
+    .map((url) => url.trim())
+    .filter((url) => isValidRelayURL(url)))]
+
+  if (relayUrls.length === 0) {
+    throw new Error('Add at least one valid moderator relay URL before sending privately.')
+  }
+
+  const relaySet = NDKRelaySet.fromRelayUrls(relayUrls.slice(0, 12), ndk, true)
+
+  await withRetry(
+    async () => {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+      await event.publish(relaySet)
+    },
+    {
+      maxAttempts: 2,
+      baseDelayMs: 750,
+      maxDelayMs: 2_500,
+      shouldRetry: (error) => shouldRetryNostrPublishError(error),
+      ...(signal ? { signal } : {}),
+    },
+  )
+
+  const rawEvent = event.rawEvent() as unknown as NostrEvent
+  await insertEvent(rawEvent)
+  return rawEvent
 }
 
 function normalizePublishLabels(labels: ReportLabel[] | undefined): ReportLabel[] {
@@ -449,7 +589,14 @@ export async function publishReport(
   const event = new NDKEvent(ndk)
   event.kind = draft.kind
   event.content = draft.content
-  event.tags = await withOptionalClientTag(draft.tags, signal)
+  try {
+    event.tags = await withOptionalClientTag(draft.tags, signal)
+  } catch (error) {
+    // Client-tag enrichment is optional; report publishing must still work when
+    // discovery/handler lookup is degraded.
+    console.warn('[report] client-tag enrichment degraded:', error)
+    event.tags = draft.tags
+  }
 
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
   await event.sign()
@@ -466,8 +613,22 @@ export async function publishReport(
 
     const relaySet = NDKRelaySet.fromRelayUrls(privateRelayUrls, ndk, true)
     await event.publish(relaySet)
+  } else if (options.destination === 'moderator') {
+    return publishModeratorServiceReport(target, options, signal)
   } else {
-    await publishEventWithNip65Outbox(event, signal)
+    try {
+      await publishEventWithNip65Outbox(event, signal)
+    } catch (error) {
+      // Fall back to default relays if NIP-65 outbox fanout is temporarily
+      // unavailable so the report flow does not hard-fail for users.
+      console.warn('[report] outbox publish degraded, falling back:', error)
+      const fallbackRelayUrls = [...new Set(getDefaultRelayUrls().filter((url) => isValidRelayURL(url)))]
+      if (fallbackRelayUrls.length === 0) {
+        throw new Error('Failed to publish report: no writable relays available.')
+      }
+      const fallbackRelaySet = NDKRelaySet.fromRelayUrls(fallbackRelayUrls, ndk, true)
+      await event.publish(fallbackRelaySet)
+    }
   }
 
   const rawEvent = event.rawEvent() as unknown as NostrEvent

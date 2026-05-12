@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { NoteContent } from '@/components/cards/NoteContent'
 import { NoteMediaAttachments } from '@/components/nostr/NoteMediaAttachments'
 import { PollPreview } from '@/components/nostr/PollPreview'
+import { EventMetricsRow } from '@/components/nostr/EventMetricsRow'
 import { ThreadIndexBadge } from '@/components/nostr/ThreadIndexBadge'
 import { AuthorRow } from '@/components/profile/AuthorRow'
 import { TwemojiText } from '@/components/ui/TwemojiText'
@@ -10,6 +11,7 @@ import { useEventModeration } from '@/hooks/useModeration'
 import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { useProfile } from '@/hooks/useProfile'
 import { tApp } from '@/lib/i18n/app'
+import { getEventQualitySignals } from '@/lib/feed/qualitySignals'
 import {
   getHandlerDisplayName,
   getHandlerRecommendationSummary,
@@ -52,6 +54,7 @@ interface EventPreviewCardProps {
   linked?: boolean
   allowTranslation?: boolean
   translationSyncGroup?: string
+  showExplainability?: boolean
 }
 
 function getHref(event: NostrEvent): string {
@@ -413,6 +416,7 @@ export function EventPreviewCard({
   linked = true,
   allowTranslation = false,
   translationSyncGroup,
+  showExplainability = false,
 }: EventPreviewCardProps) {
   const threadIndex = useSelfThreadIndex(event)
   const threadInspectorEnabled = isThreadInspectorEnabled()
@@ -442,6 +446,8 @@ export function EventPreviewCard({
   const href = getHref(event)
   const numberedMarker = parseNumberedThreadMarker(event.content)
   const parsedReply = parseTextNoteReply(event)
+  const showEngagementSummary = Boolean(parseLongFormEvent(event) || parseVideoEvent(event))
+  const qualitySignals = getEventQualitySignals(event)
 
   const content = (
     <div className={`rounded-[18px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg-secondary))] p-3 ${className}`}>
@@ -473,6 +479,19 @@ export function EventPreviewCard({
 
       <ThreadIndexBadge threadIndex={threadIndex} className="mt-3" />
 
+      {showExplainability && qualitySignals.reasons.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {qualitySignals.reasons.map((reason) => (
+            <span
+              key={`${event.id}:${reason}`}
+              className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]"
+            >
+              {reason}
+            </span>
+          ))}
+        </div>
+      )}
+
       {threadInspectorEnabled && (
         <div className="mt-3 rounded-[12px] border border-[rgb(var(--color-fill)/0.18)] bg-[rgb(var(--color-bg))] px-2.5 py-2 font-mono text-[11px] leading-5 text-[rgb(var(--color-label-secondary))]">
           <p>kind={event.kind} id={event.id.slice(0, 12)}... sig={event.sig.slice(0, 12)}...</p>
@@ -492,6 +511,9 @@ export function EventPreviewCard({
         allowTranslation={allowTranslation}
         {...(translationSyncGroup !== undefined ? { translationSyncGroup } : {})}
       />
+      {showEngagementSummary && (
+        <EventMetricsRow event={event} className="mt-4" />
+      )}
     </div>
   )
 

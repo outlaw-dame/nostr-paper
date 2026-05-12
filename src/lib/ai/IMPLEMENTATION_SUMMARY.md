@@ -160,8 +160,7 @@ Device Routing Strategy:
 
 /*
 1. Environment Variables (.env.local)
-   VITE_CLOUDFLARE_ACCOUNT_ID=<your_account_id>
-   VITE_CLOUDFLARE_API_TOKEN=<your_api_token>
+   VITE_CLOUDFLARE_AI_PROXY_URL=/api/cloudflare-ai
 
 2. Cloudflare Account Setup
    - Create account: https://dash.cloudflare.com
@@ -462,7 +461,7 @@ See CLOUDFLARE_SETUP.md for:
 
 Common Issues:
   Q: "Cloudflare AI requires credentials..."
-  A: Add VITE_CLOUDFLARE_ACCOUNT_ID and VITE_CLOUDFLARE_API_TOKEN to .env.local
+  A: Configure a server-side proxy and set VITE_CLOUDFLARE_AI_PROXY_URL in .env.local
 
   Q: Always falling back to Gemma/Gemini
   A: Check isCloudflareAiAvailable() in console, verify credentials

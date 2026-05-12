@@ -45,24 +45,20 @@ export const CLOUDFLARE_RERANKER_MODEL_ID = '@cf/baai/bge-reranker-base'
 
 // ── Configuration ───────────────────────────────────────────
 
-const CLOUDFLARE_API_BASE = 'https://api.cloudflare.com/client/v4'
-
 interface CloudflareAiConfig {
-  accountId: string
-  apiToken: string
+  proxyUrl: string
 }
 
 function getCloudflareConfig(): CloudflareAiConfig {
-  const accountId = import.meta.env.VITE_CLOUDFLARE_ACCOUNT_ID?.trim()
-  const apiToken = import.meta.env.VITE_CLOUDFLARE_API_TOKEN?.trim()
+  const proxyUrl = import.meta.env.VITE_CLOUDFLARE_AI_PROXY_URL?.trim()
 
-  if (!accountId || !apiToken) {
+  if (!proxyUrl) {
     throw new Error(
-      'Cloudflare AI requires VITE_CLOUDFLARE_ACCOUNT_ID and VITE_CLOUDFLARE_API_TOKEN'
+      'Cloudflare AI requires a server-side VITE_CLOUDFLARE_AI_PROXY_URL. API tokens must not be shipped to the browser.'
     )
   }
 
-  return { accountId, apiToken }
+  return { proxyUrl }
 }
 
 // ── API Call Helper ─────────────────────────────────────────
@@ -92,21 +88,20 @@ async function callCloudflareAi(
   payload: CloudflareAiRequest,
   retryOpts = { maxAttempts: 2, baseDelayMs: 300 }
 ): Promise<CloudflareAiResponse> {
-  const { accountId, apiToken } = getCloudflareConfig()
+  const { proxyUrl } = getCloudflareConfig()
 
   const response = await withRetry(
     async () => {
-      const result = await fetch(
-        `${CLOUDFLARE_API_BASE}/accounts/${encodeURIComponent(accountId)}/ai/run/${encodeURIComponent(modelId)}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiToken}`,
-          },
-          body: JSON.stringify(payload),
-        }
-      )
+      const result = await fetch(proxyUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ modelId, payload }),
+        cache: 'no-store',
+        credentials: 'omit',
+      })
 
       if (!result.ok) {
         const detail = await result.text().catch(() => '')
@@ -270,8 +265,8 @@ export async function rerankResults(
  */
 export function isCloudflareAiAvailable(): boolean {
   try {
-    const { accountId, apiToken } = getCloudflareConfig()
-    return Boolean(accountId && apiToken)
+    const { proxyUrl } = getCloudflareConfig()
+    return Boolean(proxyUrl)
   } catch {
     return false
   }

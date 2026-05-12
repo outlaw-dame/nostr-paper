@@ -8,13 +8,12 @@
  *
  * Private keys NEVER enter this module.
  * All signing is delegated to the extension or remote signer.
- * NIP-46 remote signer support is planned for Phase 2.
+ * NIP-46 remote signer support is available through bunker:// tokens.
  */
 
 import NDK, {
   NDKNip07Signer,
   NDKNip46Signer,
-  NDKPrivateKeySigner,
   NDKRelay,
   type NDKCacheAdapter,
   type NDKCacheEntry,
@@ -293,8 +292,8 @@ export async function initNDK(options: InitNDKOptions = {}): Promise<NDK> {
     .filter(isUsableRelayUrl)
     .slice(0, 20) // hard cap
 
-  // Create signer — NIP-07 preferred, nsec localStorage fallback
-  let signer: NDKNip07Signer | NDKPrivateKeySigner | undefined
+  // Create signer. Private keys never enter this app.
+  let signer: NDKNip07Signer | undefined
   if (typeof window !== 'undefined' && 'nostr' in window) {
     try {
       signer = new NDKNip07Signer()
@@ -303,16 +302,10 @@ export async function initNDK(options: InitNDKOptions = {}): Promise<NDK> {
     }
   }
 
-  // Fall back to stored nsec (set via loginWithNsec)
-  if (!signer && typeof localStorage !== 'undefined') {
-    const savedNsec = localStorage.getItem('nostr-paper:nsec')
-    if (savedNsec) {
-      try {
-        signer = new NDKPrivateKeySigner(savedNsec)
-      } catch {
-        localStorage.removeItem('nostr-paper:nsec')
-      }
-    }
+  // Purge legacy persistent credentials from older builds instead of restoring them.
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem(STORAGE_KEY_NSEC)
+    localStorage.removeItem(STORAGE_KEY_NIP46_BUNKER)
   }
 
   _ndk = new NDK({
@@ -343,10 +336,9 @@ export async function initNDK(options: InitNDKOptions = {}): Promise<NDK> {
     initRelayOptimizer(relays)
   }
 
-  // Optional Phase 2 signer restore: reuse a persisted NIP-46 bunker token
-  // when no browser extension or nsec signer is configured.
-  if (!_ndk.signer && typeof localStorage !== 'undefined') {
-    const storedBunker = localStorage.getItem(STORAGE_KEY_NIP46_BUNKER)?.trim()
+  // Reuse a persisted NIP-46 bunker token when no browser extension is configured.
+  if (!_ndk.signer && typeof sessionStorage !== 'undefined') {
+    const storedBunker = sessionStorage.getItem(STORAGE_KEY_NIP46_BUNKER)?.trim()
     if (storedBunker?.startsWith('bunker://')) {
       try {
         _ndk.signer = await createNip46Signer(_ndk, storedBunker)
@@ -354,7 +346,7 @@ export async function initNDK(options: InitNDKOptions = {}): Promise<NDK> {
         console.warn('[NDK] Failed to restore NIP-46 signer:', error)
         // Self-heal invalid/stale tokens so future boots do not repeatedly
         // spend time on an unrecoverable signer handshake.
-        localStorage.removeItem(STORAGE_KEY_NIP46_BUNKER)
+        sessionStorage.removeItem(STORAGE_KEY_NIP46_BUNKER)
       }
     }
   }
@@ -412,17 +404,16 @@ export async function getCurrentUser(): Promise<NDKUser | null> {
 
 // ── Identity Helpers ─────────────────────────────────────────
 
-export const STORAGE_KEY_NSEC  = 'nostr-paper:nsec'
+export const STORAGE_KEY_NSEC = 'nostr-paper:nsec' // Legacy only; purged on boot/logout.
 export const STORAGE_KEY_PUBKEY = 'nostr-paper:pubkey'
-export const STORAGE_KEY_NIP46_BUNKER = 'nostr-paper:nip46-bunker'
+export const STORAGE_KEY_NIP46_BUNKER = 'nostr-paper:nip46-bunker' // Session-only signer token.
 
-export type ActiveSignerKind = 'none' | 'nip07' | 'nip46' | 'nsec'
+export type ActiveSignerKind = 'none' | 'nip07' | 'nip46'
 
 export function getActiveSignerKind(): ActiveSignerKind {
   if (!_ndk?.signer) return 'none'
   if (_ndk.signer instanceof NDKNip07Signer) return 'nip07'
   if (_ndk.signer instanceof NDKNip46Signer) return 'nip46'
-  if (_ndk.signer instanceof NDKPrivateKeySigner) return 'nsec'
   return 'none'
 }
 
@@ -473,22 +464,6 @@ export function isValidNip46BunkerToken(value: string): boolean {
 }
 
 /**
- * Log in with a private key (nsec). Stores nsec in localStorage
- * and attaches a signer to the live NDK instance.
- * Returns the hex pubkey on success.
- */
-export async function loginWithNsec(nsec: string): Promise<string> {
-  const signer = new NDKPrivateKeySigner(nsec)
-  const user = await signer.user()
-  const ndk = getNDK()
-  ndk.signer = signer
-  localStorage.setItem(STORAGE_KEY_NSEC, nsec)
-  localStorage.removeItem(STORAGE_KEY_PUBKEY)
-  localStorage.removeItem(STORAGE_KEY_NIP46_BUNKER)
-  return user.pubkey
-}
-
-/**
  * Log in with a NIP-46 bunker connection token (bunker://...).
  * The connected token is persisted for restore on next boot.
  */
@@ -503,7 +478,8 @@ export async function loginWithNip46Bunker(bunkerConnectionToken: string): Promi
   const user = await signer.user()
 
   ndk.signer = signer
-  localStorage.setItem(STORAGE_KEY_NIP46_BUNKER, token)
+  sessionStorage.setItem(STORAGE_KEY_NIP46_BUNKER, token)
+  localStorage.removeItem(STORAGE_KEY_NIP46_BUNKER)
   localStorage.removeItem(STORAGE_KEY_NSEC)
   localStorage.removeItem(STORAGE_KEY_PUBKEY)
 
@@ -518,6 +494,7 @@ export function loginWithPubkey(pubkey: string): void {
   localStorage.setItem(STORAGE_KEY_PUBKEY, pubkey)
   localStorage.removeItem(STORAGE_KEY_NSEC)
   localStorage.removeItem(STORAGE_KEY_NIP46_BUNKER)
+  sessionStorage.removeItem(STORAGE_KEY_NIP46_BUNKER)
 }
 
 /**
@@ -527,6 +504,7 @@ export function performLogout(): void {
   localStorage.removeItem(STORAGE_KEY_NSEC)
   localStorage.removeItem(STORAGE_KEY_PUBKEY)
   localStorage.removeItem(STORAGE_KEY_NIP46_BUNKER)
+  sessionStorage.removeItem(STORAGE_KEY_NIP46_BUNKER)
   if (_ndk) {
     if (_ndk.signer instanceof NDKNip46Signer) {
       _ndk.signer.stop()

@@ -35,11 +35,9 @@ Step 3: Get Account ID
 Create or update .env.local file in project root:
 
 # Cloudflare Workers AI Configuration
-VITE_CLOUDFLARE_ACCOUNT_ID=your_account_id_here
-VITE_CLOUDFLARE_API_TOKEN=your_api_token_here
+VITE_CLOUDFLARE_AI_PROXY_URL=/api/cloudflare-ai
 
-# Keep existing configuration
-VITE_GEMINI_API_KEY=...
+# Keep provider API tokens server-side. Do not expose them through VITE_*.
 VITE_RELAY_URL=...
 # etc.
 */
@@ -213,7 +211,7 @@ This shows why a specific model was chosen and fallback order.
 // ════════════════════════════════════════════════════════════════
 
 /*
-Problem: "Cloudflare AI requires VITE_CLOUDFLARE_ACCOUNT_ID..."
+Problem: "Cloudflare AI requires VITE_CLOUDFLARE_AI_PROXY_URL..."
   ✓ Solution: Add credentials to .env.local and restart dev server
   ✓ Verify: Visit https://dash.cloudflare.com to get credentials
   ✓ Test: Call isCloudflareAiAvailable() in console
@@ -253,8 +251,8 @@ Problem: Compose assistance always using fallback
 □ Create Cloudflare account (or use existing)
 □ Generate API token with Workers AI permissions
 □ Copy Account ID
-□ Add VITE_CLOUDFLARE_ACCOUNT_ID to .env.local
-□ Add VITE_CLOUDFLARE_API_TOKEN to .env.local
+□ Store the Cloudflare account ID and API token in your backend/proxy secret store
+□ Add VITE_CLOUDFLARE_AI_PROXY_URL to .env.local
 □ Restart development server (npm run dev)
 □ Open browser console and test:
   - import { isCloudflareAiAvailable } from '@/lib/ai/cloudflareAiProviders'

@@ -61,8 +61,8 @@ SUPPORTED RUNTIMES (4 options):
    ├─ Model: llama-3.1-8b-instruct (8B params on edge)
    ├─ Location: Cloudflare edge network
    ├─ Config:
-   │  ├─ VITE_CLOUDFLARE_ACCOUNT_ID = '96c9c5d8bdbf048cc9ccff02900d4e8b'
-   │  ├─ VITE_CLOUDFLARE_API_TOKEN = '<redacted_token>'
+   │  ├─ VITE_CLOUDFLARE_AI_PROXY_URL = '/api/cloudflare-ai'
+   │  ├─ Cloudflare account ID/API token stay server-side
    │  ├─ VITE_ROUTER_RUNTIME = 'cloudflare'
    │  └─ Model ID: '@cf/meta/llama-3.1-8b-instruct'
    ├─ Inference: classifyWithCloudflare()
@@ -217,7 +217,7 @@ TEXT MODERATION:
    ├─ Task: Multi-category content safety
    ├─ Location: Cloudflare edge
    ├─ Categories: toxicity, hate speech, violence, sexual content, etc.
-   ├─ Config: VITE_CLOUDFLARE_API_TOKEN + ACCOUNT_ID
+   ├─ Config: VITE_CLOUDFLARE_AI_PROXY_URL server-side proxy
    ├─ Output: safe/unsafe + category labels
    ├─ Speed: ~200-400ms (network dependent)
    └─ Advantage: State-of-the-art, handles edge cases better
@@ -278,7 +278,7 @@ TRANSLATION ENGINES:
 
 1. Gemini API (Default - Highest Quality)
    ├─ Model: gemini-2.5-flash
-   ├─ Config: VITE_GEMINI_API_KEY = (required)
+   ├─ Config: user-provided runtime key or server-side proxy
    ├─ Speed: ~500ms-2s per translation
    ├─ Quality: Excellent (understands context)
    ├─ Languages: 26+ pairs documented
@@ -325,7 +325,7 @@ FALLBACK CHAIN:
   Gemini API → Opus-MT (browser) → SMaLL-100 (if running) → No translation
 
 CONFIGURATION:
-  ├─ VITE_GEMINI_API_KEY = 'AIzaSyB2B0G_mLlsox4b_Nnmh0-IMD0YbWd9_lw' (set)
+  ├─ Gemini API key = user-provided at runtime or proxied server-side
   ├─ Translation Preferences: User setting (translate all, on-demand, never)
   └─ Language Detection: Auto-detect from post language
 

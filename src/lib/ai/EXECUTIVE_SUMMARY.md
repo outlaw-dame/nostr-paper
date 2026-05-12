@@ -46,10 +46,9 @@ RESULT:
 
 /*
 IN .env.local (SECURED):
-  ✅ VITE_CLOUDFLARE_ACCOUNT_ID = 96c9c5d8bdbf048cc9ccff02900d4e8b
-  ✅ VITE_CLOUDFLARE_API_TOKEN = <redacted_token>
-  ✅ Both in .gitignored file (never committed)
-  ✅ Ready to activate immediately
+  ✅ VITE_CLOUDFLARE_AI_PROXY_URL = /api/cloudflare-ai
+  ✅ Cloudflare account ID/API token stay server-side
+  ✅ Browser bundle never receives provider secrets
 
 NEW MODULE FILES CREATED:
 

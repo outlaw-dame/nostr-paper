@@ -12,11 +12,8 @@ const LOCAL_MODEL_PATH = typeof import.meta.env.VITE_ROUTER_LOCAL_MODEL_PATH ===
   ? import.meta.env.VITE_ROUTER_LOCAL_MODEL_PATH.trim()
   : ''
 const WEBLLM_MODEL_ID = import.meta.env.VITE_WEBLLM_MODEL_ID ?? 'Llama-3.2-1B-Instruct-q4f32_1-MLC'
-const CLOUDFLARE_ACCOUNT_ID = typeof import.meta.env.VITE_CLOUDFLARE_ACCOUNT_ID === 'string'
-  ? import.meta.env.VITE_CLOUDFLARE_ACCOUNT_ID.trim()
-  : ''
-const CLOUDFLARE_API_TOKEN = typeof import.meta.env.VITE_CLOUDFLARE_API_TOKEN === 'string'
-  ? import.meta.env.VITE_CLOUDFLARE_API_TOKEN.trim()
+const CLOUDFLARE_AI_PROXY_URL = typeof import.meta.env.VITE_CLOUDFLARE_AI_PROXY_URL === 'string'
+  ? import.meta.env.VITE_CLOUDFLARE_AI_PROXY_URL.trim()
   : ''
 const CLOUDFLARE_MODEL_ID = import.meta.env.VITE_CLOUDFLARE_ROUTER_MODEL_ID ?? '@cf/meta/llama-3.1-8b-instruct'
 // Router-specific LiteRT model path. Use VITE_ROUTER_LITERT_MODEL_PATH to deploy a small
@@ -228,13 +225,12 @@ async function classifyWithLiteRt(query: string): Promise<SearchIntent> {
   return intent
 }
 
-function getCloudflareConfig(): { accountId: string; apiToken: string; modelId: string } {
-  if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_API_TOKEN) {
-    throw new Error('Cloudflare runtime requires VITE_CLOUDFLARE_ACCOUNT_ID and VITE_CLOUDFLARE_API_TOKEN.')
+function getCloudflareConfig(): { proxyUrl: string; modelId: string } {
+  if (!CLOUDFLARE_AI_PROXY_URL) {
+    throw new Error('Cloudflare runtime requires VITE_CLOUDFLARE_AI_PROXY_URL. API tokens must stay server-side.')
   }
   return {
-    accountId: CLOUDFLARE_ACCOUNT_ID,
-    apiToken: CLOUDFLARE_API_TOKEN,
+    proxyUrl: CLOUDFLARE_AI_PROXY_URL,
     modelId: CLOUDFLARE_MODEL_ID,
   }
 }
@@ -243,26 +239,28 @@ async function classifyWithCloudflare(query: string): Promise<SearchIntent> {
   const cached = getCachedIntent('cloudflare', query)
   if (cached !== undefined) return cached
 
-  const { accountId, apiToken, modelId } = getCloudflareConfig()
+  const { proxyUrl, modelId } = getCloudflareConfig()
   const response = await withRetry(async () => {
-    const result = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${encodeURIComponent(modelId)}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiToken}`,
-        },
-        body: JSON.stringify({
+    const result = await fetch(proxyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        modelId,
+        payload: {
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },
             { role: 'user', content: buildSearchIntentUserPrompt(query) },
           ],
           max_tokens: 4,
           temperature: 0,
-        }),
-      },
-    )
+        },
+      }),
+      cache: 'no-store',
+      credentials: 'omit',
+    })
 
     if (!result.ok) {
       const detail = await result.text().catch(() => '')

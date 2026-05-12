@@ -1,14 +1,14 @@
 import { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type { NostrEvent } from '@/types'
 import type { FilterCheckResult, KeywordFilter } from '@/lib/filters/types'
 import { useSemanticFiltering } from './useKeywordFilters'
 
 interface MockRefs {
   currentFilters: KeywordFilter[]
-  loadFilters: ReturnType<typeof vi.fn>
-  rankSemanticDocuments: ReturnType<typeof vi.fn>
+  loadFilters: Mock<() => Promise<KeywordFilter[]>>
+  rankSemanticDocuments: Mock<(...args: unknown[]) => Promise<Array<{ id: string; score: number }>>>
 }
 
 const mockRefs: MockRefs = {
@@ -26,7 +26,7 @@ const mockRefs: MockRefs = {
     },
   ] as KeywordFilter[],
   loadFilters: vi.fn<() => Promise<KeywordFilter[]>>(),
-  rankSemanticDocuments: vi.fn(),
+  rankSemanticDocuments: vi.fn<(...args: unknown[]) => Promise<Array<{ id: string; score: number }>>>(),
 }
 
 vi.mock('@/lib/filters/systemFilters', () => ({
@@ -36,7 +36,7 @@ vi.mock('@/lib/filters/systemFilters', () => ({
 
 vi.mock('@/lib/filters/storage', () => ({
   FILTERS_UPDATED_EVENT: 'nostr-paper:keyword-filters-updated',
-  loadFilters: (...args: unknown[]) => mockRefs.loadFilters(...args),
+  loadFilters: () => mockRefs.loadFilters(),
   createFilter: vi.fn(),
   updateFilter: vi.fn(),
   deleteFilter: vi.fn(),

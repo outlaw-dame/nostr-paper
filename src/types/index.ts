@@ -125,6 +125,7 @@ export const Kind = {
   AddressableVideo:  34235,
   AddressableShortVideo: 34236,
   FollowSet:         30000,
+  DeprecatedListSet: 30001,
   RelaySet:          30002,
   BookmarkSet:       30003,
   ArticleCurationSet: 30004,

@@ -1,5 +1,5 @@
-import { Icon } from 'konsta/react'
-import { appIcons, type NavIconKey } from '@/design/icons/semanticIcons'
+import { AppIcon } from '@/design/icons/AppIcon'
+import type { NavIconKey } from '@/design/icons/semanticIcons'
 
 type AppTabIconProps = {
   icon: NavIconKey
@@ -7,11 +7,5 @@ type AppTabIconProps = {
 }
 
 export function AppTabIcon({ icon, active }: AppTabIconProps) {
-  const entry = appIcons[icon]
-  return (
-    <Icon
-      ios={active ? entry.iosActive : entry.iosInactive}
-      material={active ? entry.materialActive : entry.materialInactive}
-    />
-  )
+  return <AppIcon name={icon} active={active} />
 }

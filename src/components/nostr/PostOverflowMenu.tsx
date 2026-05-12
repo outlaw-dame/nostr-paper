@@ -28,6 +28,7 @@ export function PostOverflowMenu({
   const muted = isMuted(event.pubkey)
   const displayName = profile?.display_name ?? profile?.name ?? `${event.pubkey.slice(0, 8)}...`
   const canMute = Boolean(currentUser && !isSelf)
+  const canReport = Boolean(currentUser)
   const inverseTone = tone === 'inverse'
 
   useEffect(() => {
@@ -117,7 +118,7 @@ export function PostOverflowMenu({
               type="button"
               role="menuitem"
               className="flex w-full items-center rounded-[10px] px-3 py-2 text-left text-[13px] font-medium text-[rgb(var(--color-system-red))] transition-colors hover:bg-[rgb(var(--color-system-red)/0.08)] disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={reported}
+              disabled={reported || !canReport}
               onClick={(clickEvent) => {
                 clickEvent.preventDefault()
                 clickEvent.stopPropagation()
@@ -125,7 +126,7 @@ export function PostOverflowMenu({
                 setReportOpen(true)
               }}
             >
-              {reported ? 'Reported' : 'Report post'}
+              {!canReport ? 'Sign in to report' : reported ? 'Reported' : 'Report post'}
             </button>
           </div>
         )}

@@ -19,11 +19,13 @@ function getDraftKey(context: DraftContext): string {
 describe('compose drafts persistence', () => {
   beforeEach(() => {
     localStorage.clear()
+    sessionStorage.clear()
     vi.useRealTimers()
   })
 
   afterEach(() => {
     localStorage.clear()
+    sessionStorage.clear()
     vi.useRealTimers()
   })
 
@@ -40,30 +42,30 @@ describe('compose drafts persistence', () => {
   })
 
   it('self-heals corrupt JSON payloads by removing broken draft keys', () => {
-    localStorage.setItem(getDraftKey('note'), '{ broken json')
+    sessionStorage.setItem(getDraftKey('note'), '{ broken json')
 
     expect(readDraft('note')).toBeNull()
-    expect(localStorage.getItem(getDraftKey('note'))).toBeNull()
+    expect(sessionStorage.getItem(getDraftKey('note'))).toBeNull()
   })
 
   it('expires stale drafts older than 7 days', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-10T00:00:00Z'))
 
-    localStorage.setItem(getDraftKey('note'), JSON.stringify({
+    sessionStorage.setItem(getDraftKey('note'), JSON.stringify({
       body: 'old draft',
       savedAt: Date.now() - (8 * DAY_MS),
     }))
 
     expect(readDraft('note')).toBeNull()
-    expect(localStorage.getItem(getDraftKey('note'))).toBeNull()
+    expect(sessionStorage.getItem(getDraftKey('note'))).toBeNull()
   })
 
-  it('rejects oversized draft bodies to avoid localStorage abuse', () => {
+  it('rejects oversized draft bodies to avoid sessionStorage abuse', () => {
     writeDraft('note', { body: 'a'.repeat((256 * 1024) + 1) })
 
     expect(readDraft('note')).toBeNull()
-    expect(localStorage.getItem(getDraftKey('note'))).toBeNull()
+    expect(sessionStorage.getItem(getDraftKey('note'))).toBeNull()
   })
 
   it('clears a saved draft explicitly', () => {
@@ -77,22 +79,32 @@ describe('compose drafts persistence', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-10T00:00:00Z'))
 
-    localStorage.setItem(getDraftKey('note'), JSON.stringify({
+    sessionStorage.setItem(getDraftKey('note'), JSON.stringify({
       body: 'fresh',
       savedAt: Date.now() - DAY_MS,
     }))
-    localStorage.setItem(getDraftKey('reply:abc123'), JSON.stringify({
+    sessionStorage.setItem(getDraftKey('reply:abc123'), JSON.stringify({
       body: 'expired',
       savedAt: Date.now() - (9 * DAY_MS),
     }))
-    localStorage.setItem(getDraftKey('quote:def456'), '{not-json')
+    sessionStorage.setItem(getDraftKey('quote:def456'), '{not-json')
     localStorage.setItem('nostr-paper:other-key', 'keep-me')
 
     pruneExpiredDrafts()
 
     expect(readDraft('note')?.body).toBe('fresh')
-    expect(localStorage.getItem(getDraftKey('reply:abc123'))).toBeNull()
-    expect(localStorage.getItem(getDraftKey('quote:def456'))).toBeNull()
+    expect(sessionStorage.getItem(getDraftKey('reply:abc123'))).toBeNull()
+    expect(sessionStorage.getItem(getDraftKey('quote:def456'))).toBeNull()
     expect(localStorage.getItem('nostr-paper:other-key')).toBe('keep-me')
+  })
+
+  it('purges legacy persistent draft entries without restoring them', () => {
+    localStorage.setItem(getDraftKey('note'), JSON.stringify({
+      body: 'legacy persistent draft',
+      savedAt: Date.now(),
+    }))
+
+    expect(readDraft('note')).toBeNull()
+    expect(localStorage.getItem(getDraftKey('note'))).toBeNull()
   })
 })

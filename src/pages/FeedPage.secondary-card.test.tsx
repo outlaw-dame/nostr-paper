@@ -226,6 +226,7 @@ describe('SecondaryCard', () => {
             semanticResult={allowResult}
             feedInlineAutoplayEnabled
             activeSectionId="feed"
+            showExplainability
           />
         </MemoryRouter>,
       )

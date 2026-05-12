@@ -85,21 +85,25 @@ async function injectCrossOriginHeaders(request: Request): Promise<Response> {
   headers.set('Cross-Origin-Embedder-Policy', 'credentialless')
   headers.set('Content-Security-Policy', [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' 'unsafe-eval'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "script-src 'self' 'wasm-unsafe-eval'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' https: data: blob:",
     "media-src 'self' https: blob:",
     "connect-src 'self' wss: https:",
     "font-src 'self' data:",
+    "worker-src 'self' blob:",
+    "manifest-src 'self'",
     "frame-src 'none'",
-    "object-src 'none'",
-    "base-uri 'self'",
     "form-action 'self'",
+    "upgrade-insecure-requests",
   ].join('; '))
   headers.set('X-Content-Type-Options', 'nosniff')
   headers.set('X-Frame-Options',        'DENY')
   headers.set('Referrer-Policy',        'no-referrer')
-  headers.set('Permissions-Policy',     'camera=(), microphone=(), geolocation=(self), payment=()')
+  headers.set('Permissions-Policy',     'camera=(), microphone=(), geolocation=(), payment=()')
   return new Response(response.body, {
     status: response.status, statusText: response.statusText, headers,
   })

@@ -36,12 +36,14 @@ import { useTrendingLinks } from '@/hooks/useTrendingLinks'
 import { usePopularProfiles } from '@/hooks/usePopularProfiles'
 import { useSuggestedProfiles } from '@/hooks/useSuggestedProfiles'
 import { useSemanticFollowPacks } from '@/hooks/useSemanticFollowPacks'
+import { useTrendingContent } from '@/hooks/useTrendingContent'
 import { useFollowStatus } from '@/hooks/useFollowStatus'
 import { useRuntimeFeatureFlags } from '@/hooks/useRuntimeFeatureFlags'
 import { TrendingLinkCard } from '@/components/links/TrendingLinkCard'
 import { NewsBlindspotPanel } from '@/components/explore/NewsBlindspotPanel'
 import { getProfiles } from '@/lib/db/nostr'
 import type { TrendingLinkStat } from '@/lib/explore/trendingLinks'
+import type { RankedTrendingContent } from '@/lib/explore/trendingContent'
 import {
   getExploreFollowPackLabel,
   getExploreFollowPackSummary,
@@ -71,6 +73,7 @@ import type { FilterCheckResult } from '@/lib/filters/types'
 import type { NostrEvent, Profile } from '@/types'
 import { Kind } from '@/types'
 import type { RecentHashtagStat } from '@/lib/db/nostr'
+import { getShowTrendingReasons, TRENDING_REASONS_UPDATED_EVENT } from '@/lib/explore/trendingReasonsSettings'
 
 const SEARCHABLE_KINDS = [
   Kind.ShortNote,
@@ -129,9 +132,21 @@ export default function ExplorePage() {
   const [linksWindow,  setLinksWindow]  = useState<'today' | 'week'>('week')
   const { topics, loading: topicsLoading } = useTrendingTopics(24, topicsWindow)
   const { links,  loading: linksLoading  } = useTrendingLinks(8,  linksWindow)
+  const { items: trendingContent, loading: trendingContentLoading } = useTrendingContent(6)
   const { packs: followPackCandidates, loading: followPackLoading } = useExploreFollowPacks(18)
   const { profiles: suggestedProfiles, loading: suggestedLoading } = useSuggestedProfiles(currentUser?.pubkey, 8)
   const { profiles: popularProfiles, loading: popularLoading } = usePopularProfiles(8)
+  const [showTrendingReasons, setShowTrendingReasons] = useState(() => getShowTrendingReasons())
+
+  useEffect(() => {
+    const handleUpdated = () => setShowTrendingReasons(getShowTrendingReasons())
+    window.addEventListener('storage', handleUpdated)
+    window.addEventListener(TRENDING_REASONS_UPDATED_EVENT, handleUpdated)
+    return () => {
+      window.removeEventListener('storage', handleUpdated)
+      window.removeEventListener(TRENDING_REASONS_UPDATED_EVENT, handleUpdated)
+    }
+  }, [])
 
   useEffect(() => {
     if (!currentUser?.pubkey) {
@@ -522,6 +537,10 @@ export default function ExplorePage() {
             suggestedLoading={suggestedLoading}
             popularProfiles={popularProfiles}
             popularLoading={popularLoading}
+            trendingContent={trendingContent}
+            trendingContentLoading={trendingContentLoading}
+            showTrendingReasons={showTrendingReasons}
+            checkEvent={checkEvent}
           />
         ) : showSkeleton ? (
           <div className="space-y-3 mt-2">
@@ -594,6 +613,10 @@ function ExploreContent({
   suggestedLoading,
   popularProfiles,
   popularLoading,
+  trendingContent,
+  trendingContentLoading,
+  showTrendingReasons,
+  checkEvent,
 }: {
   topics: RecentHashtagStat[]
   topicsLoading: boolean
@@ -615,9 +638,54 @@ function ExploreContent({
   suggestedLoading: boolean
   popularProfiles: Profile[]
   popularLoading: boolean
+  trendingContent: RankedTrendingContent[]
+  trendingContentLoading: boolean
+  showTrendingReasons: boolean
+  checkEvent: (event: NostrEvent, profile?: Profile) => FilterCheckResult
 }) {
   return (
     <div className="space-y-8 mt-4">
+
+      {/* Popular & trending content */}
+      <section>
+        <div className="flex items-center justify-between px-1 mb-3">
+          <div>
+            <h2 className="section-kicker">Popular & trending</h2>
+            <p className="mt-1 text-[11px] text-[rgb(var(--color-label-tertiary))]">
+              Posts, articles, threads, and videos ranked with Reddit hotness, Wilson confidence, and quality signals.
+            </p>
+          </div>
+        </div>
+        {trendingContentLoading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="h-[180px] rounded-ios-xl bg-[rgb(var(--color-fill)/0.08)] animate-pulse" />
+            ))}
+          </div>
+        ) : trendingContent.length > 0 ? (
+          <div className="space-y-3">
+            {trendingContent.map((item, i) => (
+              <motion.div
+                key={item.event.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.18, delay: i * 0.04 }}
+              >
+                <EventResult
+                  event={item.event}
+                  checkEvent={checkEvent}
+                  semanticResult={EMPTY_FILTER_RESULT}
+                  trendReasons={showTrendingReasons ? item.reasons : []}
+                />
+              </motion.div>
+            ))}
+          </div>
+        ) : (
+          <p className="px-1 text-[14px] text-[rgb(var(--color-label-tertiary))]">
+            No trending content yet.
+          </p>
+        )}
+      </section>
 
       {/* Trending topics */}
       <section>
@@ -1061,10 +1129,12 @@ function EventResult({
   event,
   checkEvent,
   semanticResult,
+  trendReasons,
 }: {
   event: NostrEvent
   checkEvent: (event: NostrEvent, profile?: Profile) => FilterCheckResult
   semanticResult: FilterCheckResult
+  trendReasons?: string[]
 }) {
   const { profile } = useProfile(event.pubkey, { background: false })
   const threadIndex = useSelfThreadIndex(event)
@@ -1108,6 +1178,19 @@ function EventResult({
           <h3 className="mt-3 text-[20px] leading-tight font-semibold tracking-[-0.02em] text-[rgb(var(--color-label))]">
             {article?.title ?? video?.title ?? thread?.title}
           </h3>
+        )}
+
+        {trendReasons && trendReasons.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {trendReasons.slice(0, 3).map((reason) => (
+              <span
+                key={reason}
+                className="rounded-full bg-[rgb(var(--color-fill)/0.10)] px-2.5 py-1 text-[11px] font-medium text-[rgb(var(--color-label-secondary))]"
+              >
+                {reason}
+              </span>
+            ))}
+          </div>
         )}
 
         <ThreadIndexBadge threadIndex={threadIndex} className="mt-3" />

@@ -79,10 +79,10 @@ export default function SettingsPage() {
   const [displayNameSaving, setDisplayNameSaving] = useState(false)
   const [displayNameError, setDisplayNameError] = useState<string | null>(null)
   const [displayNameSaved, setDisplayNameSaved] = useState(false)
-  const [signerKind, setSignerKind] = useState<'none' | 'nip07' | 'nip46' | 'nsec'>('none')
+  const [signerKind, setSignerKind] = useState<'none' | 'nip07' | 'nip46'>('none')
   const [nip46TokenDraft, setNip46TokenDraft] = useState(() => {
-    if (typeof localStorage === 'undefined') return ''
-    return localStorage.getItem(STORAGE_KEY_NIP46_BUNKER) ?? ''
+    if (typeof sessionStorage === 'undefined') return ''
+    return sessionStorage.getItem(STORAGE_KEY_NIP46_BUNKER) ?? ''
   })
   const [nip46Connecting, setNip46Connecting] = useState(false)
   const [nip46Error, setNip46Error] = useState<string | null>(null)
@@ -309,9 +309,7 @@ export default function SettingsPage() {
 
   const signedInHint = signerKind === 'nip46'
     ? tApp('settingsSignedInHintNip46')
-    : signerKind === 'nsec'
-      ? tApp('settingsSignedInHintNsec')
-      : tApp('settingsSignedInHintNip07')
+    : tApp('settingsSignedInHintNip07')
 
   const handleClearMusicStatus = async () => {
     if (!currentUser?.pubkey) return
@@ -668,7 +666,7 @@ export default function SettingsPage() {
                 <div className="flex-1">
                   <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">Spotify</p>
                   <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
-                    Shares what&apos;s playing across all your Spotify clients — desktop, mobile, and web. Uses OAuth 2.0 PKCE; no password is stored.
+                    Shares what&apos;s playing across all your Spotify clients — desktop, mobile, and web. Uses OAuth 2.0 PKCE; tokens stay session-only.
                   </p>
                 </div>
                 {spotifyConnected && (
@@ -741,7 +739,7 @@ export default function SettingsPage() {
                   <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">Apple Music</p>
                   <p className="mt-1 text-[13px] leading-5 text-[rgb(var(--color-label-secondary))]">
                     {appleMusicConfigured
-                      ? 'Connect via MusicKit JS. Note: this reads music playing within this app only. For music.apple.com playback in another tab, Browser Auto-detect handles that automatically.'
+                      ? 'Connect via MusicKit JS with a session-only user token. Note: this reads music playing within this app only. For music.apple.com playback in another tab, Browser Auto-detect handles that automatically.'
                       : appleMusicConfigurationIssue === 'expired'
                         ? 'Apple Music developer token is expired. Rotate VITE_APPLE_MUSIC_DEVELOPER_TOKEN to re-enable sign-in.'
                         : appleMusicConfigurationIssue === 'invalid-format'

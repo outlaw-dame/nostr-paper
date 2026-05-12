@@ -254,7 +254,7 @@ describe('useNostrFeed', () => {
       subscription.handlers.event!({
         rawEvent: () => rawEvent,
       })
-      await vi.advanceTimersByTimeAsync(100)
+      await vi.advanceTimersByTimeAsync(220)
       await flush()
     })
 
@@ -304,7 +304,7 @@ describe('useNostrFeed', () => {
       subscription.handlers.event!({
         rawEvent: () => rawEvent,
       })
-      await vi.advanceTimersByTimeAsync(100)
+      await vi.advanceTimersByTimeAsync(220)
       await flush()
     })
 
@@ -365,22 +365,22 @@ describe('useNostrFeed', () => {
           rawEvent: () => event,
         })
       }
-      await vi.advanceTimersByTimeAsync(100)
+      await vi.advanceTimersByTimeAsync(220)
       await flush()
     })
 
     expect(latest.events.map((event) => event.id)).toEqual(['cached-event'])
-    expect(latest.pendingEventCount).toBe(40)
+    expect(latest.pendingEventCount).toBe(12)
 
     await act(async () => {
       latest.applyPendingEvents()
       await flush()
     })
 
-    expect(latest.events).toHaveLength(41)
+    expect(latest.events).toHaveLength(13)
     expect(latest.events[0]?.id).toBe('buffered-55')
-    expect(latest.events[39]?.id).toBe('buffered-16')
-    expect(latest.events[40]?.id).toBe('cached-event')
+    expect(latest.events[11]?.id).toBe('buffered-44')
+    expect(latest.events[12]?.id).toBe('cached-event')
     vi.useRealTimers()
   })
 

@@ -82,6 +82,7 @@ const DEV_FEED_PROXY_TIMEOUT_MS = 12_000
 const DEV_FEED_PROXY_MAX_BYTES = 1 * 1024 * 1024
 const DEV_FEED_PROXY_MAX_REDIRECTS = 3
 const DEV_SERVER_PORT = Number.parseInt(process.env.VITE_DEV_PORT ?? '5173', 10) || 5173
+const DEV_SERVER_HOST = (process.env.DEV_SERVER_HOST ?? '127.0.0.1').trim() || '127.0.0.1'
 const ENABLE_LOCAL_CROSS_ORIGIN_ISOLATION = process.env.VITE_ENABLE_LOCAL_COI !== 'false'
 const SAFE_BROWSING_BACKEND_ORIGIN = (process.env.SAFE_BROWSING_BACKEND_ORIGIN ?? 'http://127.0.0.1:7080').trim()
 const FACT_CHECK_BACKEND_ORIGIN = (process.env.FACT_CHECK_BACKEND_ORIGIN ?? 'http://127.0.0.1:7080').trim()
@@ -1702,7 +1703,7 @@ export default defineConfig(({ mode }) => {
     assetsInclude: ['**/*.wasm'],
 
     server: {
-      host: '0.0.0.0',
+      host: DEV_SERVER_HOST,
       port: DEV_SERVER_PORT,
       strictPort: true,
       allowedHosts: ['localhost', '127.0.0.1', '.trycloudflare.com'],

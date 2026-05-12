@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -78,6 +80,8 @@ vi.mock('@/lib/nostr/appHandlers', () => ({
 vi.mock('@/lib/nostr/lists', () => ({
   getFreshNip51ListEvents: vi.fn().mockResolvedValue([]),
   getNip51ListLabel: () => 'List',
+  getNip51ListDisplayText: () => ({ title: 'List', description: 'List description' }),
+  getNip51ListDefinitions: () => [],
 }))
 
 vi.mock('@/lib/nostr/nip21', () => ({

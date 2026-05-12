@@ -2,53 +2,53 @@
 
 import { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type { NostrEvent, Profile } from '@/types'
 import type { CreateFilterInput, FilterCheckResult, KeywordFilter } from '@/lib/filters/types'
 import { useEventFilterCheck, useKeywordFilters, useProfileFilterCheck } from './useKeywordFilters'
 
 interface MockRefs {
   currentFilters: KeywordFilter[]
-  loadFilters: ReturnType<typeof vi.fn>
-  createFilter: ReturnType<typeof vi.fn>
-  updateFilter: ReturnType<typeof vi.fn>
-  deleteFilter: ReturnType<typeof vi.fn>
-  getEffectiveKeywordFilters: ReturnType<typeof vi.fn>
-  extractEventFields: ReturnType<typeof vi.fn>
-  extractProfileFields: ReturnType<typeof vi.fn>
-  checkEventText: ReturnType<typeof vi.fn>
-  checkProfileText: ReturnType<typeof vi.fn>
+  loadFilters: Mock<() => Promise<KeywordFilter[]>>
+  createFilter: Mock<(input: CreateFilterInput) => Promise<KeywordFilter>>
+  updateFilter: Mock<(id: string, patch: Partial<KeywordFilter>) => Promise<void>>
+  deleteFilter: Mock<(id: string) => Promise<void>>
+  getEffectiveKeywordFilters: Mock<(filters: KeywordFilter[]) => KeywordFilter[]>
+  extractEventFields: Mock<(event: NostrEvent) => unknown>
+  extractProfileFields: Mock<(profile: Profile) => unknown>
+  checkEventText: Mock<(...args: unknown[]) => FilterCheckResult>
+  checkProfileText: Mock<(...args: unknown[]) => FilterCheckResult>
 }
 
 const mockRefs: MockRefs = {
   currentFilters: [],
   loadFilters: vi.fn<() => Promise<KeywordFilter[]>>(),
-  createFilter: vi.fn<() => Promise<KeywordFilter>>(),
-  updateFilter: vi.fn<() => Promise<void>>(),
-  deleteFilter: vi.fn<() => Promise<void>>(),
-  getEffectiveKeywordFilters: vi.fn(),
-  extractEventFields: vi.fn(),
-  extractProfileFields: vi.fn(),
-  checkEventText: vi.fn(),
-  checkProfileText: vi.fn(),
+  createFilter: vi.fn<(input: CreateFilterInput) => Promise<KeywordFilter>>(),
+  updateFilter: vi.fn<(id: string, patch: Partial<KeywordFilter>) => Promise<void>>(),
+  deleteFilter: vi.fn<(id: string) => Promise<void>>(),
+  getEffectiveKeywordFilters: vi.fn<(filters: KeywordFilter[]) => KeywordFilter[]>(),
+  extractEventFields: vi.fn<(event: NostrEvent) => unknown>(),
+  extractProfileFields: vi.fn<(profile: Profile) => unknown>(),
+  checkEventText: vi.fn<(...args: unknown[]) => FilterCheckResult>(),
+  checkProfileText: vi.fn<(...args: unknown[]) => FilterCheckResult>(),
 }
 
 vi.mock('@/lib/filters/storage', () => ({
   FILTERS_UPDATED_EVENT: 'nostr-paper:keyword-filters-updated',
-  loadFilters: (...args: unknown[]) => mockRefs.loadFilters(...args),
-  createFilter: (...args: unknown[]) => mockRefs.createFilter(...args),
-  updateFilter: (...args: unknown[]) => mockRefs.updateFilter(...args),
-  deleteFilter: (...args: unknown[]) => mockRefs.deleteFilter(...args),
+  loadFilters: () => mockRefs.loadFilters(),
+  createFilter: (input: CreateFilterInput) => mockRefs.createFilter(input),
+  updateFilter: (id: string, patch: Partial<KeywordFilter>) => mockRefs.updateFilter(id, patch),
+  deleteFilter: (id: string) => mockRefs.deleteFilter(id),
 }))
 
 vi.mock('@/lib/filters/systemFilters', () => ({
   SYSTEM_KEYWORD_FILTERS: [],
-  getEffectiveKeywordFilters: (...args: unknown[]) => mockRefs.getEffectiveKeywordFilters(...args),
+  getEffectiveKeywordFilters: (filters: KeywordFilter[]) => mockRefs.getEffectiveKeywordFilters(filters),
 }))
 
 vi.mock('@/lib/filters/extract', () => ({
-  extractEventFields: (...args: unknown[]) => mockRefs.extractEventFields(...args),
-  extractProfileFields: (...args: unknown[]) => mockRefs.extractProfileFields(...args),
+  extractEventFields: (event: NostrEvent) => mockRefs.extractEventFields(event),
+  extractProfileFields: (profile: Profile) => mockRefs.extractProfileFields(profile),
   buildSemanticText: (event: NostrEvent) => event.content,
 }))
 

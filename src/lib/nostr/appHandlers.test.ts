@@ -147,6 +147,7 @@ describe('client tags and supported kinds', () => {
     expect(isNostrPaperSupportedKind(Kind.PollVote)).toBe(true)
     expect(isNostrPaperSupportedKind(Kind.Bookmarks)).toBe(true)
     expect(isNostrPaperSupportedKind(Kind.RelaySet)).toBe(true)
+    expect(isNostrPaperSupportedKind(Kind.DeprecatedListSet)).toBe(true)
     expect(isNostrPaperSupportedKind(Kind.StarterPack)).toBe(true)
     expect(isNostrPaperSupportedKind(5000)).toBe(true)
     expect(isNostrPaperSupportedKind(5999)).toBe(true)

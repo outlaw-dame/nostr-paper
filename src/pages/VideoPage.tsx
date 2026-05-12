@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { VideoBody } from '@/components/video/VideoBody'
+import { RelatedContentSidebar } from '@/components/nostr/RelatedContentSidebar'
 import { useEventCombinedModeration } from '@/hooks/useEventCombinedModeration'
 import { useFilterOverride } from '@/hooks/useFilterOverride'
 import { useModerationDocuments } from '@/hooks/useModeration'
@@ -336,40 +337,45 @@ export default function VideoPage() {
         </button>
       </div>
 
-      <div className="pb-10 pt-4">
-        {youTubeId ? (
-          <div className="overflow-hidden rounded-xl bg-black aspect-video">
-            <iframe
-              src={`https://www.youtube-nocookie.com/embed/${youTubeId}?modestbranding=1&playsinline=1&rel=0`}
-              className="h-full w-full"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-              title="YouTube video"
-            />
-          </div>
-        ) : vimeoId ? (
-          <div className="overflow-hidden rounded-xl bg-black aspect-video">
-            <iframe
-              src={`https://player.vimeo.com/video/${vimeoId}?title=0&byline=0&portrait=0`}
-              className="h-full w-full"
-              allow="autoplay; fullscreen; picture-in-picture"
-              allowFullScreen
-              title="Vimeo video"
-            />
-          </div>
-        ) : peertubeEmbed ? (
-          <div className="overflow-hidden rounded-xl bg-black aspect-video">
-            <iframe
-              src={peertubeEmbed}
-              className="h-full w-full"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-              title="PeerTube video"
-            />
-          </div>
-        ) : (
-          <VideoBody event={event} profile={profile} />
-        )}
+      <div className="mx-auto grid max-w-[1160px] gap-6 pb-10 pt-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div>
+          {youTubeId ? (
+            <div className="overflow-hidden rounded-xl bg-black aspect-video">
+              <iframe
+                src={`https://www.youtube-nocookie.com/embed/${youTubeId}?modestbranding=1&playsinline=1&rel=0`}
+                className="h-full w-full"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                title="YouTube video"
+              />
+            </div>
+          ) : vimeoId ? (
+            <div className="overflow-hidden rounded-xl bg-black aspect-video">
+              <iframe
+                src={`https://player.vimeo.com/video/${vimeoId}?title=0&byline=0&portrait=0`}
+                className="h-full w-full"
+                allow="autoplay; fullscreen; picture-in-picture"
+                allowFullScreen
+                title="Vimeo video"
+              />
+            </div>
+          ) : peertubeEmbed ? (
+            <div className="overflow-hidden rounded-xl bg-black aspect-video">
+              <iframe
+                src={peertubeEmbed}
+                className="h-full w-full"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                title="PeerTube video"
+              />
+            </div>
+          ) : (
+            <VideoBody event={event} profile={profile} />
+          )}
+        </div>
+        <div className="lg:sticky lg:top-24 lg:self-start">
+          <RelatedContentSidebar event={event} />
+        </div>
       </div>
     </div>
   )

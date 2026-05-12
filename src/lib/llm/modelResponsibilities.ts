@@ -43,8 +43,6 @@ export function getModelResponsibilityRows(): ModelResponsibilityRow[] {
   const nsfwModel = envString(import.meta.env.VITE_MEDIA_MODERATION_NSFW_MODEL_ID) || DEFAULT_MEDIA_NSFW_MODEL_ID
   const violenceModel = envString(import.meta.env.VITE_MEDIA_MODERATION_VIOLENCE_MODEL_ID) || DEFAULT_MEDIA_VIOLENCE_MODEL_ID
 
-  const geminiKey = envString(import.meta.env.VITE_GEMINI_API_KEY).trim()
-
   return [
     {
       component: 'Search intent router (transformers)',
@@ -120,12 +118,12 @@ export function getModelResponsibilityRows(): ModelResponsibilityRow[] {
     },
     {
       component: 'Google Gemini enhancer',
-      runtime: 'remote API (not currently invoked)',
-      model: geminiKey ? 'API key present' : 'No API key in runtime env',
+      runtime: 'disabled',
+      model: 'Server-side proxy required for remote enhancement',
       job: 'Potential query/content enhancement',
       output: 'n/a',
-      source: 'VITE_GEMINI_API_KEY',
-      status: geminiKey ? 'not-wired' : 'missing',
+      source: 'runtime user setting or backend proxy',
+      status: 'not-wired',
     },
   ]
 }

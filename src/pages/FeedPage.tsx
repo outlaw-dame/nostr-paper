@@ -58,6 +58,7 @@ import { type ArticleFeedSection } from '@/lib/feed/articleFeeds'
 import { collectRepostCarouselItems } from '@/lib/feed/reposts'
 import { getFeedHeaderSection, isSavedTagFeedTimeline } from '@/lib/feed/headerSection'
 import { buildFeedRailSections } from '@/lib/feed/railSections'
+import { getEventQualitySignals, isDeepReadEvent } from '@/lib/feed/qualitySignals'
 import { type SavedTagFeed } from '@/lib/feed/tagFeeds'
 import {
   buildTagTimelineHref,
@@ -235,8 +236,63 @@ const MIN_PRIMARY_FEED_ITEMS = 6
 // Any deliberate scroll past the very top engages buffering so that incoming
 // live events do not displace the post the user is currently reading. The
 // previous 100 px threshold left the hero swap path unprotected.
-const LIVE_FEED_AUTO_INSERT_THRESHOLD_PX = 8
+const LIVE_FEED_AUTO_INSERT_THRESHOLD_PX = 24
+const LIVE_FEED_AUTO_APPLY_DELAY_MS = 350
 const MAX_FEED_RESTORE_ATTEMPTS = 8
+const FEED_SURFACE_PREFS_KEY = 'nostr-paper:feed:surface:v1:'
+
+type FeedLane = 'now' | 'quality' | 'deep-reads' | 'perspectives'
+
+interface FeedSurfacePrefs {
+  lane: FeedLane
+  explainabilityVisible: boolean
+  laneControlsVisible: boolean
+}
+
+function getFeedSurfacePrefs(scopeId?: string | null): FeedSurfacePrefs {
+  if (typeof window === 'undefined') {
+    return {
+      lane: 'quality',
+      explainabilityVisible: true,
+      laneControlsVisible: true,
+    }
+  }
+
+  const scope = scopeId?.trim() ? scopeId.trim() : 'anon'
+  try {
+    const raw = window.localStorage.getItem(`${FEED_SURFACE_PREFS_KEY}${scope}`)
+    if (!raw) {
+      return {
+        lane: 'quality',
+        explainabilityVisible: true,
+        laneControlsVisible: true,
+      }
+    }
+    const parsed = JSON.parse(raw) as Partial<FeedSurfacePrefs>
+    const lane = parsed.lane
+    return {
+      lane: lane === 'now' || lane === 'quality' || lane === 'deep-reads' || lane === 'perspectives' ? lane : 'quality',
+      explainabilityVisible: parsed.explainabilityVisible !== false,
+      laneControlsVisible: parsed.laneControlsVisible !== false,
+    }
+  } catch {
+    return {
+      lane: 'quality',
+      explainabilityVisible: true,
+      laneControlsVisible: true,
+    }
+  }
+}
+
+function saveFeedSurfacePrefs(scopeId: string | null | undefined, prefs: FeedSurfacePrefs): void {
+  if (typeof window === 'undefined') return
+  const scope = scopeId?.trim() ? scopeId.trim() : 'anon'
+  try {
+    window.localStorage.setItem(`${FEED_SURFACE_PREFS_KEY}${scope}`, JSON.stringify(prefs))
+  } catch {
+    // Best-effort persistence only.
+  }
+}
 
 interface FeedViewSnapshot {
   anchorEventId: string | null
@@ -611,6 +667,9 @@ export default function FeedPage() {
     })
   }, [routeSection, savedTagSections])
   const [activeSectionId, setActiveSectionId] = useState(fallbackSection.id)
+  const [feedLane, setFeedLane] = useState<FeedLane>('quality')
+  const [showExplainability, setShowExplainability] = useState(true)
+  const [showLaneControls, setShowLaneControls] = useState(true)
   const [activeArticleFeedId, setActiveArticleFeedId] = useState('articles:all-feeds')
   const [repostCarouselVisible, setRepostCarouselVisible] = useState(true)
   const [feedInlineAutoplayEnabled, setFeedInlineAutoplayEnabled] = useState(true)
@@ -618,6 +677,7 @@ export default function FeedPage() {
   const restoreCompletedRef = useRef(false)
   const rafSaveRef = useRef<number | null>(null)
   const pendingAutoApplyTimerRef = useRef<number | null>(null)
+  const hasEngagedLiveFeedBufferingRef = useRef(false)
   const lastFeedSnapshotRef = useRef<FeedViewSnapshot | null>(null)
   const viewportAnchorRef = useRef<FeedViewportAnchor | null>(null)
   const persistFeedPositionRef = useRef<() => void>(() => {})
@@ -694,6 +754,21 @@ export default function FeedPage() {
   )
 
   useEffect(() => {
+    const prefs = getFeedSurfacePrefs(currentUser?.pubkey ?? 'anon')
+    setFeedLane(prefs.lane)
+    setShowExplainability(prefs.explainabilityVisible)
+    setShowLaneControls(prefs.laneControlsVisible)
+  }, [currentUser?.pubkey])
+
+  useEffect(() => {
+    saveFeedSurfacePrefs(currentUser?.pubkey ?? 'anon', {
+      lane: feedLane,
+      explainabilityVisible: showExplainability,
+      laneControlsVisible: showLaneControls,
+    })
+  }, [currentUser?.pubkey, feedLane, showExplainability, showLaneControls])
+
+  useEffect(() => {
     if (articleFeedSections.length === 0) return
     const firstArticleFeed = articleFeedSections[0]
     if (firstArticleFeed && !articleFeedSections.some((section) => section.id === activeArticleFeedId)) {
@@ -702,13 +777,20 @@ export default function FeedPage() {
   }, [activeArticleFeedId, articleFeedSections])
 
   const shouldBufferNewFeedEvents = useCallback(() => {
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return true
-    if (!restoreCompletedRef.current) return true
+    // Match Mastodon-like initial behavior: do not gate until the user has
+    // actually scrolled away from the top at least once in this feed session.
+    if (!hasEngagedLiveFeedBufferingRef.current) return false
 
-    // Always buffer live events through the pending queue so new posts are
-    // never immediately applied while the user is reading any part of the feed.
-    // Auto-apply will silently merge them once the user parks at the very top.
-    return true
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return true
+
+    // After engagement, only buffer while the user is actively reading away
+    // from the top.
+    if (!restoreCompletedRef.current) return false
+
+    const container = scrollContainerRef.current
+    if (!container) return false
+
+    return container.scrollTop > LIVE_FEED_AUTO_INSERT_THRESHOLD_PX
   }, [])
 
   const {
@@ -837,13 +919,36 @@ export default function FeedPage() {
       : curatedFeedEvents.filter(e => eventPassesFilter(e.id)),
     [topicFilter, curatedFeedEvents, eventPassesFilter],
   )
+  const laneFilteredEvents = useMemo(() => {
+    if (feedLane === 'now') {
+      return topicFilteredEvents
+    }
+
+    if (feedLane === 'quality') {
+      return [...topicFilteredEvents]
+        .map((event) => ({ event, score: getEventQualitySignals(event).score }))
+        .sort((a, b) => {
+          if (b.score !== a.score) return b.score - a.score
+          return b.event.created_at - a.event.created_at
+        })
+        .map((entry) => entry.event)
+    }
+
+    if (feedLane === 'deep-reads') {
+      const deepReads = topicFilteredEvents.filter((event) => isDeepReadEvent(event))
+      return deepReads.length > 0 ? deepReads : topicFilteredEvents
+    }
+
+    const perspectives = topicFilteredEvents.filter((event) => getEventQualitySignals(event).primaryTopic)
+    return perspectives.length > 0 ? perspectives : topicFilteredEvents
+  }, [feedLane, topicFilteredEvents])
   const feedEventSignature = useMemo(
-    () => topicFilteredEvents.map(event => event.id).join('|'),
-    [topicFilteredEvents],
+    () => laneFilteredEvents.map(event => event.id).join('|'),
+    [laneFilteredEvents],
   )
 
-  const heroEvent = topicFilteredEvents[0] ?? null
-  const secondaryEvents = topicFilteredEvents.slice(1)
+  const heroEvent = laneFilteredEvents[0] ?? null
+  const secondaryEvents = laneFilteredEvents.slice(1)
   const feedSurfaceLoading = loading
 
   useEffect(() => {
@@ -945,6 +1050,7 @@ export default function FeedPage() {
 
   useEffect(() => {
     if (!resumeFeedPosition) {
+      hasEngagedLiveFeedBufferingRef.current = false
       clearFeedViewSnapshot(feedScopeKey)
       lastFeedSnapshotRef.current = null
       viewportAnchorRef.current = null
@@ -964,6 +1070,10 @@ export default function FeedPage() {
     if (!container) return
 
     const onScroll = () => {
+      if (container.scrollTop > LIVE_FEED_AUTO_INSERT_THRESHOLD_PX) {
+        hasEngagedLiveFeedBufferingRef.current = true
+      }
+
       if (rafSaveRef.current !== null) {
         window.cancelAnimationFrame(rafSaveRef.current)
       }
@@ -983,6 +1093,10 @@ export default function FeedPage() {
       }
     }
   }, [persistFeedPosition, resumeFeedPosition])
+
+  useEffect(() => {
+    hasEngagedLiveFeedBufferingRef.current = false
+  }, [feedScopeKey])
 
   useLayoutEffect(() => {
     return () => {
@@ -1033,7 +1147,7 @@ export default function FeedPage() {
       if (live && live.scrollTop > LIVE_FEED_AUTO_INSERT_THRESHOLD_PX) return
       captureCurrentFeedView(feedEventSignature)
       applyPendingEvents()
-    }, 220)
+    }, LIVE_FEED_AUTO_APPLY_DELAY_MS)
 
     return () => {
       if (pendingAutoApplyTimerRef.current !== null) {
@@ -1421,6 +1535,46 @@ export default function FeedPage() {
                 activeId={activeSection.id}
                 onSelect={handleSectionChange}
               />
+              <div className="mt-3 flex flex-wrap items-center gap-2 px-1">
+                {showLaneControls && (
+                  <>
+                    {([
+                      { id: 'now', label: 'Now' },
+                      { id: 'quality', label: 'Quality' },
+                      { id: 'deep-reads', label: 'Deep Reads' },
+                      { id: 'perspectives', label: 'Perspectives' },
+                    ] as const).map((lane) => {
+                      const active = feedLane === lane.id
+                      return (
+                        <button
+                          key={lane.id}
+                          type="button"
+                          onClick={() => setFeedLane(lane.id)}
+                          className={`rounded-full px-3 py-1.5 text-[12px] font-medium transition ${active
+                            ? 'bg-[rgb(var(--color-label))] text-[rgb(var(--color-bg))]'
+                            : 'bg-[rgb(var(--color-fill)/0.08)] text-[rgb(var(--color-label-secondary))] hover:bg-[rgb(var(--color-fill)/0.14)]'}`}
+                        >
+                          {lane.label}
+                        </button>
+                      )
+                    })}
+                  </>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowExplainability((value) => !value)}
+                  className="rounded-full border border-[rgb(var(--color-fill)/0.15)] bg-[rgb(var(--color-bg-secondary))] px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]"
+                >
+                  {showExplainability ? 'Hide Why' : 'Show Why'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowLaneControls((value) => !value)}
+                  className="rounded-full border border-[rgb(var(--color-fill)/0.15)] bg-[rgb(var(--color-bg-secondary))] px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]"
+                >
+                  {showLaneControls ? 'Compact' : 'Lanes'}
+                </button>
+              </div>
               <TopicFilterRail
                 topics={topics}
                 activeTopicId={topicFilter}
@@ -1600,6 +1754,7 @@ export default function FeedPage() {
                             semanticResult={semanticResults.get(event.id) ?? EMPTY_FILTER_RESULT}
                             feedInlineAutoplayEnabled={feedInlineAutoplayEnabled}
                             activeSectionId={activeSection.id}
+                            showExplainability={showExplainability}
                           />
                         </div>
                       )
@@ -1623,9 +1778,10 @@ interface SecondaryCardProps {
   semanticResult: FilterCheckResult
   feedInlineAutoplayEnabled: boolean
   activeSectionId: string
+  showExplainability: boolean
 }
 
-export function SecondaryCard({ event, index, checkEvent, semanticResult, feedInlineAutoplayEnabled, activeSectionId }: SecondaryCardProps) {
+export function SecondaryCard({ event, index, checkEvent, semanticResult, feedInlineAutoplayEnabled, activeSectionId, showExplainability }: SecondaryCardProps) {
   const navigate = useNavigate()
   const { profile } = useProfile(event.pubkey, { background: false })
   const threadIndex = useSelfThreadIndex(event)
@@ -1659,6 +1815,7 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
   } = useStoryCardPreview(event, { ogEnabled: storyPreviewVisible })
   const eventLanguage = extractEventLanguageTag(event)
   const href = article?.route ?? video?.route ?? `/note/${event.id}`
+  const qualitySignals = useMemo(() => getEventQualitySignals(event), [event])
   return (
     <FilteredGate result={filterResult}>
       <motion.div
@@ -1745,6 +1902,18 @@ export function SecondaryCard({ event, index, checkEvent, semanticResult, feedIn
           <p className="mt-3 text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
             {thread ? 'Thread' : 'Comment'}
           </p>
+        )}
+        {showExplainability && qualitySignals.reasons.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {qualitySignals.reasons.map((reason) => (
+              <span
+                key={`${event.id}:${reason}`}
+                className="rounded-full bg-[rgb(var(--color-fill)/0.08)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.06em] text-[rgb(var(--color-label-secondary))]"
+              >
+                {reason}
+              </span>
+            ))}
+          </div>
         )}
         <ThreadIndexBadge threadIndex={threadIndex} className="mt-3" />
         {poll ? (

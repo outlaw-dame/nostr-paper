@@ -17,6 +17,9 @@
  *
  * When the developer token is not configured, the UI surfaces a "Requires
  * setup" notice and the connection flow is disabled.
+ *
+ * Apple Music user tokens are session-only. Legacy persistent copies are
+ * purged on read/write.
  */
 
 const APPLE_MUSIC_USER_TOKEN_KEY = 'nostr-paper:apple-music-user-token'
@@ -100,7 +103,8 @@ export function isAppleMusicConfigured(): boolean {
 // ── User token storage ────────────────────────────────────────────────────────
 
 export function getAppleMusicUserToken(): string | null {
-  const token = window.localStorage.getItem(APPLE_MUSIC_USER_TOKEN_KEY)
+  window.localStorage.removeItem(APPLE_MUSIC_USER_TOKEN_KEY)
+  const token = window.sessionStorage.getItem(APPLE_MUSIC_USER_TOKEN_KEY)
   if (!token) return null
   const trimmed = token.trim()
   if (trimmed.length < 20) {
@@ -112,6 +116,7 @@ export function getAppleMusicUserToken(): string | null {
 
 export function clearAppleMusicUserToken(): void {
   window.localStorage.removeItem(APPLE_MUSIC_USER_TOKEN_KEY)
+  window.sessionStorage.removeItem(APPLE_MUSIC_USER_TOKEN_KEY)
 }
 
 // ── MusicKit JS loader ────────────────────────────────────────────────────────
@@ -180,7 +185,8 @@ export async function authorizeAppleMusic(): Promise<string | null> {
     const instance = mk.getInstance()
     const userToken = await instance.authorize()
     if (typeof userToken === 'string' && userToken.length > 0) {
-      window.localStorage.setItem(APPLE_MUSIC_USER_TOKEN_KEY, userToken)
+      window.localStorage.removeItem(APPLE_MUSIC_USER_TOKEN_KEY)
+      window.sessionStorage.setItem(APPLE_MUSIC_USER_TOKEN_KEY, userToken)
       return userToken
     }
     return null

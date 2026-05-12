@@ -33,7 +33,7 @@ export const LIMITS = {
 } as const
 
 /** Allowed URL schemes for media and links */
-const ALLOWED_SCHEMES = new Set(['https:', 'http:'])
+const ALLOWED_SCHEMES = new Set(['https:'])
 const MEDIA_EXTENSIONS = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'apng', 'bmp', 'ico', 'jfif', 'svg', 'tif', 'tiff',
   'heic', 'heif', 'jxl',
@@ -171,7 +171,7 @@ export function sanitizeAbout(about: string): string {
 
 /**
  * Validate a URL is safe to render as a link.
- * Allowlist: http and https only.
+ * Allowlist: https only. Local service URLs use dedicated validators.
  */
 export function isSafeURL(url: string): boolean {
   if (typeof url !== 'string') return false

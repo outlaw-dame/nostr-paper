@@ -536,7 +536,7 @@ export default function SyndicationFeedsPage() {
                     <a
                       href="https://feedsearch.dev"
                       target="_blank"
-                      rel="noreferrer"
+                      rel="noopener noreferrer"
                       className="underline"
                     >
                       {tApp('syndicationPoweredByFeedsearch')}

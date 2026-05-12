@@ -35,6 +35,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, field_validator
 
 try:
@@ -53,6 +54,15 @@ log = logging.getLogger(__name__)
 MODEL_ID = os.environ.get("TRANSLATE_MODEL_ID", "alirezamsh/small100")
 SAFE_BROWSING_ENDPOINT = "https://safebrowsing.googleapis.com/v4/threatMatches:find"
 SAFE_BROWSING_TIMEOUT_SECONDS = 8
+LOOPBACK_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
+
+
+def _csv_env(name: str) -> list[str]:
+    return [
+        item.strip()
+        for item in os.environ.get(name, "").split(",")
+        if item.strip()
+    ]
 
 # ISO 639-1 subset supported by SMaLL-100 (FLORES-200 superset).
 # Clients send 2-letter codes; the tokenizer handles the mapping internally.
@@ -161,13 +171,22 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     del _model, _tokenizer
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    lifespan=lifespan,
+    docs_url="/docs" if os.environ.get("TRANSLATE_ENABLE_DOCS") == "true" else None,
+    redoc_url=None,
+    openapi_url="/openapi.json" if os.environ.get("TRANSLATE_ENABLE_DOCS") == "true" else None,
+)
 
-# Allow requests from any PWA origin (the model only receives text the user
-# explicitly chooses to translate — no tokens or private data).
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=_csv_env("TRANSLATE_ALLOWED_HOSTS") or ["localhost", "127.0.0.1"],
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_csv_env("TRANSLATE_ALLOWED_ORIGINS"),
+    allow_origin_regex=LOOPBACK_ORIGIN_REGEX,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", "Accept"],
     max_age=3600,
@@ -275,7 +294,7 @@ def translate(req: TranslateRequest):
             translation = _tokenizer.batch_decode(fallback_generated, skip_special_tokens=True)[0]
     except Exception as exc:  # noqa: BLE001
         log.exception("Translation failed")
-        raise HTTPException(500, f"Translation error: {exc}") from exc
+        raise HTTPException(500, "Translation failed") from exc
 
     return {
         "translation": translation.strip(),

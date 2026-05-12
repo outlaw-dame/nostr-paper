@@ -22,7 +22,6 @@ vi.mock('@/lib/nostr/nip05', () => ({
 }))
 
 vi.mock('@/lib/nostr/ndk', () => ({
-  loginWithNsec: vi.fn(),
   loginWithNip46Bunker: (...args: unknown[]) => loginWithNip46BunkerMock(...args),
   isValidNip46BunkerToken: (...args: unknown[]) => isValidNip46BunkerTokenMock(...args),
   loginWithPubkey: vi.fn(),

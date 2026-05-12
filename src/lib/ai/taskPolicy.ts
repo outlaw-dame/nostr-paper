@@ -28,11 +28,11 @@ export function getTaskRouterModel(): string {
 }
 
 function hasCloudflareEdgeAccess(): boolean {
-  return Boolean(envString(import.meta.env.VITE_CLOUDFLARE_ACCOUNT_ID) && envString(import.meta.env.VITE_CLOUDFLARE_API_TOKEN))
+  return Boolean(envString(import.meta.env.VITE_CLOUDFLARE_AI_PROXY_URL))
 }
 
 function hasGeminiApiAccess(): boolean {
-  return Boolean(envString(import.meta.env.VITE_GEMINI_API_KEY))
+  return false
 }
 
 function isHybridTranslationPolicyEnabled(): boolean {

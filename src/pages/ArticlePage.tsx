@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArticleBody } from '@/components/article/ArticleBody'
+import { RelatedContentSidebar } from '@/components/nostr/RelatedContentSidebar'
 import { useEventCombinedModeration } from '@/hooks/useEventCombinedModeration'
 import { useFilterOverride } from '@/hooks/useFilterOverride'
 import { usePageHead } from '@/hooks/usePageHead'
@@ -248,8 +249,13 @@ export default function ArticlePage() {
         </button>
       </div>
 
-      <div className="pb-10 pt-4">
-        <ArticleBody event={event} profile={profile} />
+      <div className="mx-auto grid max-w-[1160px] gap-6 pb-10 pt-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div>
+          <ArticleBody event={event} profile={profile} />
+        </div>
+        <div className="lg:sticky lg:top-24 lg:self-start">
+          <RelatedContentSidebar event={event} />
+        </div>
       </div>
     </div>
   )

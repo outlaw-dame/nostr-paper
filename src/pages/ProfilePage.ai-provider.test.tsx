@@ -89,6 +89,8 @@ vi.mock('@/lib/nostr/appHandlers', () => ({
 vi.mock('@/lib/nostr/lists', () => ({
   getFreshNip51ListEvents: vi.fn().mockResolvedValue([]),
   getNip51ListLabel: () => 'List',
+  getNip51ListDisplayText: () => ({ title: 'List', description: 'List description' }),
+  getNip51ListDefinitions: () => [],
 }))
 
 vi.mock('@/lib/nostr/nip21', () => ({ decodeProfileReference: () => null }))
@@ -118,7 +120,7 @@ describe('ProfilePage AI provider routing', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
-    localStorage.clear()
+    globalThis.localStorage?.clear()
 
     queryEventsMock.mockResolvedValue([
       {

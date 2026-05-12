@@ -34,6 +34,10 @@ But this scaffold lives here first so the service boundaries, contracts, infra, 
 - `services/` — deployable services
 - `packages/` — shared runtime libraries used by services
 
+## Local Exposure Defaults
+
+`infra/docker-compose.yml` publishes Redis, Postgres, strfry, and the search API on `127.0.0.1` by default. Set `PLATFORM_BIND_HOST` only when intentionally exposing the stack to another device, tunnel, or isolated test network.
+
 ## Relay Rate Limiting
 
 `services/relay-policy/` is a strfry write-policy plugin. It applies lightweight intelligent rate limiting before events are stored: pubkey/source/global token buckets, weighted event cost, duplicate-body rejection, hellthread fanout limits, and temporary penalty multipliers. Local compose builds a custom strfry image that includes this plugin and enables it through `infra/strfry.conf/strfry.conf`.
@@ -70,7 +74,7 @@ The search API now exposes moderation operations endpoints for dashboards and ru
 - `GET /ops/moderation/blocked?source=all|tagr|keyword&limit=...`
 - `POST /ops/moderation/reconcile`
 
-Set `MODERATION_OPS_TOKEN` to require `Authorization: Bearer <token>` on `/ops/moderation/*` routes.
+Set `MODERATION_OPS_TOKEN` to a high-entropy value (32+ characters). Ops routes fail closed with `503 ops_auth_not_configured` when it is missing.
 
 Relay policy regressions are covered by a replay corpus at `services/relay-policy/src/abuseReplay.corpus.json` and can be run with `npm run test:replay --prefix platform/services/relay-policy`.
 

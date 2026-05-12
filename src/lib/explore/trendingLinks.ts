@@ -12,6 +12,8 @@
 import type { RecentLinkStat } from '@/lib/db/nostr'
 import type { TrendingLinkWeights } from '@/lib/explore/discoveryControls'
 
+const MIN_AUTHOR_BREADTH_FOR_FULL_MOMENTUM = 2
+
 export interface TrendingLinkStat extends RecentLinkStat {
   score: number
 }
@@ -44,9 +46,10 @@ export function scoreAndRankLinks(
     const popularity   = s.usageCount / maxUsage
     const diversity    = s.usageCount > 0 ? s.uniqueAuthorCount / s.usageCount : 0
     const authorBreadth = s.uniqueAuthorCount / maxAuthors
+    const breadthFactor = s.uniqueAuthorCount >= MIN_AUTHOR_BREADTH_FOR_FULL_MOMENTUM ? 1 : 0.25
     const ageSec       = Math.max(now - s.latestCreatedAt, 0)
     const freshness    = Math.exp(-ageSec / halfLife)
-    const momentum     = Math.sqrt(Math.max(popularity * freshness, 0)) * 0.6 + authorBreadth * 0.4
+    const momentum     = (Math.sqrt(Math.max(popularity * freshness, 0)) * 0.6 + authorBreadth * 0.4) * breadthFactor
 
     const score =
       popularity   * weights.popularity +

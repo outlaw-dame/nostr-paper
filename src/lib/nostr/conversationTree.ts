@@ -8,6 +8,11 @@ export interface ReplyTreeNode {
   children: ReplyTreeNode[]
 }
 
+export interface CompressedBranchPreview {
+  tail: ReplyTreeNode
+  hiddenCount: number
+}
+
 interface BuildReplyTreeOptions {
   anchorEventId?: string
 }
@@ -160,6 +165,54 @@ export function collectDefaultCollapsedIds(
       set.add(node.event.id)
     }
     collectDefaultCollapsedIds(node.children, depth + 1, set)
+  }
+  return set
+}
+
+function collectLinearChildChain(node: ReplyTreeNode): ReplyTreeNode[] {
+  if (node.children.length !== 1) return []
+
+  const chain: ReplyTreeNode[] = []
+  let cursor: ReplyTreeNode | null = node.children[0] ?? null
+
+  while (cursor) {
+    chain.push(cursor)
+    if (cursor.children.length !== 1) break
+    cursor = cursor.children[0] ?? null
+  }
+
+  return chain
+}
+
+export function getCompressedBranchPreview(
+  node: ReplyTreeNode,
+  threshold = 4,
+): CompressedBranchPreview | null {
+  const normalizedThreshold = Math.max(1, Math.floor(Number.isFinite(threshold) ? threshold : 4))
+  const chain = collectLinearChildChain(node)
+  if (chain.length <= normalizedThreshold) return null
+
+  const tail = chain[chain.length - 1]
+  if (!tail) return null
+
+  return {
+    tail,
+    hiddenCount: Math.max(1, chain.length - 1),
+  }
+}
+
+export function collectDefaultCompressedBranchIds(
+  nodes: ReplyTreeNode[],
+  threshold = 4,
+  set = new Set<string>(),
+): Set<string> {
+  const normalizedThreshold = Math.max(1, Math.floor(Number.isFinite(threshold) ? threshold : 4))
+  for (const node of nodes) {
+    const preview = getCompressedBranchPreview(node, normalizedThreshold)
+    if (preview) {
+      set.add(node.event.id)
+    }
+    collectDefaultCompressedBranchIds(node.children, normalizedThreshold, set)
   }
   return set
 }

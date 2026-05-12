@@ -160,6 +160,10 @@ vi.mock('@/hooks/useTrendingLinks', () => ({
   useTrendingLinks: () => ({ links: [], loading: false }),
 }))
 
+vi.mock('@/hooks/useTrendingContent', () => ({
+  useTrendingContent: () => ({ items: [], loading: false }),
+}))
+
 vi.mock('@/hooks/useSuggestedProfiles', () => ({
   useSuggestedProfiles: () => ({ profiles: [], loading: false }),
 }))

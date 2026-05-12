@@ -13,19 +13,16 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 
 describe('Cloudflare AI Providers', () => {
   describe('isCloudflareAiAvailable', () => {
-    it('should return false without credentials', async () => {
+    it('should return false without a server-side proxy URL', async () => {
       const env = import.meta.env as unknown as Record<string, string | undefined>
-      const originalAccountId = env.VITE_CLOUDFLARE_ACCOUNT_ID
-      const originalApiToken = env.VITE_CLOUDFLARE_API_TOKEN
+      const originalProxyUrl = env.VITE_CLOUDFLARE_AI_PROXY_URL
 
-      delete env.VITE_CLOUDFLARE_ACCOUNT_ID
-      delete env.VITE_CLOUDFLARE_API_TOKEN
+      delete env.VITE_CLOUDFLARE_AI_PROXY_URL
 
       const { isCloudflareAiAvailable } = await import('@/lib/ai/cloudflareAiProviders')
       expect(isCloudflareAiAvailable()).toBe(false)
 
-      if (typeof originalAccountId === 'string') env.VITE_CLOUDFLARE_ACCOUNT_ID = originalAccountId
-      if (typeof originalApiToken === 'string') env.VITE_CLOUDFLARE_API_TOKEN = originalApiToken
+      if (typeof originalProxyUrl === 'string') env.VITE_CLOUDFLARE_AI_PROXY_URL = originalProxyUrl
     })
 
     it('should return a boolean with current credentials state', async () => {

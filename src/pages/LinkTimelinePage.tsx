@@ -77,12 +77,12 @@ export default function LinkTimelinePage() {
   const [searchParams] = useSearchParams()
   const rawUrl = searchParams.get('url') ?? ''
 
-  // Only feed a valid http(s) URL into the hooks; bad input → empty state
+  // Only feed a valid HTTPS URL into the hooks; bad input -> empty state
   const url = (() => {
     if (!rawUrl) return null
     try {
       const p = new URL(rawUrl)
-      return p.protocol === 'https:' || p.protocol === 'http:' ? rawUrl : null
+      return p.protocol === 'https:' ? rawUrl : null
     } catch {
       return null
     }

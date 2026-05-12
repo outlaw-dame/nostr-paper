@@ -88,7 +88,7 @@ function sanitizeReviewUrl(raw: string): string {
   if (!url) return ''
   try {
     const parsed = new URL(url)
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return ''
+    if (parsed.protocol !== 'https:') return ''
     parsed.username = ''
     parsed.password = ''
     return parsed.toString()

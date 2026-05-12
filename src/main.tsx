@@ -22,7 +22,9 @@ const shouldSkipServiceWorker = import.meta.env.DEV || isLocalDevelopmentHost(wi
 const shouldRegisterServiceWorker = !shouldSkipServiceWorker
 const LOCAL_CACHE_PREFIXES = ['nostr-paper-', 'workbox-'] as const
 
-document.documentElement.dataset.theme = 'light'
+const initialTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+document.documentElement.dataset.theme = initialTheme
+document.documentElement.style.colorScheme = initialTheme
 beginBootSession()
 
 window.addEventListener('error', (event) => {

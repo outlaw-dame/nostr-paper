@@ -6,7 +6,7 @@
  *
  * Security notes:
  *  - PKCE verifier/state stored in sessionStorage (same-tab only, cleared on close).
- *  - Access/refresh tokens stored in localStorage (standard SPA pattern).
+ *  - Access/refresh tokens stored in sessionStorage only and cleared on close.
  *  - state parameter guards against CSRF on the callback.
  */
 
@@ -184,7 +184,8 @@ export function setSpotifyClientId(id: string): void {
 // ── Token storage ─────────────────────────────────────────────────────────────
 
 export function getSpotifyTokens(): SpotifyTokens | null {
-  const raw = window.localStorage.getItem(SPOTIFY_TOKENS_KEY)
+  window.localStorage.removeItem(SPOTIFY_TOKENS_KEY)
+  const raw = window.sessionStorage.getItem(SPOTIFY_TOKENS_KEY)
   if (!raw) return null
   try {
     const parsed = JSON.parse(raw) as Partial<SpotifyTokens>
@@ -209,11 +210,13 @@ export function getSpotifyTokens(): SpotifyTokens | null {
 }
 
 function saveSpotifyTokens(tokens: SpotifyTokens): void {
-  window.localStorage.setItem(SPOTIFY_TOKENS_KEY, JSON.stringify(tokens))
+  window.localStorage.removeItem(SPOTIFY_TOKENS_KEY)
+  window.sessionStorage.setItem(SPOTIFY_TOKENS_KEY, JSON.stringify(tokens))
 }
 
 export function clearSpotifyTokens(): void {
   window.localStorage.removeItem(SPOTIFY_TOKENS_KEY)
+  window.sessionStorage.removeItem(SPOTIFY_TOKENS_KEY)
   clearPendingSpotifyAuthState()
 }
 

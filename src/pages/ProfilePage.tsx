@@ -20,6 +20,7 @@ import { buildProfileInsightFallback, extractHashtagsFromContents } from '@/lib/
 import { generateAssistText, type AiAssistProvider, type AiAssistSource } from '@/lib/ai/gemmaAssist'
 import { AI_ASSIST_PROVIDER_UPDATED_EVENT, getAiAssistProvider, setAiAssistProvider } from '@/lib/ai/provider'
 import { queryEvents } from '@/lib/db/nostr'
+import { getProfileReportPublishedMessage } from '@/pages/profileReportMessage'
 import { buildMediaModerationDocument } from '@/lib/moderation/mediaContent'
 import { buildProfileMetaTags, buildProfileTitle } from '@/lib/nostr/meta'
 import {
@@ -43,6 +44,8 @@ import {
 } from '@/lib/nostr/appHandlers'
 import {
   getFreshNip51ListEvents,
+  getNip51ListDisplayText,
+  getNip51ListDefinitions,
   getNip51ListLabel,
   type ParsedNip51ListEvent,
 } from '@/lib/nostr/lists'
@@ -65,6 +68,18 @@ const PROFILE_INSIGHT_KINDS = [
   Kind.AddressableShortVideo,
 ] as const
 
+const PROFILE_NIP51_SET_KINDS = getNip51ListDefinitions()
+  .filter((definition) => definition.addressable)
+  .map((definition) => definition.kind)
+
+const PROFILE_NIP51_PRIORITY_KINDS = new Set<number>([
+  Kind.FollowSet,
+  Kind.StarterPack,
+  Kind.MediaStarterPack,
+  Kind.ArticleCurationSet,
+  Kind.AppCurationSet,
+])
+
 interface ExpandedProfileImage {
   url: string
   alt: string
@@ -84,9 +99,13 @@ function hasRecentBannerFailure(url: string | null | undefined): boolean {
 }
 
 function getNip51SetSummary(event: ParsedNip51ListEvent): string {
+  const display = getNip51ListDisplayText(event)
   if (event.description) return event.description
 
   const itemCount = event.publicItems.length
+  if (event.kind === Kind.FollowSet && event.identifier !== 'mute') {
+    return `${itemCount} profile${itemCount === 1 ? '' : 's'} to follow together.`
+  }
   if (event.kind === Kind.StarterPack) {
     return `${itemCount} profile${itemCount === 1 ? '' : 's'} to follow together.`
   }
@@ -94,7 +113,16 @@ function getNip51SetSummary(event: ParsedNip51ListEvent): string {
     return `${itemCount} media-focused profile${itemCount === 1 ? '' : 's'} to follow together.`
   }
 
+  if (event.kind === Kind.DeprecatedListSet || (event.kind === Kind.FollowSet && event.identifier === 'mute')) {
+    return `${display.description} ${itemCount} public item${itemCount === 1 ? '' : 's'}${event.hasPrivateItems ? ' + encrypted private items' : ''}.`
+  }
+
   return `${itemCount} public item${itemCount === 1 ? '' : 's'}${event.hasPrivateItems ? ' + encrypted private items' : ''}.`
+}
+
+function getNip51SetDisplayTitle(event: ParsedNip51ListEvent, fallbackTitle: string): string {
+  const display = getNip51ListDisplayText(event)
+  return display.title || event.identifier || fallbackTitle
 }
 
 function truncateProfileText(value: string, maxChars: number): string {
@@ -474,11 +502,7 @@ export default function ProfilePage() {
   const [handlerInfoLoading, setHandlerInfoLoading] = useState(false)
   const [handlerRecommendations, setHandlerRecommendations] = useState<ParsedHandlerRecommendationEvent[]>([])
   const [handlerRecommendationsLoading, setHandlerRecommendationsLoading] = useState(false)
-  const [followSets, setFollowSets] = useState<ParsedNip51ListEvent[]>([])
-  const [starterPacks, setStarterPacks] = useState<ParsedNip51ListEvent[]>([])
-  const [mediaStarterPacks, setMediaStarterPacks] = useState<ParsedNip51ListEvent[]>([])
-  const [articleCurations, setArticleCurations] = useState<ParsedNip51ListEvent[]>([])
-  const [appCurations, setAppCurations] = useState<ParsedNip51ListEvent[]>([])
+  const [nip51SetEventsByKind, setNip51SetEventsByKind] = useState<Record<number, ParsedNip51ListEvent[]>>({})
   const [nip51SetsLoading, setNip51SetsLoading] = useState(false)
   const [viewerContacts, setViewerContacts] = useState<ContactList | null>(null)
   const [viewerContactsLoading, setViewerContactsLoading] = useState(false)
@@ -610,7 +634,26 @@ export default function ProfilePage() {
     () => formatBirthday(renderProfile?.birthday),
     [renderProfile?.birthday],
   )
-  const totalCuratedSets = followSets.length + starterPacks.length + mediaStarterPacks.length + articleCurations.length + appCurations.length
+  const nip51SetGroups = useMemo(
+    () => PROFILE_NIP51_SET_KINDS
+      .map((kind) => ({
+        kind,
+        title: getNip51ListLabel(kind),
+        events: nip51SetEventsByKind[kind] ?? [],
+      }))
+      .filter((group) => group.events.length > 0 || PROFILE_NIP51_PRIORITY_KINDS.has(group.kind))
+      .sort((left, right) => {
+        if (left.events.length !== right.events.length) {
+          return right.events.length - left.events.length
+        }
+        return left.title.localeCompare(right.title)
+      }),
+    [nip51SetEventsByKind],
+  )
+  const totalCuratedSets = useMemo(
+    () => nip51SetGroups.reduce((total, group) => total + group.events.length, 0),
+    [nip51SetGroups],
+  )
   const profileContentHashtags = useMemo(
     () => extractHashtagsFromContents(recentProfilePosts),
     [recentProfilePosts],
@@ -780,48 +823,30 @@ export default function ProfilePage() {
 
   useEffect(() => {
     if (!pubkey) {
-      setFollowSets([])
-      setStarterPacks([])
-      setMediaStarterPacks([])
-      setArticleCurations([])
-      setAppCurations([])
+      setNip51SetEventsByKind({})
       return
     }
 
     const controller = new AbortController()
     setNip51SetsLoading(true)
 
-    Promise.all([
-      getFreshNip51ListEvents(pubkey, Kind.FollowSet, { signal: controller.signal }),
-      getFreshNip51ListEvents(pubkey, Kind.StarterPack, { signal: controller.signal }),
-      getFreshNip51ListEvents(pubkey, Kind.MediaStarterPack, { signal: controller.signal }),
-      getFreshNip51ListEvents(pubkey, Kind.ArticleCurationSet, { signal: controller.signal }),
-      getFreshNip51ListEvents(pubkey, Kind.AppCurationSet, { signal: controller.signal }),
-    ])
-      .then(([
-        nextFollowSets,
-        nextStarterPacks,
-        nextMediaStarterPacks,
-        nextArticleCurations,
-        nextAppCurations,
-      ]) => {
+    Promise.all(PROFILE_NIP51_SET_KINDS.map((kind) =>
+      getFreshNip51ListEvents(pubkey, kind, { signal: controller.signal }),
+    ))
+      .then((nextListsByKind) => {
         if (controller.signal.aborted) return
+        const nextSetEventsByKind = PROFILE_NIP51_SET_KINDS.reduce<Record<number, ParsedNip51ListEvent[]>>((acc, kind, index) => {
+          acc[kind] = nextListsByKind[index] ?? []
+          return acc
+        }, {})
         startTransition(() => {
-          setFollowSets(nextFollowSets)
-          setStarterPacks(nextStarterPacks)
-          setMediaStarterPacks(nextMediaStarterPacks)
-          setArticleCurations(nextArticleCurations)
-          setAppCurations(nextAppCurations)
+          setNip51SetEventsByKind(nextSetEventsByKind)
         })
       })
       .catch(() => {
         if (controller.signal.aborted) return
         startTransition(() => {
-          setFollowSets([])
-          setStarterPacks([])
-          setMediaStarterPacks([])
-          setArticleCurations([])
-          setAppCurations([])
+          setNip51SetEventsByKind({})
         })
       })
       .finally(() => {
@@ -1803,36 +1828,15 @@ export default function ProfilePage() {
               countLabel={nip51SetsLoading && totalCuratedSets === 0 ? '…' : String(totalCuratedSets)}
             >
               <div className="space-y-4">
-                <Nip51SetGroup
-                  title={getNip51ListLabel(Kind.FollowSet)}
-                  emptyText="No kind-30000 follow sets are cached locally for this profile yet."
-                  loading={nip51SetsLoading}
-                  events={followSets}
-                />
-                <Nip51SetGroup
-                  title={getNip51ListLabel(Kind.StarterPack)}
-                  emptyText="No kind-39089 starter packs are cached locally for this profile yet."
-                  loading={nip51SetsLoading}
-                  events={starterPacks}
-                />
-                <Nip51SetGroup
-                  title={getNip51ListLabel(Kind.MediaStarterPack)}
-                  emptyText="No kind-39092 media starter packs are cached locally for this profile yet."
-                  loading={nip51SetsLoading}
-                  events={mediaStarterPacks}
-                />
-                <Nip51SetGroup
-                  title={getNip51ListLabel(Kind.ArticleCurationSet)}
-                  emptyText="No kind-30004 article curation sets are cached locally for this profile yet."
-                  loading={nip51SetsLoading}
-                  events={articleCurations}
-                />
-                <Nip51SetGroup
-                  title={getNip51ListLabel(Kind.AppCurationSet)}
-                  emptyText="No kind-30267 app curation sets are cached locally for this profile yet."
-                  loading={nip51SetsLoading}
-                  events={appCurations}
-                />
+                {nip51SetGroups.map((group) => (
+                  <Nip51SetGroup
+                    key={group.kind}
+                    title={group.title}
+                    emptyText={`No kind-${group.kind} ${group.title.toLowerCase()} events are cached locally for this profile yet.`}
+                    loading={nip51SetsLoading}
+                    events={group.events}
+                  />
+                ))}
               </div>
             </ExpandableSectionCard>
           </div>
@@ -1846,11 +1850,7 @@ export default function ProfilePage() {
         onClose={() => setReportSheetOpen(false)}
         onPublished={(_event, details) => {
           setReported(true)
-          const destinationMessage = details.destination === 'private'
-            ? 'Private report published to your configured relay list.'
-            : 'Kind-1984 report published to your write relays.'
-          const mutedMessage = details.mutedAuthor ? ' Author muted locally.' : ''
-          setMessage(`${destinationMessage}${mutedMessage}`)
+          setMessage(getProfileReportPublishedMessage(details))
           setError(null)
         }}
       />
@@ -1949,7 +1949,7 @@ function Nip51SetGroup({
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-[15px] font-medium text-[rgb(var(--color-label))]">
-                    {event.title ?? event.identifier ?? title}
+                    {getNip51SetDisplayTitle(event, title)}
                   </p>
                   <p className="mt-1 text-[13px] leading-6 text-[rgb(var(--color-label-secondary))]">
                     {getNip51SetSummary(event)}

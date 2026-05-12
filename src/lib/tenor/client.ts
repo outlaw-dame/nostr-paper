@@ -1,9 +1,7 @@
 /**
  * Tenor GIF API client
  *
- * Routes all requests through the Vite dev proxy (/__dev/tenor) in development
- * so the API key stays server-side. In production, VITE_TENOR_API_KEY is
- * embedded in the client bundle — Tenor explicitly allows this for web apps.
+ * Routes all requests through a proxy so API keys stay server-side.
  *
  * If no key is configured the exported helpers return empty results silently,
  * leaving the GIF picker in a "no results" state rather than crashing.
@@ -37,15 +35,13 @@ export interface TenorResult {
 // ── Configuration ─────────────────────────────────────────────
 
 const DEV_PROXY    = '/__dev/tenor'
-const TENOR_BASE   = 'https://tenor.googleapis.com/v2'
-const PROD_KEY     = import.meta.env.VITE_TENOR_API_KEY as string | undefined
-const CLIENT_KEY   = 'nostr_paper'
-const MEDIA_FILTER = 'gif,mediumgif,tinygif'
+const PROD_PROXY   = import.meta.env.VITE_TENOR_PROXY_URL as string | undefined
+const PROXY_BASE   = import.meta.env.DEV ? DEV_PROXY : (PROD_PROXY ?? null)
 
 export function isTenorConfigured(): boolean {
   // Dev proxy is always available (returns empty results if no key is set)
   if (import.meta.env.DEV) return true
-  return Boolean(PROD_KEY)
+  return Boolean(PROXY_BASE)
 }
 
 // ── Response parsing ──────────────────────────────────────────
@@ -111,21 +107,9 @@ async function tenorFetch(
   endpoint: 'search' | 'featured',
   params: Record<string, string>,
 ): Promise<TenorResult> {
-  let url: string
-
-  if (import.meta.env.DEV) {
-    const qs = new URLSearchParams({ endpoint, ...params }).toString()
-    url = `${DEV_PROXY}?${qs}`
-  } else {
-    if (!PROD_KEY) return { results: [], next: '' }
-    const qs = new URLSearchParams({
-      key:          PROD_KEY,
-      client_key:   CLIENT_KEY,
-      media_filter: MEDIA_FILTER,
-      ...params,
-    }).toString()
-    url = `${TENOR_BASE}/${endpoint}?${qs}`
-  }
+  if (!PROXY_BASE) return { results: [], next: '' }
+  const qs = new URLSearchParams({ endpoint, ...params }).toString()
+  const url = `${PROXY_BASE}?${qs}`
 
   const res = await fetch(url, { signal: AbortSignal.timeout(8_000) })
   if (!res.ok) throw new Error(`Tenor API error: ${res.status}`)

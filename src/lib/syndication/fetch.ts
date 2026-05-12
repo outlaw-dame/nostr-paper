@@ -103,7 +103,7 @@ function isAllowedFeedUrl(url: string): boolean {
 
 function classifyBlockedUrl(url: string): SyndicationFetchError {
   if (!isSafeURL(url)) {
-    return new SyndicationFetchError('invalid-url', 'Feed URL must be a valid HTTP(S) URL.')
+    return new SyndicationFetchError('invalid-url', 'Feed URL must be a valid HTTPS URL.')
   }
 
   try {

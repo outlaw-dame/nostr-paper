@@ -7,7 +7,7 @@ This document defines first-response procedures for high-risk moderation inciden
 - `RELAY_POLICY_MODE`: `enforce` or `observe`.
 - `RELAY_POLICY_VERSION`: active relay-policy version string.
 - `TAGR_POLICY_VERSION`: active Tagr policy version string.
-- `MODERATION_OPS_TOKEN`: optional bearer token for ops endpoints.
+- `MODERATION_OPS_TOKEN`: required 32+ character bearer token for ops endpoints.
 - Ops endpoints (from search-api):
   - `GET /ops/moderation/stats`
   - `GET /ops/moderation/blocked`

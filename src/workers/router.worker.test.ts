@@ -14,6 +14,23 @@
 
 import { describe, it, expect, vi } from 'vitest'
 
+const webLlmMock = vi.hoisted(() => ({
+  CreateMLCEngine: vi.fn(),
+}))
+
+const mediaPipeMock = vi.hoisted(() => ({
+  FilesetResolver: {
+    forGenAiTasks: vi.fn(),
+  },
+  LlmInference: {
+    createFromOptions: vi.fn(),
+  },
+}))
+
+vi.mock('@mlc-ai/web-llm', () => webLlmMock)
+
+vi.mock('@mediapipe/tasks-genai', () => mediaPipeMock)
+
 function withRuntimeEnv(value: string, run: () => Promise<void>): Promise<void> {
   const env = import.meta.env as unknown as Record<string, string | undefined>
   const previous = env.VITE_ROUTER_RUNTIME
@@ -105,9 +122,7 @@ describe('WebLLM adapter', () => {
 
   it('classifies to lexical when engine returns "lexical"', async () => {
     const engine = makeWebllmEngine('lexical')
-    vi.mock('@mlc-ai/web-llm', () => ({
-      CreateMLCEngine: vi.fn().mockResolvedValue(engine),
-    }))
+    webLlmMock.CreateMLCEngine.mockResolvedValue(engine)
 
     await withRuntimeEnv('webllm', async () => {
       const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
@@ -119,9 +134,7 @@ describe('WebLLM adapter', () => {
 
   it('classifies to semantic when engine returns "semantic output"', async () => {
     const engine = makeWebllmEngine('semantic output')
-    vi.mock('@mlc-ai/web-llm', () => ({
-      CreateMLCEngine: vi.fn().mockResolvedValue(engine),
-    }))
+    webLlmMock.CreateMLCEngine.mockResolvedValue(engine)
 
     await withRuntimeEnv('webllm', async () => {
       const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
@@ -133,9 +146,7 @@ describe('WebLLM adapter', () => {
 
   it('classifies to hybrid when engine returns unrecognised text', async () => {
     const engine = makeWebllmEngine('yes this is a nice query')
-    vi.mock('@mlc-ai/web-llm', () => ({
-      CreateMLCEngine: vi.fn().mockResolvedValue(engine),
-    }))
+    webLlmMock.CreateMLCEngine.mockResolvedValue(engine)
 
     await withRuntimeEnv('webllm', async () => {
       const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
@@ -158,14 +169,8 @@ describe('LiteRT adapter', () => {
 
   it('classifies to lexical when LlmInference returns "lexical"', async () => {
     const inference = makeLiteRtInference('lexical')
-    vi.mock('@mediapipe/tasks-genai', () => ({
-      FilesetResolver: {
-        forGenAiTasks: vi.fn().mockResolvedValue({}),
-      },
-      LlmInference: {
-        createFromOptions: vi.fn().mockResolvedValue(inference),
-      },
-    }))
+    mediaPipeMock.FilesetResolver.forGenAiTasks.mockResolvedValue({})
+    mediaPipeMock.LlmInference.createFromOptions.mockResolvedValue(inference)
 
     await withRuntimeEnv('litert', async () => {
       const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
@@ -177,14 +182,8 @@ describe('LiteRT adapter', () => {
 
   it('classifies to semantic when LlmInference returns "semantic"', async () => {
     const inference = makeLiteRtInference('semantic')
-    vi.mock('@mediapipe/tasks-genai', () => ({
-      FilesetResolver: {
-        forGenAiTasks: vi.fn().mockResolvedValue({}),
-      },
-      LlmInference: {
-        createFromOptions: vi.fn().mockResolvedValue(inference),
-      },
-    }))
+    mediaPipeMock.FilesetResolver.forGenAiTasks.mockResolvedValue({})
+    mediaPipeMock.LlmInference.createFromOptions.mockResolvedValue(inference)
 
     await withRuntimeEnv('litert', async () => {
       const { getRouterRuntime } = await import('@/lib/llm/runtimeSelector')
@@ -197,12 +196,8 @@ describe('LiteRT adapter', () => {
   it('closes the inference session via adapter.close()', async () => {
     const inference = makeLiteRtInference('hybrid')
     const createFromOptions = vi.fn().mockResolvedValue(inference)
-    vi.mock('@mediapipe/tasks-genai', () => ({
-      FilesetResolver: {
-        forGenAiTasks: vi.fn().mockResolvedValue({}),
-      },
-      LlmInference: { createFromOptions },
-    }))
+    mediaPipeMock.FilesetResolver.forGenAiTasks.mockResolvedValue({})
+    mediaPipeMock.LlmInference.createFromOptions = createFromOptions
 
     await withRuntimeEnv('litert', async () => {
       // Verify runtime is recognised before simulating close

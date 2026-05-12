@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import pino from 'pino';
 import { embedText, warmupEmbedder } from 'semantic-embedder';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 
 const log = pino({ level: process.env.LOG_LEVEL || 'info' });
 
@@ -13,6 +14,13 @@ const db = new Pool({
 const PORT = Number(process.env.PORT || 3001);
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 20;
+const MAX_FILTERS_PER_REQ = 8;
+const MAX_SEARCH_CHARS = 500;
+const MAX_AUTHOR_FILTERS = 128;
+const MAX_KIND_FILTERS = 32;
+const MAX_THREAD_ADDRESS_CHARS = 512;
+const WS_MAX_PAYLOAD_BYTES = 32 * 1024;
+const WS_MAX_REQS_PER_MINUTE = 120;
 const LOG_RELAY_REQS = process.env.LOG_RELAY_REQS === 'true';
 const MODERATION_OPS_TOKEN = typeof process.env.MODERATION_OPS_TOKEN === 'string'
   ? process.env.MODERATION_OPS_TOKEN.trim()
@@ -108,6 +116,42 @@ function safeString(val: any): string | undefined {
   return typeof val === 'string' ? val : undefined;
 }
 
+function safeHex32(val: any): string | undefined {
+  return typeof val === 'string' && /^[0-9a-f]{64}$/i.test(val) ? val.toLowerCase() : undefined;
+}
+
+function sanitizeSearch(value: unknown): string | undefined {
+  const search = safeString(value)?.replace(/\s+/g, ' ').trim();
+  if (!search || search.length > MAX_SEARCH_CHARS) return undefined;
+  return search;
+}
+
+function sanitizeKinds(value: unknown): number[] | undefined {
+  const raw = safeArray<unknown>(value);
+  if (!raw) return undefined;
+  const kinds = raw
+    .map((entry) => safeNumber(entry))
+    .filter((entry): entry is number => typeof entry === 'number' && Number.isInteger(entry) && entry >= 0 && entry <= 65535)
+    .slice(0, MAX_KIND_FILTERS);
+  return kinds.length > 0 ? [...new Set(kinds)] : undefined;
+}
+
+function sanitizeAuthors(value: unknown): string[] | undefined {
+  const raw = safeArray<unknown>(value);
+  if (!raw) return undefined;
+  const authors = raw
+    .map((entry) => safeHex32(entry))
+    .filter((entry): entry is string => entry !== undefined)
+    .slice(0, MAX_AUTHOR_FILTERS);
+  return authors.length > 0 ? [...new Set(authors)] : undefined;
+}
+
+function sanitizeThreadAddress(value: unknown): string | undefined {
+  const threadAddress = safeString(value)?.trim();
+  if (!threadAddress || threadAddress.length > MAX_THREAD_ADDRESS_CHARS) return undefined;
+  return threadAddress;
+}
+
 function toPgVector(values: number[]): string {
   if (values.length === 0) {
     throw new Error('Embedding cannot be empty');
@@ -130,8 +174,12 @@ function parseUrl(req: IncomingMessage): URL {
   return new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
 }
 
+function isOpsConfigured(): boolean {
+  return MODERATION_OPS_TOKEN.length >= 32;
+}
+
 function isOpsAuthorized(req: IncomingMessage): boolean {
-  if (!MODERATION_OPS_TOKEN) return true;
+  if (!isOpsConfigured()) return false;
   const authHeader = req.headers.authorization;
   if (typeof authHeader !== 'string') return false;
 
@@ -139,7 +187,9 @@ function isOpsAuthorized(req: IncomingMessage): boolean {
     ? authHeader.slice(7).trim()
     : authHeader.trim();
 
-  return token === MODERATION_OPS_TOKEN;
+  const expected = Buffer.from(MODERATION_OPS_TOKEN);
+  const actual = Buffer.from(token);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
 function setReadCorsHeaders(res: ServerResponse, origin: string | undefined): void {
@@ -182,11 +232,6 @@ async function handleFeatureFlagsOpsRequest(req: IncomingMessage, res: ServerRes
     return false;
   }
 
-  if (!isOpsAuthorized(req)) {
-    sendJson(res, 401, { error: 'unauthorized' });
-    return true;
-  }
-
   const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
   setReadCorsHeaders(res, origin);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -194,6 +239,16 @@ async function handleFeatureFlagsOpsRequest(req: IncomingMessage, res: ServerRes
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
     res.end();
+    return true;
+  }
+
+  if (!isOpsConfigured()) {
+    sendJson(res, 503, { error: 'ops_auth_not_configured' });
+    return true;
+  }
+
+  if (!isOpsAuthorized(req)) {
+    sendJson(res, 401, { error: 'unauthorized' });
     return true;
   }
 
@@ -482,6 +537,21 @@ async function handleOpsRequest(req: IncomingMessage, res: ServerResponse): Prom
     return false;
   }
 
+  const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
+  setReadCorsHeaders(res, origin);
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+
+  if (req.method === 'OPTIONS') {
+    res.statusCode = 204;
+    res.end();
+    return true;
+  }
+
+  if (!isOpsConfigured()) {
+    sendJson(res, 503, { error: 'ops_auth_not_configured' });
+    return true;
+  }
+
   if (!isOpsAuthorized(req)) {
     sendJson(res, 401, { error: 'unauthorized' });
     return true;
@@ -750,17 +820,48 @@ function setupWebSocketServer() {
     });
   });
 
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({
+    server,
+    maxPayload: WS_MAX_PAYLOAD_BYTES,
+    perMessageDeflate: false,
+  });
 
   wss.on('connection', (ws) => {
+    let reqWindowStartedAt = Date.now();
+    let reqsInWindow = 0;
+
+    const allowReq = (): boolean => {
+      const now = Date.now();
+      if (now - reqWindowStartedAt >= 60_000) {
+        reqWindowStartedAt = now;
+        reqsInWindow = 0;
+      }
+      reqsInWindow += 1;
+      return reqsInWindow <= WS_MAX_REQS_PER_MINUTE;
+    };
+
     ws.on('message', async (data) => {
     try {
       const msg = JSON.parse(data.toString());
       if (!Array.isArray(msg)) return;
 
       if (msg[0] === 'REQ') {
-        const subId = msg[1];
-        const filters = msg.slice(2);
+        if (!allowReq()) {
+          ws.send(JSON.stringify(['NOTICE', 'rate limit exceeded']));
+          ws.close(1008, 'rate limit exceeded');
+          return;
+        }
+
+        const subId = safeString(msg[1])?.slice(0, 128);
+        if (!subId) {
+          ws.send(JSON.stringify(['NOTICE', 'subscription id must be a string']));
+          return;
+        }
+        const filters = msg.slice(2, 2 + MAX_FILTERS_PER_REQ);
+
+        if (msg.length - 2 > MAX_FILTERS_PER_REQ) {
+          ws.send(JSON.stringify(['NOTICE', `too many filters; maximum is ${MAX_FILTERS_PER_REQ}`]));
+        }
 
         if (LOG_RELAY_REQS) {
           log.info({ subId, filterCount: filters.length }, 'relay REQ received');
@@ -769,18 +870,21 @@ function setupWebSocketServer() {
         for (const filter of filters) {
           if (!filter || typeof filter !== 'object') continue;
 
-          const search = safeString(filter.search);
-          if (!search) continue;
+          const search = sanitizeSearch(filter.search);
+          if (!search) {
+            ws.send(JSON.stringify(['NOTICE', `search must be 1-${MAX_SEARCH_CHARS} characters`]));
+            continue;
+          }
 
           // ── Thread fetch ──────────────────────────────────────────────────
           // thread_id:      fetch all events whose root_id = <event-id> (NIP-10 / NIP-22 by event id)
           // thread_address: fetch all NIP-22 comments whose root_address = <naddr> (addressable roots)
-          const threadId      = safeString(filter.thread_id);
-          const threadAddress = safeString(filter.thread_address);
+          const threadId      = safeHex32(filter.thread_id);
+          const threadAddress = sanitizeThreadAddress(filter.thread_address);
 
           if (threadId || threadAddress) {
             const limit = sanitizeLimit(filter.limit);
-            const kinds = safeArray<number>(filter.kinds);
+            const kinds = sanitizeKinds(filter.kinds);
 
             let threadRows: { event_id: string; raw: unknown }[];
 
@@ -836,8 +940,8 @@ function setupWebSocketServer() {
 
           const limit = sanitizeLimit(filter.limit);
 
-          const kinds = safeArray<number>(filter.kinds);
-          const authors = safeArray<string>(filter.authors);
+          const kinds = sanitizeKinds(filter.kinds);
+          const authors = sanitizeAuthors(filter.authors);
           const since = safeNumber(filter.since);
           const until = safeNumber(filter.until);
 
