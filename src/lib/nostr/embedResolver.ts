@@ -1,9 +1,15 @@
+import type { NDKFilter } from '@nostr-dev-kit/ndk'
 import { getEvent } from '@/lib/db/nostr'
 import { addRelayToPool, getNDK, waitForCachedEvents } from '@/lib/nostr/ndk'
 import { decodeEventReference, type DecodedEventReference } from '@/lib/nostr/nip21'
 import { withRetry } from '@/lib/retry'
-import { isValidEvent, isValidHex32, isValidRelayURL } from '@/lib/security/sanitize'
-import type { NostrEvent, NostrFilter } from '@/types'
+import {
+  isStructurallyValidEvent,
+  isValidEvent,
+  isValidHex32,
+  isValidRelayURL,
+} from '@/lib/security/sanitize'
+import type { NostrEvent } from '@/types'
 
 export type EventEmbedResolutionState =
   | 'idle'
@@ -119,7 +125,7 @@ export function normalizeEventEmbedReference(
   }
 }
 
-export function buildEmbedFetchFilter(reference: DecodedEventReference): NostrFilter {
+export function buildEmbedFetchFilter(reference: DecodedEventReference): NDKFilter {
   return {
     ids: [reference.eventId],
     ...(reference.author !== undefined ? { authors: [reference.author] } : {}),
@@ -131,18 +137,21 @@ export function buildEmbedFetchFilter(reference: DecodedEventReference): NostrFi
 export function verifyEmbedEvent(
   event: unknown,
   reference: DecodedEventReference,
+  verifySignature = true,
 ): EventEmbedVerificationResult {
-  if (!isValidEvent(event)) {
+  const isValid = verifySignature ? isValidEvent(event) : isStructurallyValidEvent(event)
+  if (!isValid) {
     return { ok: false, reason: 'invalid-structure-or-signature' }
   }
 
-  if (event.id !== reference.eventId) {
+  const verifiedEvent = event as NostrEvent
+  if (verifiedEvent.id !== reference.eventId) {
     return { ok: false, reason: 'requested-id-mismatch' }
   }
-  if (reference.author !== undefined && event.pubkey !== reference.author) {
+  if (reference.author !== undefined && verifiedEvent.pubkey !== reference.author) {
     return { ok: false, reason: 'requested-author-mismatch' }
   }
-  if (reference.kind !== undefined && event.kind !== reference.kind) {
+  if (reference.kind !== undefined && verifiedEvent.kind !== reference.kind) {
     return { ok: false, reason: 'requested-kind-mismatch' }
   }
 
@@ -215,7 +224,7 @@ export async function resolveNostrEventEmbed(
   const cached = await getEvent(reference.eventId)
   throwIfAborted(options.signal)
   if (cached) {
-    const verified = verifyEmbedEvent(cached, reference)
+    const verified = verifyEmbedEvent(cached, reference, false)
     if (!verified.ok) {
       return {
         reference,
@@ -267,7 +276,7 @@ export async function resolveNostrEventEmbed(
     }
   }
 
-  const verified = verifyEmbedEvent(fetched, reference)
+  const verified = verifyEmbedEvent(fetched, reference, false)
   if (!verified.ok) {
     return {
       reference,
