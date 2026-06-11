@@ -148,5 +148,8 @@ jobs:
 
       - run: npm ci
 
+      - name: Repository security drift audit
+        run: npm run security:repo
+
       - name: Audit production and development dependencies
         run: npm audit --audit-level=high
