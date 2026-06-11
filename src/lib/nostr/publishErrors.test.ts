@@ -20,6 +20,47 @@ describe('publishErrors', () => {
     expect(result.message).toContain('Signing was denied')
   })
 
+  it('treats signer cancelled-by-user messages as signer denial, not app aborts', () => {
+    expect(classifyPublishError(new Error('cancelled by user'))).toMatchObject({
+      kind: 'signer_denied',
+      retryable: false,
+    })
+    expect(classifyPublishError(new Error('canceled by user'))).toMatchObject({
+      kind: 'signer_denied',
+      retryable: false,
+    })
+  })
+
+  it('does not classify generic relay rejections as signer denial', () => {
+    expect(classifyPublishError(new Error('relay rejected: event is too old'))).toMatchObject({
+      kind: 'relay',
+      retryable: true,
+    })
+    expect(classifyPublishError(new Error('restricted: permission denied'))).toMatchObject({
+      kind: 'unknown',
+      retryable: true,
+    })
+    expect(classifyPublishError(new Error('blocked: rejected by spam filter'))).toMatchObject({
+      kind: 'unknown',
+      retryable: true,
+    })
+  })
+
+  it('extracts signer denial messages from plain RPC-style error objects', () => {
+    expect(classifyPublishError({ message: 'signer rejected request' })).toMatchObject({
+      kind: 'signer_denied',
+      retryable: false,
+    })
+    expect(classifyPublishError({ error: 'denied signing' })).toMatchObject({
+      kind: 'signer_denied',
+      retryable: false,
+    })
+    expect(classifyPublishError({ reason: 'user declined' })).toMatchObject({
+      kind: 'signer_denied',
+      retryable: false,
+    })
+  })
+
   it('classifies missing signer errors as actionable non-retryable failures', () => {
     const result = classifyPublishError(new Error('No signer available — install a NIP-07 extension.'))
 
