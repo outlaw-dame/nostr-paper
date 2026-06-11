@@ -12,6 +12,22 @@ interface UseEventState {
   resolutionState: EventEmbedResolutionState
 }
 
+const IDLE_STATE: UseEventState = {
+  event: null,
+  loading: false,
+  error: null,
+  resolutionState: 'idle',
+}
+
+function isIdleState(state: UseEventState): boolean {
+  return (
+    state.event === null &&
+    state.loading === false &&
+    state.error === null &&
+    state.resolutionState === 'idle'
+  )
+}
+
 export function useEvent(eventReference: string | null | undefined): UseEventState {
   const [state, setState] = useState<UseEventState>({
     event: null,
@@ -22,12 +38,7 @@ export function useEvent(eventReference: string | null | undefined): UseEventSta
 
   useEffect(() => {
     if (!eventReference) {
-      setState({
-        event: null,
-        loading: false,
-        error: null,
-        resolutionState: 'idle',
-      })
+      setState((previous) => isIdleState(previous) ? previous : IDLE_STATE)
       return
     }
 
