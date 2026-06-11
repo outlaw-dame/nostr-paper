@@ -26,6 +26,12 @@ out/
 secrets/
 .secrets/
 
+# ── Local agent / IDE state ────────────────────────────────────
+# Local assistant/editor state can contain absolute paths, broad command
+# permissions, or one-off tool settings and must not be committed.
+.claude/settings.local.json
+*.code-workspace
+
 # ── Editor & OS ───────────────────────────────────────────────
 .DS_Store
 .DS_Store?
