@@ -13,6 +13,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { getPublishErrorMessage } from '@/lib/nostr/publishErrors'
 
 export type PublishStatus = 'idle' | 'publishing' | 'done' | 'error'
 
@@ -69,7 +70,7 @@ export function usePublishEvent(): UsePublishEventReturn {
       return result.id
     } catch (err) {
       if (controller.signal.aborted) return null
-      setState({ status: 'error', publishedId: null, error: classifyError(err) })
+      setState({ status: 'error', publishedId: null, error: getPublishErrorMessage(err) })
       return null
     }
   }, [])
@@ -86,14 +87,4 @@ export function usePublishEvent(): UsePublishEventReturn {
     publish,
     reset,
   }
-}
-
-// ── Internal ──────────────────────────────────────────────────
-
-function classifyError(err: unknown): string {
-  if (err instanceof DOMException && err.name === 'AbortError') {
-    return 'Publish cancelled.'
-  }
-  if (err instanceof Error) return err.message
-  return 'Failed to publish. Please try again.'
 }
