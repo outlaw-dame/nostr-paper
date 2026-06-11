@@ -94,16 +94,25 @@ function normalizeOGData(value: unknown): OGData | null {
   const url = normalizePreviewURL(typeof record.url === 'string' ? record.url : '')
   if (!url) return null
 
+  const title = boundedText(record.title)
+  const description = boundedText(record.description, 1_000)
+  const image = optionalSafeUrl(record.image)
+  const siteName = boundedText(record.siteName)
+  const author = boundedText(record.author)
+  const nostrCreator = boundedText(record.nostrCreator, CREATOR_FIELD_LIMIT)
+  const nostrNip05 = boundedText(record.nostrNip05, CREATOR_FIELD_LIMIT)
+  const favicon = optionalSafeUrl(record.favicon)
+
   return {
     url,
-    ...(boundedText(record.title) ? { title: boundedText(record.title) } : {}),
-    ...(boundedText(record.description, 1_000) ? { description: boundedText(record.description, 1_000) } : {}),
-    ...(optionalSafeUrl(record.image) ? { image: optionalSafeUrl(record.image) } : {}),
-    ...(boundedText(record.siteName) ? { siteName: boundedText(record.siteName) } : {}),
-    ...(boundedText(record.author) ? { author: boundedText(record.author) } : {}),
-    ...(boundedText(record.nostrCreator, CREATOR_FIELD_LIMIT) ? { nostrCreator: boundedText(record.nostrCreator, CREATOR_FIELD_LIMIT) } : {}),
-    ...(boundedText(record.nostrNip05, CREATOR_FIELD_LIMIT) ? { nostrNip05: boundedText(record.nostrNip05, CREATOR_FIELD_LIMIT) } : {}),
-    ...(optionalSafeUrl(record.favicon) ? { favicon: optionalSafeUrl(record.favicon) } : {}),
+    ...(title ? { title } : {}),
+    ...(description ? { description } : {}),
+    ...(image ? { image } : {}),
+    ...(siteName ? { siteName } : {}),
+    ...(author ? { author } : {}),
+    ...(nostrCreator ? { nostrCreator } : {}),
+    ...(nostrNip05 ? { nostrNip05 } : {}),
+    ...(favicon ? { favicon } : {}),
   }
 }
 
