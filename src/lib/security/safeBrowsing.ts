@@ -40,7 +40,7 @@ function evictIfNeeded(): void {
   if (firstKey !== undefined) cache.delete(firstKey)
 }
 
-function normalizeSafeBrowsingUrl(url: string): string | null {
+export function normalizeSafeBrowsingUrl(url: string): string | null {
   if (typeof url !== 'string') return null
   const trimmed = url.trim()
   if (!isSafeURL(trimmed)) return null
