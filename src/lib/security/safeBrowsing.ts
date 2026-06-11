@@ -2,9 +2,13 @@
  * Safe Browsing URL checks.
  *
  * Uses a same-origin proxy in dev and an optional production proxy endpoint.
- * If no proxy is configured or the check fails, this module fails open and
- * treats URLs as safe to avoid breaking core app behavior.
+ * Core app callers can keep the default fail-open behavior so links still render
+ * when a proxy is unavailable. Passive preview fetchers should pass
+ * `{ failOpen: false }` so reputation-check outages disable previews instead of
+ * fetching untrusted remote metadata.
  */
+
+import { isSafeURL } from '@/lib/security/sanitize'
 
 const PROD_PROXY_URL = import.meta.env.VITE_SAFE_BROWSING_PROXY_URL as string | undefined
 const DEV_PROXY_PATH = '/__dev/safe-browsing'
@@ -17,6 +21,15 @@ const MAX_CACHE = 500
 const cache = new Map<string, boolean>()
 const inflight = new Map<string, Promise<boolean>>()
 
+export interface SafeBrowsingCheckOptions {
+  /**
+   * Whether to treat proxy/network failures as safe.
+   * Defaults to true for link rendering compatibility. Set false before
+   * fetching untrusted remote previews or media metadata.
+   */
+  failOpen?: boolean
+}
+
 interface SafeBrowsingProxyResponse {
   safe?: unknown
 }
@@ -27,7 +40,27 @@ function evictIfNeeded(): void {
   if (firstKey !== undefined) cache.delete(firstKey)
 }
 
-async function doCheck(url: string): Promise<boolean> {
+function normalizeSafeBrowsingUrl(url: string): string | null {
+  if (typeof url !== 'string') return null
+  const trimmed = url.trim()
+  if (!isSafeURL(trimmed)) return null
+
+  try {
+    const parsed = new URL(trimmed)
+    parsed.hash = ''
+    parsed.username = ''
+    parsed.password = ''
+    return parsed.href
+  } catch {
+    return null
+  }
+}
+
+function cacheKey(url: string, failOpen: boolean): string {
+  return `${failOpen ? 'open' : 'closed'}:${url}`
+}
+
+async function doCheck(url: string, failOpen: boolean): Promise<boolean> {
   try {
     const response = await fetch(PROXY_BASE, {
       method: 'POST',
@@ -40,33 +73,50 @@ async function doCheck(url: string): Promise<boolean> {
       signal: AbortSignal.timeout(5_000),
     })
 
-    if (!response.ok) return true
+    if (!response.ok) return failOpen
 
     const payload = (await response.json()) as SafeBrowsingProxyResponse
-    return typeof payload.safe === 'boolean' ? payload.safe : true
+    return typeof payload.safe === 'boolean' ? payload.safe : failOpen
   } catch {
-    return true
+    return failOpen
   }
 }
 
-export function peekSafeBrowsingDecision(url: string): boolean | undefined {
-  if (!cache.has(url)) return undefined
-  return cache.get(url)
+export function peekSafeBrowsingDecision(
+  url: string,
+  options: SafeBrowsingCheckOptions = {},
+): boolean | undefined {
+  const normalizedUrl = normalizeSafeBrowsingUrl(url)
+  if (!normalizedUrl) return false
+
+  const failOpen = options.failOpen ?? true
+  const key = cacheKey(normalizedUrl, failOpen)
+  if (!cache.has(key)) return undefined
+  return cache.get(key)
 }
 
-export async function checkSafeBrowsingURL(url: string): Promise<boolean> {
-  if (cache.has(url)) return cache.get(url) ?? true
+export async function checkSafeBrowsingURL(
+  url: string,
+  options: SafeBrowsingCheckOptions = {},
+): Promise<boolean> {
+  const normalizedUrl = normalizeSafeBrowsingUrl(url)
+  if (!normalizedUrl) return false
 
-  const existing = inflight.get(url)
+  const failOpen = options.failOpen ?? true
+  const key = cacheKey(normalizedUrl, failOpen)
+
+  if (cache.has(key)) return cache.get(key) ?? failOpen
+
+  const existing = inflight.get(key)
   if (existing) return existing
 
-  const promise = doCheck(url).then((safe) => {
+  const promise = doCheck(normalizedUrl, failOpen).then((safe) => {
     evictIfNeeded()
-    cache.set(url, safe)
-    inflight.delete(url)
+    cache.set(key, safe)
+    inflight.delete(key)
     return safe
   })
 
-  inflight.set(url, promise)
+  inflight.set(key, promise)
   return promise
 }

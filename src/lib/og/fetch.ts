@@ -16,6 +16,7 @@
 
 import type { OGData } from './types'
 import { checkSafeBrowsingURL } from '@/lib/security/safeBrowsing'
+import { isSafeURL, sanitizeText } from '@/lib/security/sanitize'
 import { withRetry } from '@/lib/retry'
 
 // ── Configuration ─────────────────────────────────────────────
@@ -38,6 +39,8 @@ const PROXY_BASE = import.meta.env.DEV ? DEV_PROXY : (PROD_PROXY ?? null)
 
 const MAX_CACHE = 200
 const NEGATIVE_CACHE_TTL_MS = 2 * 60 * 1000
+const TEXT_FIELD_LIMIT = 500
+const CREATOR_FIELD_LIMIT = 256
 
 interface OgCacheEntry {
   value: OGData | null
@@ -56,12 +59,61 @@ function evictIfNeeded(): void {
 
 // ── Fetch ─────────────────────────────────────────────────────
 
-function isOGData(value: unknown): value is OGData {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as Record<string, unknown>)['url'] === 'string'
-  )
+function normalizePreviewURL(url: string): string | null {
+  if (typeof url !== 'string') return null
+  const trimmed = url.trim()
+  if (!isSafeURL(trimmed)) return null
+
+  try {
+    const parsed = new URL(trimmed)
+    parsed.hash = ''
+    parsed.username = ''
+    parsed.password = ''
+    return parsed.href
+  } catch {
+    return null
+  }
+}
+
+function boundedText(value: unknown, maxLength = TEXT_FIELD_LIMIT): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const sanitized = sanitizeText(value).replace(/\s+/g, ' ').trim()
+  if (!sanitized) return undefined
+  return sanitized.slice(0, maxLength)
+}
+
+function optionalSafeUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const normalized = normalizePreviewURL(value)
+  return normalized ?? undefined
+}
+
+function normalizeOGData(value: unknown): OGData | null {
+  if (typeof value !== 'object' || value === null) return null
+  const record = value as Record<string, unknown>
+  const url = normalizePreviewURL(typeof record.url === 'string' ? record.url : '')
+  if (!url) return null
+
+  const title = boundedText(record.title)
+  const description = boundedText(record.description, 1_000)
+  const image = optionalSafeUrl(record.image)
+  const siteName = boundedText(record.siteName)
+  const author = boundedText(record.author)
+  const nostrCreator = boundedText(record.nostrCreator, CREATOR_FIELD_LIMIT)
+  const nostrNip05 = boundedText(record.nostrNip05, CREATOR_FIELD_LIMIT)
+  const favicon = optionalSafeUrl(record.favicon)
+
+  return {
+    url,
+    ...(title ? { title } : {}),
+    ...(description ? { description } : {}),
+    ...(image ? { image } : {}),
+    ...(siteName ? { siteName } : {}),
+    ...(author ? { author } : {}),
+    ...(nostrCreator ? { nostrCreator } : {}),
+    ...(nostrNip05 ? { nostrNip05 } : {}),
+    ...(favicon ? { favicon } : {}),
+  }
 }
 
 async function doFetch(url: string): Promise<OGData | null> {
@@ -95,7 +147,7 @@ async function doFetch(url: string): Promise<OGData | null> {
         if (!res.ok) return null
 
         const json: unknown = await res.json()
-        return isOGData(json) ? json : null
+        return normalizeOGData(json)
       },
       {
         maxAttempts: 3,
@@ -117,11 +169,14 @@ async function doFetch(url: string): Promise<OGData | null> {
 }
 
 export function peekOGData(url: string): OGData | null | undefined {
-  const entry = cache.get(url)
+  const normalizedUrl = normalizePreviewURL(url)
+  if (!normalizedUrl) return null
+
+  const entry = cache.get(normalizedUrl)
   if (!entry) return undefined
 
   if (entry.expiresAt !== undefined && entry.expiresAt <= Date.now()) {
-    cache.delete(url)
+    cache.delete(normalizedUrl)
     return undefined
   }
 
@@ -136,7 +191,7 @@ export function peekOGData(url: string): OGData | null | undefined {
  * - Caches the result (including null) for the lifetime of the session.
  */
 export async function fetchOGData(url: string): Promise<OGData | null> {
-  const normalizedUrl = url.trim()
+  const normalizedUrl = normalizePreviewURL(url)
   if (!normalizedUrl) return null
   if (!PROXY_BASE) return null
 
@@ -148,7 +203,10 @@ export async function fetchOGData(url: string): Promise<OGData | null> {
   if (existing) return existing
 
   const promise = (async () => {
-    const safe = await checkSafeBrowsingURL(normalizedUrl)
+    // Link previews are passive remote fetches. Fail closed here: if the
+    // reputation proxy is unavailable or returns malformed data, skip the
+    // preview instead of fetching remote metadata anyway.
+    const safe = await checkSafeBrowsingURL(normalizedUrl, { failOpen: false })
     if (!safe) return null
     return doFetch(normalizedUrl)
   })().then(result => {

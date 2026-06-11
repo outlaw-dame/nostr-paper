@@ -29,6 +29,7 @@
     "test:ui:watch": "vitest --config vitest.ui.config.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "security:repo": "node scripts/security-repo-audit.mjs",
     "analyze": "vite build --mode analyze",
     "api:safe": "set -a && source .env.local && set +a && .venv/bin/python server/translate.py --host 127.0.0.1 --port 7080"
   },

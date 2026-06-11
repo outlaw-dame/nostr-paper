@@ -2,10 +2,14 @@
   # Required for SQLite WASM + SharedArrayBuffer
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: credentialless
+  Cross-Origin-Resource-Policy: same-origin
+  Origin-Agent-Cluster: ?1
 
   # Security headers
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
+  X-DNS-Prefetch-Control: off
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
   Content-Security-Policy: default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; media-src 'self' https: blob:; connect-src 'self' https: wss:; font-src 'self' data:; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'; upgrade-insecure-requests
   Referrer-Policy: no-referrer
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
@@ -17,18 +21,21 @@
   # Immutable cache for hashed assets
   Cache-Control: public, max-age=31536000, immutable
   Cross-Origin-Embedder-Policy: credentialless
+  Cross-Origin-Resource-Policy: same-origin
 
 /assets/*.wasm
   # WASM files in /assets/ — explicit MIME required for iOS Safari streaming compilation
   Cache-Control: public, max-age=31536000, immutable
   Content-Type: application/wasm
   Cross-Origin-Embedder-Policy: credentialless
+  Cross-Origin-Resource-Policy: same-origin
 
 /*.wasm
   # WASM files in root — immutable with correct MIME
   Cache-Control: public, max-age=31536000, immutable
   Content-Type: application/wasm
   Cross-Origin-Embedder-Policy: credentialless
+  Cross-Origin-Resource-Policy: same-origin
 
 /icons/*
   Cache-Control: public, max-age=86400

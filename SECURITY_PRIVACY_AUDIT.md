@@ -56,6 +56,39 @@ Reviewed the client PWA, Nostr authentication paths, translation and AI integrat
    - `.env.example`, README, platform docs, and AI integration docs now warn against browser-delivered secrets.
    - NSEC affordances were removed from onboarding/settings copy and tests.
 
+## 2026-06-10 Follow-up Audit
+
+### Additional Scope
+
+Reviewed recently added Nostr embed resolution, Open Graph/link preview fetching, Safe Browsing checks, note rendering/linkification, static deployment headers, and the Vite dev proxy surfaces used for local OG/media/feed fetches.
+
+### Findings Remediated
+
+1. Passive link preview requests could proceed without local URL normalization.
+   - `fetchOGData()` now rejects non-HTTPS, credential-bearing, malformed, or otherwise unsafe preview URLs before cache lookup, Safe Browsing, or proxy dispatch.
+   - Preview cache keys are based on canonicalized URLs with fragments and credentials removed.
+
+2. Safe Browsing checks only supported fail-open behavior.
+   - `checkSafeBrowsingURL()` now accepts `{ failOpen: false }` for passive preview fetches.
+   - Link rendering can keep compatibility-oriented fail-open behavior, while preview fetching now fails closed when the reputation proxy is unavailable or returns malformed data.
+   - Unsafe URL schemes are rejected before the Safe Browsing proxy is contacted.
+
+3. Untrusted OG proxy responses were only shape-checked for a `url` string.
+   - OG preview responses are now normalized before UI use.
+   - Returned `url`, `image`, and `favicon` fields must pass the same safe HTTPS URL policy.
+   - Text fields are sanitized, whitespace-normalized, and length-bounded before caching.
+
+4. Cache-mode confusion between fail-open and fail-closed Safe Browsing decisions was possible.
+   - Safe Browsing cache keys now include the failure policy mode so a compatibility-oriented decision cannot satisfy a fail-closed preview fetch.
+
+### Tests Added
+
+- `src/lib/security/safeBrowsing.test.ts` covers unsafe-scheme rejection, default fail-open behavior, fail-closed preview behavior, and separate cache entries for fail-open versus fail-closed checks.
+
+### Residual Follow-up
+
+- The Vite dev OG/media/feed proxies still rely on hostname screening plus redirect validation. They should be upgraded to resolve DNS before each upstream request and reject private, loopback, link-local, multicast, carrier-grade NAT, and cloud-metadata IP ranges. This is less urgent for production because these are development/preview-server helpers, but it matters if `npm run dev:host` is used on an untrusted network.
+
 ## Residual Operational Requirements
 
 - `VITE_APPLE_MUSIC_DEVELOPER_TOKEN` remains browser-visible by design because MusicKit uses a developer JWT in the client. Never embed the MusicKit private key; use short-lived generated JWTs and rotate them.
@@ -90,4 +123,4 @@ Reviewed the client PWA, Nostr authentication paths, translation and AI integrat
 - `npm audit --prefix platform/services/workers/embedding`
 - `npm audit --prefix platform/services/workers/lexical-index`
 
-All verification commands above passed. Dependency audits reported zero vulnerabilities.
+All verification commands above passed for the 2026-05-10 audit. For the 2026-06-10 follow-up changes, use the PR CI run as source of truth because this ChatGPT runtime cannot clone GitHub locally.
