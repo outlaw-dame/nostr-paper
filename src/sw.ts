@@ -83,6 +83,8 @@ async function injectCrossOriginHeaders(request: Request): Promise<Response> {
   const headers = new Headers(response.headers)
   headers.set('Cross-Origin-Opener-Policy',   'same-origin')
   headers.set('Cross-Origin-Embedder-Policy', 'credentialless')
+  headers.set('Cross-Origin-Resource-Policy', 'same-origin')
+  headers.set('Origin-Agent-Cluster',         '?1')
   headers.set('Content-Security-Policy', [
     "default-src 'self'",
     "base-uri 'self'",
@@ -102,6 +104,7 @@ async function injectCrossOriginHeaders(request: Request): Promise<Response> {
   ].join('; '))
   headers.set('X-Content-Type-Options', 'nosniff')
   headers.set('X-Frame-Options',        'DENY')
+  headers.set('X-DNS-Prefetch-Control', 'off')
   headers.set('Referrer-Policy',        'no-referrer')
   headers.set('Permissions-Policy',     'camera=(), microphone=(), geolocation=(), payment=()')
   return new Response(response.body, {
