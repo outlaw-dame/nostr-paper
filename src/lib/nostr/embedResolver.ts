@@ -74,6 +74,14 @@ function normalizeRelayHintUrl(value: string): string | null {
   }
 }
 
+function decodeEventReferenceSafely(value: string): DecodedEventReference | null {
+  try {
+    return decodeEventReference(value)
+  } catch {
+    return null
+  }
+}
+
 export function normalizeEmbedRelayHints(
   relays: readonly string[] | null | undefined,
   maxRelayHints = DEFAULT_MAX_RELAY_HINTS,
@@ -97,7 +105,7 @@ export function normalizeEventEmbedReference(
   input: string | DecodedEventReference | null | undefined,
   maxRelayHints = DEFAULT_MAX_RELAY_HINTS,
 ): DecodedEventReference | null {
-  const decoded = typeof input === 'string' ? decodeEventReference(input) : input
+  const decoded = typeof input === 'string' ? decodeEventReferenceSafely(input) : input
   if (!decoded || !isValidHex32(decoded.eventId)) return null
   if (decoded.author !== undefined && !isValidHex32(decoded.author)) return null
   if (decoded.kind !== undefined && (!Number.isInteger(decoded.kind) || decoded.kind < 0)) return null
