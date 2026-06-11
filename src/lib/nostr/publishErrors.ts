@@ -17,15 +17,22 @@ export interface PublishErrorClassification {
 
 const DEFAULT_MESSAGE = 'Failed to publish. Please try again.'
 
+type ErrorLikeRecord = Record<'message' | 'error' | 'reason', unknown>
+
 function normalizeErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message.trim()
   if (typeof error === 'string' && error.trim()) return error.trim()
+  if (error && typeof error === 'object') {
+    const record = error as Partial<ErrorLikeRecord>
+    const message = record.message ?? record.error ?? record.reason
+    if (typeof message === 'string' && message.trim()) return message.trim()
+  }
   return DEFAULT_MESSAGE
 }
 
 function isAbortError(error: unknown, message: string): boolean {
   return error instanceof DOMException && error.name === 'AbortError'
-    || /\babort(?:ed)?\b|\bcancel(?:led|ed)?\b/i.test(message)
+    || /\babort(?:ed)?\b|\bapp cancel(?:led|ed)?\b|\boperation cancel(?:led|ed)?\b|\brequest cancel(?:led|ed)?\b/i.test(message)
 }
 
 function isSignerUnavailable(message: string): boolean {
@@ -33,7 +40,7 @@ function isSignerUnavailable(message: string): boolean {
 }
 
 function isSignerDenied(message: string): boolean {
-  return /denied|rejected|permission|user refused|user rejected|cancelled by user|declined/i.test(message)
+  return /user (?:refused|rejected|declined|denied|cancel(?:led|ed))|cancel(?:led|ed) by user|declined by user|rejected by user|denied by user|reject(?:ing|ed)? signing|denied signing|signing (?:request )?(?:rejected|denied|declined)|signer (?:rejected|denied|declined)/i.test(message)
 }
 
 function isValidationFailure(message: string): boolean {
@@ -60,14 +67,6 @@ export function classifyPublishError(error: unknown): PublishErrorClassification
   const rawMessage = normalizeErrorMessage(error)
   const message = rawMessage.replace(/\s+/g, ' ').trim()
 
-  if (isAbortError(error, message)) {
-    return {
-      kind: 'aborted',
-      message: 'Publish cancelled.',
-      retryable: false,
-    }
-  }
-
   if (isSignerDenied(message)) {
     return {
       kind: 'signer_denied',
@@ -80,6 +79,14 @@ export function classifyPublishError(error: unknown): PublishErrorClassification
     return {
       kind: 'signer_unavailable',
       message: 'Connect and unlock a Nostr signer before publishing.',
+      retryable: false,
+    }
+  }
+
+  if (isAbortError(error, message)) {
+    return {
+      kind: 'aborted',
+      message: 'Publish cancelled.',
       retryable: false,
     }
   }
