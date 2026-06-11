@@ -89,10 +89,31 @@ describe('buildEmbedFetchFilter', () => {
 })
 
 describe('verifyEmbedEvent', () => {
-  it('rejects forged or structurally invalid event data before rendering', () => {
+  it('rejects invalid signature data when full verification is requested', () => {
     expect(verifyEmbedEvent(FAKE_EVENT, {
       eventId: FAKE_EVENT.id,
       relays: [],
     })).toEqual({ ok: false, reason: 'invalid-structure-or-signature' })
+  })
+
+  it('allows structurally valid database-backed events to skip redundant signature work', () => {
+    expect(verifyEmbedEvent(FAKE_EVENT, {
+      eventId: FAKE_EVENT.id,
+      relays: [],
+    }, false)).toEqual({ ok: true })
+  })
+
+  it('still enforces requested author and kind constraints in structural mode', () => {
+    expect(verifyEmbedEvent(FAKE_EVENT, {
+      eventId: FAKE_EVENT.id,
+      author: 'f'.repeat(64),
+      relays: [],
+    }, false)).toEqual({ ok: false, reason: 'requested-author-mismatch' })
+
+    expect(verifyEmbedEvent(FAKE_EVENT, {
+      eventId: FAKE_EVENT.id,
+      kind: Kind.LongFormContent,
+      relays: [],
+    }, false)).toEqual({ ok: false, reason: 'requested-kind-mismatch' })
   })
 })
