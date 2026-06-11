@@ -15,8 +15,11 @@
  */
 
 import type { OGData } from './types'
-import { checkSafeBrowsingURL } from '@/lib/security/safeBrowsing'
-import { isSafeURL, sanitizeText } from '@/lib/security/sanitize'
+import {
+  checkSafeBrowsingURL,
+  normalizeSafeBrowsingUrl as normalizePreviewURL,
+} from '@/lib/security/safeBrowsing'
+import { sanitizeText } from '@/lib/security/sanitize'
 import { withRetry } from '@/lib/retry'
 
 // ── Configuration ─────────────────────────────────────────────
@@ -58,22 +61,6 @@ function evictIfNeeded(): void {
 }
 
 // ── Fetch ─────────────────────────────────────────────────────
-
-function normalizePreviewURL(url: string): string | null {
-  if (typeof url !== 'string') return null
-  const trimmed = url.trim()
-  if (!isSafeURL(trimmed)) return null
-
-  try {
-    const parsed = new URL(trimmed)
-    parsed.hash = ''
-    parsed.username = ''
-    parsed.password = ''
-    return parsed.href
-  } catch {
-    return null
-  }
-}
 
 function boundedText(value: unknown, maxLength = TEXT_FIELD_LIMIT): string | undefined {
   if (typeof value !== 'string') return undefined
