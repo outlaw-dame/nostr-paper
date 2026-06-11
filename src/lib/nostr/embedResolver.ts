@@ -1,4 +1,3 @@
-import type { NDKFilter } from '@nostr-dev-kit/ndk'
 import { getEvent } from '@/lib/db/nostr'
 import { addRelayToPool, getNDK, waitForCachedEvents } from '@/lib/nostr/ndk'
 import { decodeEventReference, type DecodedEventReference } from '@/lib/nostr/nip21'
@@ -9,7 +8,7 @@ import {
   isValidHex32,
   isValidRelayURL,
 } from '@/lib/security/sanitize'
-import type { NostrEvent } from '@/types'
+import type { NostrEvent, NostrFilter } from '@/types'
 
 export type EventEmbedResolutionState =
   | 'idle'
@@ -125,7 +124,7 @@ export function normalizeEventEmbedReference(
   }
 }
 
-export function buildEmbedFetchFilter(reference: DecodedEventReference): NDKFilter {
+export function buildEmbedFetchFilter(reference: DecodedEventReference): NostrFilter {
   return {
     ids: [reference.eventId],
     ...(reference.author !== undefined ? { authors: [reference.author] } : {}),
@@ -188,7 +187,7 @@ async function fetchEventFromRelays(
   await withRetry(
     async () => {
       throwIfAborted(signal)
-      await ndk.fetchEvents(filter)
+      await ndk.fetchEvents(filter as Parameters<typeof ndk.fetchEvents>[0])
     },
     {
       maxAttempts: Math.max(1, retryAttempts),
