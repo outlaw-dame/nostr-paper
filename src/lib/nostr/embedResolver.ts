@@ -63,8 +63,6 @@ function normalizeRelayHintUrl(value: string): string | null {
 
   try {
     const parsed = new URL(trimmed)
-    // Embed lookups can be triggered by passive reading. Avoid silently adding
-    // cleartext relays to the shared pool from a pasted third-party reference.
     if (parsed.protocol !== 'wss:') return null
 
     parsed.hash = ''
@@ -183,17 +181,18 @@ async function fetchEventFromRelays(
 ): Promise<void> {
   const ndk = getNDK()
   const filter = buildEmbedFetchFilter(reference)
+  const retryOptions = {
+    maxAttempts: Math.max(1, retryAttempts),
+    baseDelayMs: 1_000,
+    ...(signal ? { signal } : {}),
+  }
 
   await withRetry(
     async () => {
       throwIfAborted(signal)
       await ndk.fetchEvents(filter as Parameters<typeof ndk.fetchEvents>[0])
     },
-    {
-      maxAttempts: Math.max(1, retryAttempts),
-      baseDelayMs: 1_000,
-      signal,
-    },
+    retryOptions,
   )
 }
 
