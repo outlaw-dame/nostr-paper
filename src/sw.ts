@@ -80,6 +80,19 @@ async function handleNavigationRequest(request: Request): Promise<Response> {
 
 async function injectCrossOriginHeaders(request: Request): Promise<Response> {
   const response = await fetch(request)
+
+  // Redirected navigation fetches can surface as opaqueredirect responses with
+  // status 0. Re-wrapping those responses with `new Response()` throws because
+  // status 0 is outside the valid constructor range. Redirect statuses should
+  // also be returned untouched so the browser owns redirect handling.
+  if (
+    response.type === 'opaqueredirect' ||
+    response.status === 0 ||
+    (response.status >= 300 && response.status < 400)
+  ) {
+    return response
+  }
+
   const headers = new Headers(response.headers)
   headers.set('Cross-Origin-Opener-Policy',   'same-origin')
   headers.set('Cross-Origin-Embedder-Policy', 'credentialless')
