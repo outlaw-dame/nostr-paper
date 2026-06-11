@@ -1,94 +1,68 @@
 import { useEffect, useState } from 'react'
-import { getEvent } from '@/lib/db/nostr'
-import { getNDK, waitForCachedEvents } from '@/lib/nostr/ndk'
-import { withRetry } from '@/lib/retry'
-import { isValidHex32 } from '@/lib/security/sanitize'
+import {
+  resolveNostrEventEmbed,
+  type EventEmbedResolutionState,
+} from '@/lib/nostr/embedResolver'
 import type { NostrEvent } from '@/types'
 
 interface UseEventState {
   event: NostrEvent | null
   loading: boolean
   error: string | null
+  resolutionState: EventEmbedResolutionState
 }
 
-export function useEvent(eventId: string | null | undefined): UseEventState {
+export function useEvent(eventReference: string | null | undefined): UseEventState {
   const [state, setState] = useState<UseEventState>({
     event: null,
-    loading: Boolean(eventId),
+    loading: Boolean(eventReference),
     error: null,
+    resolutionState: eventReference ? 'decoding-reference' : 'idle',
   })
 
   useEffect(() => {
-    if (!eventId || !isValidHex32(eventId)) {
-      setState({ event: null, loading: false, error: null })
+    if (!eventReference) {
+      setState({
+        event: null,
+        loading: false,
+        error: null,
+        resolutionState: 'idle',
+      })
       return
     }
-
-    const resolvedEventId = eventId
 
     const controller = new AbortController()
     const { signal } = controller
 
-    async function loadLocal(): Promise<NostrEvent | null> {
-      return getEvent(resolvedEventId)
-    }
+    setState({
+      event: null,
+      loading: true,
+      error: null,
+      resolutionState: 'decoding-reference',
+    })
 
-    async function fetchFromRelays(): Promise<void> {
-      let ndk
-      try {
-        ndk = getNDK()
-      } catch {
-        return
-      }
-
-      await withRetry(
-        async () => {
-          if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
-          await ndk.fetchEvents({ ids: [resolvedEventId], limit: 1 })
-        },
-        {
-          maxAttempts: 2,
-          baseDelayMs: 1_000,
-          signal,
-        },
-      )
-    }
-
-    setState({ event: null, loading: true, error: null })
-
-    loadLocal()
-      .then(async (cached) => {
-        if (signal.aborted) return
-        if (cached) {
-          setState({ event: cached, loading: false, error: null })
-          return
-        }
-
-        await fetchFromRelays()
-        if (signal.aborted) return
-
-        await waitForCachedEvents([resolvedEventId])
-        if (signal.aborted) return
-
-        const refreshed = await loadLocal()
+    resolveNostrEventEmbed(eventReference, { signal })
+      .then((result) => {
         if (signal.aborted) return
         setState({
-          event: refreshed,
+          event: result.event,
           loading: false,
-          error: refreshed ? null : 'Event not found.',
+          error: result.error,
+          resolutionState: result.state,
         })
       })
-      .catch((error: unknown) => {
+      .catch((loadError: unknown) => {
         if (signal.aborted) return
         setState({
           event: null,
           loading: false,
-          error: error instanceof Error ? error.message : 'Event load failed.',
+          error: loadError instanceof Error ? loadError.message : 'Event load failed.',
+          resolutionState: 'error',
         })
       })
 
     return () => controller.abort()
-  }, [eventId])
+  }, [eventReference])
 
   return state
 }
