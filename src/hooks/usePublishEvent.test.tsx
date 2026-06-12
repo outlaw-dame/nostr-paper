@@ -135,7 +135,9 @@ describe('usePublishEvent', () => {
 
     expect(id).toBeNull()
     expect(latest.status).toBe('error')
-    expect(latest.error).toBe('relay timeout')
+    expect(latest.error).toBe(
+      'Publishing timed out while contacting relays. Check your connection and try again.',
+    )
     expect(latest.isPublishing).toBe(false)
   })
 

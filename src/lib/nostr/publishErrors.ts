@@ -56,7 +56,7 @@ function isTimeout(message: string): boolean {
 }
 
 function isRelayFailure(message: string): boolean {
-  return /relay|publish failed|no relay|outbox|nip-65|websocket|socket/i.test(message)
+  return /relay (?:rejected|refused|denied|error|failed|unavailable)|(?:publish|publishing) failed|no relay|outbox|nip-65|websocket|socket/i.test(message)
 }
 
 function isNetworkFailure(message: string): boolean {
