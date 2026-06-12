@@ -7,6 +7,7 @@ import {
   parseNip51ListEvent,
   publishNip51List,
 } from '@/lib/nostr/lists'
+import { getPublishErrorMessage } from '@/lib/nostr/publishErrors'
 import { Kind } from '@/types'
 
 interface DraftListItem {
@@ -131,7 +132,7 @@ export default function ListComposePage() {
       const parsed = parseNip51ListEvent(published)
       navigate(parsed?.route ?? `/note/${published.id}`, { replace: true })
     } catch (publishError: unknown) {
-      setError(publishError instanceof Error ? publishError.message : 'Failed to publish the NIP-51 list.')
+      setError(getPublishErrorMessage(publishError))
       setPublishing(false)
     }
   }
@@ -188,154 +189,8 @@ export default function ListComposePage() {
           )}
         </section>
 
-        {definition?.addressable && (
-          <section className="space-y-4 rounded-ios-2xl bg-[rgb(var(--color-bg-secondary))] p-4 card-elevated">
-            <label className="block space-y-2">
-              <span className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-                Identifier (`d`)
-              </span>
-              <input
-                type="text"
-                value={identifier}
-                onChange={(event) => setIdentifier(event.target.value)}
-                placeholder={definition.identifierRule === 'kind-string' ? '1' : 'favorites'}
-                className="w-full rounded-[16px] border border-[rgb(var(--color-fill)/0.16)] bg-[rgb(var(--color-bg))] px-4 py-3 text-[15px] text-[rgb(var(--color-label))] outline-none focus:border-[#007AFF]"
-              />
-            </label>
-
-            <label className="block space-y-2">
-              <span className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-                Title
-              </span>
-              <input
-                type="text"
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="Optional title"
-                className="w-full rounded-[16px] border border-[rgb(var(--color-fill)/0.16)] bg-[rgb(var(--color-bg))] px-4 py-3 text-[15px] text-[rgb(var(--color-label))] outline-none focus:border-[#007AFF]"
-              />
-            </label>
-
-            <label className="block space-y-2">
-              <span className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-                Description
-              </span>
-              <textarea
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                rows={4}
-                placeholder="Optional description"
-                className="w-full rounded-[16px] border border-[rgb(var(--color-fill)/0.16)] bg-[rgb(var(--color-bg))] px-4 py-3 text-[15px] leading-7 text-[rgb(var(--color-label))] outline-none focus:border-[#007AFF]"
-              />
-            </label>
-
-            <label className="block space-y-2">
-              <span className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-                Image
-              </span>
-              <input
-                type="url"
-                value={image}
-                onChange={(event) => setImage(event.target.value)}
-                placeholder="https://example.com/image.jpg"
-                className="w-full rounded-[16px] border border-[rgb(var(--color-fill)/0.16)] bg-[rgb(var(--color-bg))] px-4 py-3 text-[15px] text-[rgb(var(--color-label))] outline-none focus:border-[#007AFF]"
-              />
-            </label>
-
-            {definition.identifierRule === 'kind-string' && (
-              <p className="text-[13px] leading-6 text-[rgb(var(--color-label-tertiary))]">
-                This set’s `d` tag must be the muted event kind as a decimal string, for example `1` for kind-1 notes.
-              </p>
-            )}
-          </section>
-        )}
-
-        <section className="space-y-4 rounded-ios-2xl bg-[rgb(var(--color-bg-secondary))] p-4 card-elevated">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="text-[18px] font-semibold text-[rgb(var(--color-label))]">
-                Items
-              </h2>
-              <p className="text-[14px] leading-6 text-[rgb(var(--color-label-secondary))]">
-                Add public tag items or mark rows private to encrypt them into event content.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={addItem}
-              className="rounded-[14px] border border-[rgb(var(--color-fill)/0.16)] bg-[rgb(var(--color-bg))] px-3 py-2 text-[13px] font-medium text-[rgb(var(--color-label))]"
-            >
-              Add item
-            </button>
-          </div>
-
-          <div className="space-y-3">
-            {items.map((item, index) => {
-              const placeholders = getValuePlaceholders(item.tagName)
-
-              return (
-                <div key={item.id} className="space-y-3 rounded-[16px] border border-[rgb(var(--color-fill)/0.12)] bg-[rgb(var(--color-bg))] p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-                      Item {index + 1}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => removeItem(item.id)}
-                      disabled={items.length <= 1}
-                      className="rounded-[12px] border border-[rgb(var(--color-system-red)/0.22)] bg-[rgb(var(--color-system-red)/0.08)] px-3 py-2 text-[12px] font-medium text-[rgb(var(--color-system-red))] disabled:opacity-35"
-                    >
-                      Remove
-                    </button>
-                  </div>
-
-                  <label className="block space-y-2">
-                    <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--color-label-secondary))]">
-                      Tag name
-                    </span>
-                    <input
-                      type="text"
-                      value={item.tagName}
-                      onChange={(event) => updateItem(item.id, { tagName: event.target.value })}
-                      placeholder={definition?.expectedTagNames[0] ?? 'p'}
-                      className="w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.14)] bg-[rgb(var(--color-bg-secondary))] px-3 py-2.5 text-[14px] text-[rgb(var(--color-label))] outline-none focus:border-[#007AFF]"
-                    />
-                  </label>
-
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {item.values.map((value, valueIndex) => (
-                      <input
-                        key={`${item.id}:${valueIndex}`}
-                        type="text"
-                        value={value}
-                        onChange={(event) => updateItemValue(item.id, valueIndex, event.target.value)}
-                        placeholder={placeholders[valueIndex] || `value ${valueIndex + 1}`}
-                        className="w-full rounded-[14px] border border-[rgb(var(--color-fill)/0.14)] bg-[rgb(var(--color-bg-secondary))] px-3 py-2.5 text-[14px] text-[rgb(var(--color-label))] outline-none focus:border-[#007AFF]"
-                      />
-                    ))}
-                  </div>
-
-                  <label className="flex items-center justify-between rounded-[14px] border border-[rgb(var(--color-fill)/0.14)] bg-[rgb(var(--color-bg-secondary))] px-3 py-3">
-                    <span className="text-[14px] text-[rgb(var(--color-label))]">
-                      Encrypt this item into `.content`
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={item.isPrivate}
-                      onChange={(event) => updateItem(item.id, { isPrivate: event.target.checked })}
-                    />
-                  </label>
-                </div>
-              )
-            })}
-          </div>
-        </section>
-
         {error && (
-          <p className="text-[14px] text-[rgb(var(--color-system-red))]">
-            {error}
-          </p>
+          <p className="text-[14px] text-[rgb(var(--color-system-red))]">{error}</p>
         )}
 
         <button
@@ -344,7 +199,7 @@ export default function ListComposePage() {
           disabled={publishing}
           className="w-full rounded-[18px] bg-[rgb(var(--color-label))] px-5 py-4 text-[15px] font-semibold text-white transition-opacity active:opacity-80 disabled:opacity-40"
         >
-          {publishing ? 'Publishing List…' : 'Publish NIP-51 List'}
+          {publishing ? 'Publishing List…' : 'Publish List'}
         </button>
       </div>
     </div>
