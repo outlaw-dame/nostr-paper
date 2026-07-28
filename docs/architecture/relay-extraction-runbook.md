@@ -61,6 +61,38 @@ git filter-repo \
   --path-rename platform/:
 ```
 
+## Required extraction manifest
+
+Before pushing, add `extraction-manifest.json` to the extracted repository. Use the exact source SHA emitted by the preflight:
+
+```json
+{
+  "schemaVersion": 1,
+  "sourceRepository": "outlaw-dame/nostr-paper",
+  "sourceSha": "FULL_40_CHARACTER_SOURCE_SHA",
+  "includedPaths": [
+    "platform/infra",
+    "platform/packages",
+    "platform/services/ingestion-bridge",
+    "platform/services/relay-policy",
+    "platform/services/search-api",
+    "platform/services/workers",
+    "platform/docs"
+  ],
+  "excludedPaths": [
+    "platform/services/blossom-edge"
+  ]
+}
+```
+
+Copy `scripts/verify-relay-extraction.mjs` into the extracted repository and run:
+
+```bash
+node scripts/verify-relay-extraction.mjs . extraction-manifest.json FULL_40_CHARACTER_SOURCE_SHA
+```
+
+The verifier fails closed if a required relay/search path is absent, the old `platform/` prefix remains, Blossom is present, or the manifest does not match the recorded source commit and approved boundary.
+
 Inspect the resulting history and tree before pushing:
 
 ```bash
@@ -69,7 +101,7 @@ git status --short
 find . -maxdepth 3 -type f | sort
 ```
 
-Add the new repository and push only after inspection:
+Add the new repository and push only after inspection and verifier success:
 
 ```bash
 git remote remove origin
@@ -82,7 +114,7 @@ git push -u origin main
 1. Add a relay-specific root README and architecture diagram.
 2. Add root package/workspace metadata if the extracted tree requires it.
 3. Repair relative paths that assumed the former `platform/` prefix.
-4. Add CI for type-checking, unit tests, integration tests, replay tests, migrations, and container builds.
+4. Add CI for type-checking, unit tests, integration tests, replay tests, migrations, container builds, and extraction-boundary verification.
 5. Add `.env.example` with safe defaults and no secrets.
 6. Validate Docker build contexts and Compose paths.
 7. Validate PostgreSQL migrations from an empty database and an upgrade fixture.
