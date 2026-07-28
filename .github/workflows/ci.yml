@@ -124,6 +124,8 @@ jobs:
       - run: npm ci
       - name: Repository security drift audit
         run: npm run security:repo
+      # Runtime dependencies are release-blocking; development-tool findings stay visible
+      # without encouraging incompatible transitive overrides that can break CI itself.
       - name: Block high-severity production dependency findings
         run: npm run security:audit:prod
       - name: Report full dependency-tree findings
