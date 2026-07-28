@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   assertSafeDestination,
+  destinationRemote,
   normalizeDestination,
   parseArguments,
 } from './relay-extraction-preflight.mjs'
@@ -16,6 +17,13 @@ test('normalizes supported GitHub destination formats', () => {
     normalizeDestination('https://github.com/outlaw-dame/nostr-paper-relay/'),
     'outlaw-dame/nostr-paper-relay',
   )
+})
+
+test('resolves every accepted format to a GitHub remote URL', () => {
+  const expected = 'https://github.com/outlaw-dame/nostr-paper-relay.git'
+  assert.equal(destinationRemote('outlaw-dame/nostr-paper-relay'), expected)
+  assert.equal(destinationRemote('git@github.com:outlaw-dame/nostr-paper-relay.git'), expected)
+  assert.equal(destinationRemote('https://github.com/outlaw-dame/nostr-paper-relay'), expected)
 })
 
 test('rejects the unrelated platform repository', () => {
