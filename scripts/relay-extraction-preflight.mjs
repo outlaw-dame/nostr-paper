@@ -74,6 +74,11 @@ export function assertSafeDestination(destination) {
   return normalized
 }
 
+export function destinationRemote(destination) {
+  const normalized = assertSafeDestination(destination)
+  return `https://github.com/${normalized}.git`
+}
+
 function run(command, args, { allowFailure = false } = {}) {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
@@ -134,8 +139,8 @@ function assertFilterRepoAvailable() {
   }
 }
 
-function assertDestinationEmpty(destination) {
-  const result = run('git', ['ls-remote', '--heads', '--tags', destination])
+function assertDestinationEmpty(remote) {
+  const result = run('git', ['ls-remote', '--heads', '--tags', remote])
   if (result.stdout.trim()) {
     throw new Error('Destination repository is not empty; extraction requires a repository with no refs')
   }
@@ -150,10 +155,11 @@ export async function runPreflight(options) {
   }
 
   const destination = assertSafeDestination(options.destination)
+  const remote = destinationRemote(options.destination)
   assertCleanRepository()
   assertMainCheckedOut()
   assertFilterRepoAvailable()
-  assertDestinationEmpty(options.destination)
+  assertDestinationEmpty(remote)
 
   return { sourceSha, destination, mode: 'full' }
 }
