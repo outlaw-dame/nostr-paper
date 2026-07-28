@@ -8,11 +8,17 @@ A local-first, privacy-respecting Nostr client PWA inspired by Facebook Paper's 
 
 ---
 
-## Backend Platform
+## Relay and Media Architecture
 
-The backend/relay platform has moved to [outlaw-dame/nostr-paper-platform](https://github.com/outlaw-dame/nostr-paper-platform).
+Nostr Paper currently contains three distinct deployment concerns:
 
-See [docs/backend.md](docs/backend.md) for details.
+- the client PWA in this repository;
+- the relay/search architecture under `platform/`, which is being prepared for extraction into its own dedicated relay repository while remaining linked to the app through Nostr protocols and validated endpoint configuration;
+- the Blossom media edge under `platform/services/blossom-edge/`, which is an independently deployable media service and is not automatically part of the relay extraction.
+
+The separate `outlaw-dame/nostr-paper-platform` repository is unrelated to this migration and is not the destination for the relay architecture.
+
+See [docs/backend.md](docs/backend.md) and [docs/architecture/relay-separation.md](docs/architecture/relay-separation.md).
 
 ---
 
@@ -146,7 +152,6 @@ VITE_GEMMA_TOP_K=40
 
 ```ts
 import { generateText, isGemmaAvailable } from '@/lib/gemma/client'
-
 if (isGemmaAvailable()) {
       const text = await generateText('Summarize this note...', {
             onToken: (partial) => console.log(partial),
@@ -177,171 +182,3 @@ VITE_GEMINI_MODEL=gemini-2.5-flash
 ```
 
 Security notes:
-
-- Do not place Gemini, DeepL, Cloudflare, or Tenor secrets in `VITE_*` variables.
-- Browser-delivered environment variables are public. Use runtime user entry for personal keys or a server-side proxy for production deployments.
-- Restrict keys to the Generative Language API and rotate them regularly.
-
-### Build
-
-```bash
-npm run build       # Production build
-npm run preview     # Preview production build locally
-npm run analyze     # Bundle size analysis
-```
-
-### Test
-
-```bash
-npm test            # Run all tests
-npm run test:watch  # Watch mode
-npm run test:coverage
-```
-
----
-
-## Security
-
-### Private Key Handling
-
-This application **never stores, transmits, or accepts nsec private keys**. Authentication is exclusively through:
-
-- **NIP-07**: Browser extension signs events (nos2x, Alby, Flamingo)
-- **NIP-46**: Remote signer via Nostr Connect bunker URL
-
-If you need local key storage as a fallback, the architecture supports PIN-encrypted AES-GCM via Web Crypto API (PBKDF2, 100k iterations). This is a Phase 2 addition gated behind explicit user consent.
-
-### Content Sanitization
-
-All content from relays is treated as untrusted:
-
-1. **Structural validation** — event schema + field types
-2. **Cryptographic verification** — signature check via `nostr-tools`
-3. **HTML sanitization** — DOMPurify with strict allowlist before any rendering
-4. **URL allowlisting** — only `https:` and `wss:` schemes permitted
-5. **Content limits** — all fields capped at defined byte limits
-
-### HTTP Security Headers
-
-Set via `public/_headers` (Cloudflare Pages) and injected by the service worker for all document responses:
-
-```
-Cross-Origin-Opener-Policy: same-origin
-Cross-Origin-Embedder-Policy: require-corp
-Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; ...
-X-Content-Type-Options: nosniff
-X-Frame-Options: DENY
-Referrer-Policy: no-referrer
-```
-
-### Storage
-
-Event data is stored in SQLite via OPFS — the browser's Origin Private File System. This storage is:
-- Inaccessible to other origins
-- Not synced to the cloud
-- Persistent across sessions (call `navigator.storage.persist()` — handled in bootstrap)
-- Evictable under storage pressure on iOS Safari unless persistence is granted
-
----
-
-## Database Schema
-
-```sql
-events          -- Core NIP-01 events (id, pubkey, kind, content, sig, raw)
-tags            -- Normalized tag index for NIP-01 filter queries
-profiles        -- Kind-0 metadata cache (sanitized, denormalized)
-follows         -- Kind-3 follow lists
-relay_list      -- NIP-65 kind-10002 relay lists
-deletions       -- Kind-5 deletion markers
-seen_events     -- Deduplication ring buffer (pruned >24h)
-events_fts      -- FTS5 virtual table for NIP-50 search
-```
-
-FTS5 uses the Porter stemmer (`tokenize='porter unicode61'`) and keeps in sync with the events table via `AFTER INSERT/DELETE/UPDATE` triggers.
-
----
-
-## Contributing
-
-```bash
-# Fork, then clone your fork
-git clone https://github.com/your-username/nostr-paper
-cd nostr-paper
-
-# Create a feature branch
-git checkout -b feature/your-feature
-
-# Make changes, ensuring tests pass
-npm test
-npm run type-check
-npm run lint
-
-# Commit with conventional commits
-git commit -m "feat: add compose sheet with NIP-07 signing"
-
-# Push and open a PR against main
-```
-
-### Commit Convention
-
-```
-feat:     new feature
-fix:      bug fix
-security: security improvement
-perf:     performance improvement
-refactor: code change with no user-facing effect
-test:     test additions/changes
-docs:     documentation only
-chore:    build/tooling changes
-```
-
----
-
-## Deployment
-
-### Cloudflare Pages (recommended)
-
-1. Connect your GitHub repo to Cloudflare Pages
-2. Set build command: `npm run build`
-3. Set output directory: `dist`
-4. The `public/_headers` file sets COOP/COEP for OPFS support
-
-The `coi-serviceworker` in `index.html` provides a fallback for any host that doesn't set the headers — but Cloudflare Pages supports them natively via `_headers`.
-
-For compression, prefer Cloudflare edge compression instead of uploading precompressed assets. Cloudflare Compression Rules can prefer `zstd` and fall back automatically; keep Pages uploads uncompressed and let the edge negotiate encodings per client.
-
-### Self-Hosted (nginx)
-
-```nginx
-server {
-  # See deploy/nginx/nostr-paper.conf.example for the full version.
-  gzip on;
-  gzip_vary on;
-  gzip_static on;
-}
-```
-
-Build commands:
-
-- Standard portable build: `npm run build`
-- nginx-friendly precompressed build: `npm run build:precompressed`
-- Optional zstd sidecars for advanced servers/CDNs: `npm run build:precompressed:zstd`
-
-More detail: [docs/COMPRESSION.md](docs/COMPRESSION.md)
-Full nginx example: [deploy/nginx/nostr-paper.conf.example](deploy/nginx/nostr-paper.conf.example)
-
----
-
-## License
-
-MIT — see [LICENSE](LICENSE)
-
----
-
-## Acknowledgements
-
-- [NDK](https://github.com/nostr-dev-kit/ndk) — Nostr Development Kit
-- [Konsta UI](https://konstaui.com) — iOS/Material components
-- [Framer Motion](https://www.framer.com/motion/) — Physics animation
-- [SQLite WASM](https://sqlite.org/wasm) — Official SQLite WebAssembly
-- Facebook Paper (2014) — The original design inspiration
