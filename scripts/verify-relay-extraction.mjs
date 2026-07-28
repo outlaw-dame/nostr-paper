@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 
-import { access, readFile } from 'node:fs/promises'
-import { constants } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
 import process from 'node:process'
+import { promisify } from 'node:util'
+
+const execFileAsync = promisify(execFile)
 
 export const REQUIRED_PATHS = Object.freeze([
   'infra',
@@ -19,25 +22,57 @@ export const FORBIDDEN_PATHS = Object.freeze([
   'services/blossom-edge',
 ])
 
-async function exists(path) {
-  try {
-    await access(path, constants.F_OK)
-    return true
-  } catch {
-    return false
+export const APPROVED_INCLUDED_PATHS = Object.freeze(
+  REQUIRED_PATHS.map((path) => `platform/${path}`),
+)
+
+export const APPROVED_EXCLUDED_PATHS = Object.freeze([
+  'platform/services/blossom-edge',
+])
+
+function containsPath(paths, expected) {
+  return paths.some((path) => path === expected || path.startsWith(`${expected}/`))
+}
+
+function assertExactPathSet(actual, expected, label) {
+  if (!Array.isArray(actual)) throw new Error(`Manifest ${label} must be an array`)
+  if (actual.some((path) => typeof path !== 'string')) {
+    throw new Error(`Manifest ${label} must contain only strings`)
+  }
+
+  const actualSet = new Set(actual)
+  const expectedSet = new Set(expected)
+  if (actualSet.size !== actual.length) throw new Error(`Manifest ${label} contains duplicate paths`)
+
+  const missing = expected.filter((path) => !actualSet.has(path))
+  const unexpected = actual.filter((path) => !expectedSet.has(path))
+  if (missing.length || unexpected.length) {
+    const details = [
+      missing.length ? `missing: ${missing.join(', ')}` : null,
+      unexpected.length ? `unexpected: ${unexpected.join(', ')}` : null,
+    ].filter(Boolean)
+    throw new Error(`Manifest ${label} does not match the approved set (${details.join('; ')})`)
   }
 }
 
-export async function verifyTree(root = '.') {
-  const missing = []
-  const forbidden = []
+async function trackedPaths(root, treeish = 'HEAD') {
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      ['-C', root, 'ls-tree', '-r', '--name-only', treeish],
+      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
+    )
+    return stdout.split('\n').map((path) => path.trim()).filter(Boolean)
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`Unable to inspect committed Git tree: ${detail}`)
+  }
+}
 
-  for (const path of REQUIRED_PATHS) {
-    if (!(await exists(`${root}/${path}`))) missing.push(path)
-  }
-  for (const path of FORBIDDEN_PATHS) {
-    if (await exists(`${root}/${path}`)) forbidden.push(path)
-  }
+export async function verifyTree(root = '.', treeish = 'HEAD') {
+  const paths = await trackedPaths(root, treeish)
+  const missing = REQUIRED_PATHS.filter((path) => !containsPath(paths, path))
+  const forbidden = FORBIDDEN_PATHS.filter((path) => containsPath(paths, path))
 
   if (missing.length || forbidden.length) {
     const details = [
@@ -51,23 +86,22 @@ export async function verifyTree(root = '.') {
 }
 
 export async function verifyManifest(path, expectedSourceSha) {
+  if (!/^[0-9a-f]{40}$/i.test(expectedSourceSha ?? '')) {
+    throw new Error('Expected source SHA argument must be a full Git SHA')
+  }
+
   const raw = await readFile(path, 'utf8')
   const manifest = JSON.parse(raw)
   if (manifest.schemaVersion !== 1) throw new Error('Unsupported extraction manifest schemaVersion')
   if (!/^[0-9a-f]{40}$/i.test(manifest.sourceSha ?? '')) throw new Error('Manifest sourceSha must be a full Git SHA')
-  if (expectedSourceSha && manifest.sourceSha.toLowerCase() !== expectedSourceSha.toLowerCase()) {
+  if (manifest.sourceSha.toLowerCase() !== expectedSourceSha.toLowerCase()) {
     throw new Error('Manifest sourceSha does not match the expected source commit')
   }
   if (manifest.sourceRepository !== 'outlaw-dame/nostr-paper') throw new Error('Manifest sourceRepository is invalid')
-  if (!Array.isArray(manifest.includedPaths) || !Array.isArray(manifest.excludedPaths)) {
-    throw new Error('Manifest path lists are required')
-  }
-  for (const path of REQUIRED_PATHS) {
-    if (!manifest.includedPaths.includes(`platform/${path}`)) throw new Error(`Manifest omits included path: platform/${path}`)
-  }
-  if (!manifest.excludedPaths.includes('platform/services/blossom-edge')) {
-    throw new Error('Manifest must explicitly exclude Blossom')
-  }
+
+  assertExactPathSet(manifest.includedPaths, APPROVED_INCLUDED_PATHS, 'includedPaths')
+  assertExactPathSet(manifest.excludedPaths, APPROVED_EXCLUDED_PATHS, 'excludedPaths')
+
   return manifest
 }
 
