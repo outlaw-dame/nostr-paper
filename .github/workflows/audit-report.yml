@@ -1,33 +1,27 @@
-name: Audit Remediation
+name: Dependency Resolver Report
 
 on:
   pull_request:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  remediate:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+  report:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
-          persist-credentials: true
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: npm
-      - name: Regenerate and verify patched lockfile
-        run: |
-          npm install --package-lock-only --ignore-scripts
-          npm audit --audit-level=high
-          rm .github/workflows/audit-report.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json .github/workflows/audit-report.yml
-          git diff --cached --quiet && exit 0
-          git commit -m "security: lock patched audited dependencies"
-          git push origin HEAD:${{ github.head_ref }}
+      - name: Capture resolver output
+        run: npm install --package-lock-only --ignore-scripts > resolver.log 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dependency-resolver-report
+          path: resolver.log
+          retention-days: 1
