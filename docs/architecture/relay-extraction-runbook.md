@@ -85,21 +85,27 @@ Before pushing, add `extraction-manifest.json` to the extracted repository. Use 
 }
 ```
 
-Copy `scripts/verify-relay-extraction.mjs` into the extracted repository and run:
+Copy `scripts/verify-relay-extraction.mjs` into the extracted repository, then commit both verification artifacts before running the verifier. The verifier inspects the committed Git tree, not untracked filesystem placeholders:
 
 ```bash
+mkdir -p scripts
+cp ../nostr-paper/scripts/verify-relay-extraction.mjs scripts/verify-relay-extraction.mjs
+git add extraction-manifest.json scripts/verify-relay-extraction.mjs
+git commit -m "chore: record relay extraction provenance"
 node scripts/verify-relay-extraction.mjs . extraction-manifest.json FULL_40_CHARACTER_SOURCE_SHA
 ```
 
-The verifier fails closed if a required relay/search path is absent, the old `platform/` prefix remains, Blossom is present, or the manifest does not match the recorded source commit and approved boundary.
+The verifier fails closed if a required relay/search path is absent from `HEAD`, the old `platform/` prefix remains, Blossom is present, the expected source SHA is missing, or either manifest path list differs from the exact approved boundary.
 
 Inspect the resulting history and tree before pushing:
 
 ```bash
 git log --oneline --decorate -20
 git status --short
-find . -maxdepth 3 -type f | sort
+git ls-tree -r --name-only HEAD
 ```
+
+The working tree must be clean and the manifest and verifier must appear in `git ls-tree` before any destination remote is configured.
 
 Add the new repository and push only after inspection and verifier success:
 
