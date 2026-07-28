@@ -1,0 +1,29 @@
+name: Relay Extraction Preflight
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Test argument and destination guards
+        run: node --test scripts/relay-extraction-preflight.test.mjs
+      - name: Validate extraction tree boundary
+        run: node scripts/relay-extraction-preflight.mjs --tree-only
