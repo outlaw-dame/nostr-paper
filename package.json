@@ -95,6 +95,9 @@
     "workbox-routing": "^7.3.0",
     "workbox-strategies": "^7.3.0"
   },
+  "overrides": {
+    "sharp": "0.35.3"
+  },
   "engines": {
     "node": ">=20.0.0",
     "npm": ">=10.0.0"
