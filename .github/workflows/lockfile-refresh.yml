@@ -1,0 +1,28 @@
+name: Lockfile Refresh
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  generate-lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Regenerate package lock
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Upload generated lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: regenerated-package-lock
+          path: package-lock.json
+          retention-days: 1
