@@ -5,6 +5,7 @@ import {
   parseLongFormEvent,
   publishLongForm,
 } from '@/lib/nostr/longForm'
+import { getPublishErrorMessage } from '@/lib/nostr/publishErrors'
 import { isSafeMediaURL } from '@/lib/security/sanitize'
 
 function slugify(value: string): string {
@@ -88,13 +89,7 @@ export default function ArticleComposePage() {
 
       navigate(article.route, { replace: true })
     } catch (publishError: unknown) {
-      setError(
-        publishError instanceof Error
-          ? publishError.message
-          : isDraft
-            ? 'Failed to save draft.'
-            : 'Failed to publish article.',
-      )
+      setError(getPublishErrorMessage(publishError))
       if (isDraft) {
         setSavingDraft(false)
       } else {
@@ -241,9 +236,9 @@ export default function ArticleComposePage() {
             type="button"
             onClick={() => void handlePublish(true)}
             disabled={publishing || savingDraft || !!imageWarning}
-            className="w-full rounded-[18px] border border-[rgb(var(--color-fill)/0.22)] bg-[rgb(var(--color-bg-secondary))] px-5 py-4 text-[15px] font-medium text-[rgb(var(--color-label))] transition-opacity active:opacity-80 disabled:opacity-40"
+            className="w-full rounded-[18px] border border-[rgb(var(--color-fill)/0.16)] bg-[rgb(var(--color-bg-secondary))] px-5 py-4 text-[15px] font-semibold text-[rgb(var(--color-label))] transition-opacity active:opacity-80 disabled:opacity-40"
           >
-            {savingDraft ? 'Saving Draft…' : 'Save as Draft'}
+            {savingDraft ? 'Saving Draft…' : 'Save Private Draft'}
           </button>
         </div>
       </div>

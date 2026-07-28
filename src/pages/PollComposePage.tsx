@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '@/contexts/app-context'
 import { getDefaultRelayUrls } from '@/lib/nostr/ndk'
+import { getPublishErrorMessage } from '@/lib/nostr/publishErrors'
 import { publishPoll, type PollType } from '@/lib/nostr/polls'
 
 interface DraftOption {
@@ -63,7 +64,7 @@ export default function PollComposePage() {
 
       navigate(`/note/${published.id}`, { replace: true })
     } catch (publishError: unknown) {
-      setError(publishError instanceof Error ? publishError.message : 'Failed to publish poll.')
+      setError(getPublishErrorMessage(publishError))
       setPublishing(false)
     }
   }
@@ -178,21 +179,15 @@ export default function PollComposePage() {
             <textarea
               value={relayUrlsInput}
               onChange={(event) => setRelayUrlsInput(event.target.value)}
-              rows={5}
-              placeholder="One wss:// relay URL per line"
+              rows={4}
+              placeholder="One relay URL per line"
               className="w-full rounded-[16px] border border-[rgb(var(--color-fill)/0.16)] bg-[rgb(var(--color-bg))] px-4 py-3 text-[15px] leading-7 text-[rgb(var(--color-label))] outline-none focus:border-[#007AFF]"
             />
           </label>
-
-          <p className="text-[13px] leading-6 text-[rgb(var(--color-label-secondary))]">
-            These become the poll’s `relay` tags. Respondents are expected to publish kind-1018 votes to this relay set.
-          </p>
         </section>
 
         {error && (
-          <p className="text-[14px] text-[rgb(var(--color-system-red))]">
-            {error}
-          </p>
+          <p className="text-[14px] text-[rgb(var(--color-system-red))]">{error}</p>
         )}
 
         <button

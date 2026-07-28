@@ -7,6 +7,7 @@ import {
   parseNip51ListEvent,
   publishNip51List,
 } from '@/lib/nostr/lists'
+import { getPublishErrorMessage } from '@/lib/nostr/publishErrors'
 import { Kind } from '@/types'
 
 interface DraftListItem {
@@ -131,7 +132,7 @@ export default function ListComposePage() {
       const parsed = parseNip51ListEvent(published)
       navigate(parsed?.route ?? `/note/${published.id}`, { replace: true })
     } catch (publishError: unknown) {
-      setError(publishError instanceof Error ? publishError.message : 'Failed to publish the NIP-51 list.')
+      setError(getPublishErrorMessage(publishError))
       setPublishing(false)
     }
   }
