@@ -23,7 +23,7 @@ jobs:
       - run: npm ci
       - name: Apply lockfile-only audit fixes
         run: |
-          npm audit fix --package-lock-only --ignore-scripts
+          npm audit fix --package-lock-only --ignore-scripts || true
           npm audit --audit-level=high
           rm .github/workflows/audit-report.yml
           git config user.name "github-actions[bot]"
