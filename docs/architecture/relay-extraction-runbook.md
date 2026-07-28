@@ -10,6 +10,34 @@ This runbook performs the history-preserving extraction after the destination re
 - Do not use `outlaw-dame/nostr-paper-platform`; it is unrelated.
 - Keep `platform/services/blossom-edge/` out of the relay extraction.
 
+## Automated preflight
+
+Before creating a disposable extraction clone, validate the current source tree and the destination repository:
+
+```bash
+node scripts/relay-extraction-preflight.mjs \
+  --destination git@github.com:outlaw-dame/RELAY_REPOSITORY_NAME.git
+```
+
+The full preflight fails closed unless:
+
+- every included and explicitly excluded source path exists;
+- the extraction scope does not overlap Blossom;
+- the working tree is clean and `main` is checked out;
+- `git-filter-repo` is installed;
+- the destination is a distinct GitHub repository;
+- the destination is not `outlaw-dame/nostr-paper-platform` or the source repository;
+- the destination contains no branch or tag refs.
+
+CI runs the non-destructive tree-boundary check and unit tests with:
+
+```bash
+node --test scripts/relay-extraction-preflight.test.mjs
+node scripts/relay-extraction-preflight.mjs --tree-only
+```
+
+Record the source SHA printed by the full preflight in the extraction change record.
+
 ## Recommended method: git filter-repo
 
 Create a disposable clone:
