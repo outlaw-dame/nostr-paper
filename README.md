@@ -8,11 +8,17 @@ A local-first, privacy-respecting Nostr client PWA inspired by Facebook Paper's 
 
 ---
 
-## Backend Platform
+## Relay and Media Architecture
 
-The backend/relay platform has moved to [outlaw-dame/nostr-paper-platform](https://github.com/outlaw-dame/nostr-paper-platform).
+Nostr Paper currently contains three distinct deployment concerns:
 
-See [docs/backend.md](docs/backend.md) for details.
+- the client PWA in this repository;
+- the relay/search architecture under `platform/`, which is being prepared for extraction into its own dedicated relay repository while remaining linked to the app through Nostr protocols and validated endpoint configuration;
+- the Blossom media edge under `platform/services/blossom-edge/`, which is an independently deployable media service and is not automatically part of the relay extraction.
+
+The separate `outlaw-dame/nostr-paper-platform` repository is unrelated to this migration and is not the destination for the relay architecture.
+
+See [docs/backend.md](docs/backend.md) and [docs/architecture/relay-separation.md](docs/architecture/relay-separation.md).
 
 ---
 
