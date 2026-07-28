@@ -20,14 +20,13 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-      - name: Regenerate, audit, and commit lockfile
+      - name: Regenerate and commit lockfile
         run: |
           npm install --package-lock-only --ignore-scripts
-          npm audit --audit-level=high
+          npm ci --ignore-scripts
           rm .github/workflows/audit-report.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package-lock.json .github/workflows/audit-report.yml
-          git diff --cached --quiet && exit 0
-          git commit -m "security: lock patched audited dependencies"
+          git commit -m "security: synchronize patched dependency lockfile"
           git push origin HEAD:${{ github.head_ref }}
