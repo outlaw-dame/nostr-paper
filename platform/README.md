@@ -1,88 +1,67 @@
-# Nostr Paper Platform Workspace
+# Nostr Paper Relay/Search Workspace
 
-This subtree is the transition scaffold for the backend platform that will sit beside the existing `nostr-paper` client.
+This directory contains the server-side relay and search architecture that supports the Nostr Paper client. It is being prepared for extraction into a dedicated relay repository while preserving protocol-level integration with the PWA.
 
-## Why this lives inside the repo for now
-
-The long-term clean shape is still:
-
-- `nostr-paper` client app
-- relay/search/control-plane platform as a sibling repo or standalone workspace
-
-But this scaffold lives here first so the service boundaries, contracts, infra, and implementation slices can be built without blocking on repository provisioning.
+The separate `outlaw-dame/nostr-paper-platform` repository is unrelated to this workspace and is not the extraction target.
 
 ## Hard boundaries
 
-- The existing root app remains the client-facing Nostr Paper PWA.
-- `platform/` is server-side infrastructure and services only.
-- Nothing in `platform/` should leak client build assumptions into relay/search code.
-- Nothing in the root app should start depending on `platform/` internals directly.
+- The root application remains the client-facing Nostr Paper PWA.
+- Relay/search services must not depend on client build internals.
+- The PWA must not import relay-service internals.
+- Integration must use Nostr protocols, documented APIs, validated endpoint configuration, and contract tests.
+- The PWA must continue to operate against ordinary Nostr relays when the dedicated relay/search service is unavailable.
 
-## Planned first slice
+## Relay/search extraction scope
 
-1. Strfry deployment and configuration
+- `infra/` — Strfry, Redis, PostgreSQL/pgvector, compose, migrations, and deployment configuration
+- `packages/` — server-side shared packages, after confirming no PWA imports
+- `services/ingestion-bridge/` — relay and moderation-event ingestion
+- `services/relay-policy/` — Strfry write policy, rate limiting, and abuse controls
+- `services/search-api/` — NIP-50/hybrid search relay and operations endpoints
+- `services/workers/` — lexical indexing, embeddings, reconciliation, and projections
+- relay-specific operational documentation and runbooks
+
+## Media boundary
+
+`services/blossom-edge/` is not part of the relay extraction by default. It is a standalone Cloudflare Worker with its own deployment lifecycle, R2 storage, Nostr-authenticated Blossom API, upload policy, and optional Filebase/IPFS archival.
+
+It may remain temporarily in this repository or move to a dedicated media repository, but it must not be silently bundled into the relay repository.
+
+## Relay stack
+
+The relay/search deployment currently includes:
+
+1. Strfry relay and write policy
 2. Redis Streams backbone
-3. PostgreSQL search and control-plane schema
-4. Ingestion bridge
-5. Lexical indexing worker
-6. NIP-50 search relay
+3. PostgreSQL and pgvector search/control-plane schema
+4. ingestion bridge
+5. lexical indexing worker
+6. embedding worker
+7. NIP-50/hybrid search relay
+8. moderation ingestion, reconciliation, metrics, and operations endpoints
 
-## Directory map
+## Local exposure defaults
 
-- `docs/` — architecture and operational documentation
-- `infra/` — local/dev deployment manifests and service configuration
-- `services/` — deployable services
-- `packages/` — shared runtime libraries used by services
+`infra/docker-compose.yml` publishes Redis, Postgres, Strfry, and the search API on `127.0.0.1` by default. Set `PLATFORM_BIND_HOST` only when intentionally exposing the stack to another device, tunnel, or isolated test network.
 
-## Local Exposure Defaults
+## Relay rate limiting
 
-`infra/docker-compose.yml` publishes Redis, Postgres, strfry, and the search API on `127.0.0.1` by default. Set `PLATFORM_BIND_HOST` only when intentionally exposing the stack to another device, tunnel, or isolated test network.
+`services/relay-policy/` is a Strfry write-policy plugin. It applies pubkey/source/global token buckets, weighted event cost, duplicate-body rejection, hellthread fanout limits, allowlists, and temporary penalty multipliers before events are stored.
 
-## Relay Rate Limiting
+## Moderation
 
-`services/relay-policy/` is a strfry write-policy plugin. It applies lightweight intelligent rate limiting before events are stored: pubkey/source/global token buckets, weighted event cost, duplicate-body rejection, hellthread fanout limits, and temporary penalty multipliers. Local compose builds a custom strfry image that includes this plugin and enables it through `infra/strfry.conf/strfry.conf`.
+The relay stack can ingest trusted Tagr moderation events, persist moderation outcomes, apply shared keyword policy, reconcile already indexed events, and expose authenticated moderation operations endpoints.
 
-Useful knobs:
+## Extraction rule
 
-- `RELAY_POLICY_MODE=observe|enforce`
-- `RELAY_POLICY_VERSION=relay-policy-v1`
-- `RELAY_POLICY_PUBKEY_POINTS_PER_MINUTE`
-- `RELAY_POLICY_SOURCE_POINTS_PER_MINUTE`
-- `RELAY_POLICY_GLOBAL_POINTS_PER_SECOND`
-- `RELAY_POLICY_HELLTHREAD_TAG_LIMIT`
-- `RELAY_POLICY_ALLOWLIST_PUBKEYS`
-- `RELAY_POLICY_ALLOWLIST_SOURCES`
+Do not delete this directory from `nostr-paper` until:
 
-## Blossom Media Edge
+- the new relay repository exists;
+- Git history has been preserved with `git filter-repo` or `git subtree split`;
+- relay CI, migrations, tests, and deployment are operational there;
+- the PWA has no source imports from the extracted implementation;
+- remote-search contract tests pass;
+- the PWA builds and runs with the dedicated relay and media services unavailable.
 
-`services/blossom-edge/` is a Cloudflare Worker Blossom server. It stores blobs by SHA-256 in Cloudflare R2 for low-latency media retrieval and can archive the same bytes to a Filebase IPFS bucket. The app publishes BUD-03 `kind:10063` server lists so clients and relays can discover the preferred media edge.
-
-## Tagr Moderation Source (Relay Stack)
-
-The platform relay stack can ingest Nos Social Tagr moderation events directly:
-
-- `TAGR_RELAY_URL` (default: `wss://relay.nos.social`)
-- `TAGR_BOT_PUBKEY` (default: canonical Tagr bot pubkey)
-
-The ingestion bridge filters to Tagr moderation kinds (`1984`, `1985`) for the trusted pubkey and forwards them into the Redis pipeline. The lexical worker persists moderation outcomes and marks affected search rows as blocked.
-
-Keyword-policy blocks are also persisted durably in `keyword_blocks`, using the shared moderation taxonomy from `@nostr-paper/content-policy`. To re-run the current policy against already indexed events and repair `moderation_state`, run `npm run reconcile:moderation` from `platform/services/workers/lexical-index`.
-
-The search API now exposes moderation operations endpoints for dashboards and runbooks:
-
-- `GET /ops/moderation/stats`
-- `GET /ops/moderation/blocked?source=all|tagr|keyword&limit=...`
-- `POST /ops/moderation/reconcile`
-
-Set `MODERATION_OPS_TOKEN` to a high-entropy value (32+ characters). Ops routes fail closed with `503 ops_auth_not_configured` when it is missing.
-
-Relay policy regressions are covered by a replay corpus at `services/relay-policy/src/abuseReplay.corpus.json` and can be run with `npm run test:replay --prefix platform/services/relay-policy`.
-
-Operational docs:
-
-- `docs/INCIDENT_PLAYBOOKS.md`
-- `docs/NOSTR_MODERATION_BENCHMARKS.md`
-
-## Transition note
-
-Once the backend platform hardens, this subtree can be split into its own repository with minimal churn because service/package seams are defined here first.
+See `../docs/architecture/relay-separation.md` for the migration contract and validation requirements.
