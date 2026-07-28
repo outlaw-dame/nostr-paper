@@ -1,0 +1,32 @@
+name: CI Diagnostics
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Capture lint output
+        run: npm run lint -- --quiet --max-warnings=-1 > eslint.log 2>&1 || true
+      - name: Capture audit output
+        run: npm audit --json > npm-audit.json || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-diagnostics
+          path: |
+            eslint.log
+            npm-audit.json
+          retention-days: 1
